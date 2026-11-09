@@ -207,7 +207,10 @@ class ScoreBuilder {
       // restarting at each part; the last chord is cut to end on the part's last bar line.
       const rhythm = durs.length ? durs : [4];
       const bar = 4 * beat;
-      const collapseSlot = Math.max(1, Math.ceil((cfg.timing.arrival + Math.max(0.8, cfg.timing.hold * 0.6)) / bar - 1e-6)) * bar;
+      // A collapse is a breath, not a section: a quick converge and a short hold, about 2–3 s,
+      // rounded to whole bars (half bars at slow tempos; parts restart their patterns anyway).
+      const unit = bar > 3.4 ? bar / 2 : bar;
+      const collapseSlot = Math.max(1, Math.min(4, Math.round((Math.min(cfg.timing.arrival, 2) + 0.8) / unit))) * unit;
       songForm.sections.forEach((sec, i) => {
         const slots: number[] = [];
         let left = sec.bars * 4;
