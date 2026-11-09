@@ -1,6 +1,6 @@
 import type { Easing } from './config';
 import type { Score } from './score';
-import { drumHitsBetween, type DrumHit } from './drums';
+import { drumHitsBetween, type DrumHit, type DrumVoice } from './drums';
 import { midiToHz } from './theory';
 
 /** Smootherstep, clamped: 6x^5 - 15x^4 + 10x^3. */
@@ -345,6 +345,8 @@ export function widthFactor(score: Score, v: number, t: number): number {
   let base = 0.25 + 0.75 * swellAt(score, v, t);
   // Sidechain ducking shows as the lines dipping under the drums.
   if (score.drums) base *= 0.45 + 0.55 * duckAt(score, t);
+  // Chopped-out steps thin the lines.
+  if (score.chop) base *= 0.2 + 0.8 * chopAt(score, t).level;
   if (score.config.motion.transition !== 'pluck') return base;
   return base * (0.35 + 1.25 * articulationAt(score, t));
 }
@@ -357,7 +359,7 @@ export function levelAt(score: Score, v: number, t: number): number {
 /** True when lines should be drawn with varying thickness. */
 export function hasDynamics(score: Score): boolean {
   const d = score.config.drums;
-  return score.config.audio.swell !== 'off' || score.config.motion.transition === 'pluck' || (d.enabled && (d.duck.kick || d.duck.snare) && d.duck.depth > 0);
+  return score.chop !== null || score.config.audio.swell !== 'off' || score.config.motion.transition === 'pluck' || (d.enabled && (d.duck.kick || d.duck.snare) && d.duck.depth > 0);
 }
 
 /** When drums play: from the moment the bloom lands to the arrival (forever when endless; the whole loop when looping). */
@@ -367,24 +369,95 @@ export function drumSpan(score: Score): [number, number] {
   return [score.gridStart, stop];
 }
 
-/** Drum hits in [a, b). In song mode only full parts have drums. */
-export function drumHits(score: Score, a: number, b: number): DrumHit[] {
-  if (!score.drums) return [];
-  const [start, stop] = drumSpan(score);
-  const hits = drumHitsBetween(score.drums, start, stop, score.beat / 4, a, b, score.seed);
-  return score.energy.length ? hits.filter((h) => energyStep(score, h.t) > 0.5) : hits;
+export interface PartSpan {
+  a: number;
+  b: number;
+  /** Full part (chop applies), and the drums that play in it. */
+  full: boolean;
+  drums: DrumVoice[] | null;
+  index: number;
 }
 
-/** Song mode: the energy step in force at t (1 = full part). 1 outside song mode. */
-function energyStep(score: Score, t: number): number {
-  const steps = score.energy;
-  if (!steps.length) return 1;
-  let e = steps[0].e;
-  for (const s of steps) {
-    if (s.t > t + 1e-9) break;
-    e = s.e;
+const spanCache = new WeakMap<Score, { n: number; spans: PartSpan[] }>();
+
+/**
+ * Where the rhythm section plays, as spans that each restart the drum and chop
+ * patterns: one per song part (ending where the next part or its collapse
+ * starts), or the whole piece outside song mode. drums = null means every drum.
+ */
+export function partSpans(score: Score): PartSpan[] {
+  const cached = spanCache.get(score);
+  if (cached && cached.n === score.chords.length) return cached.spans;
+  let spans: PartSpan[];
+  if (!score.sections.length) {
+    const [a, b] = drumSpan(score);
+    spans = [{ a, b, full: true, drums: null, index: 0 }];
+  } else {
+    const tl = score.timeline;
+    spans = score.sections.map((sec, i) => {
+      let b = Math.min(score.sections[i + 1]?.t ?? Infinity, tl.arrivalStart);
+      for (const c of score.chords) if (c.unison && c.t > sec.t && c.t < b) b = c.t;
+      return { a: Math.max(sec.t, score.gridStart), b, full: sec.full, drums: sec.drums, index: i };
+    });
   }
-  return e;
+  spanCache.set(score, { n: score.chords.length, spans });
+  return spans;
+}
+
+/** Drum hits in [a, b). Patterns restart with each song part, which also picks its drums. */
+export function drumHits(score: Score, a: number, b: number): DrumHit[] {
+  if (!score.drums) return [];
+  const out: DrumHit[] = [];
+  for (const sp of partSpans(score)) {
+    if (sp.b <= a || sp.a >= b || (sp.drums && !sp.drums.length)) continue;
+    const hits = drumHitsBetween(score.drums, sp.a, sp.b, score.beat / 4, a, b, (score.seed + sp.index * 7919) >>> 0);
+    for (const h of hits) if (!sp.drums || sp.drums.includes(h.voice)) out.push(h);
+  }
+  return out;
+}
+
+const NO_CHOP = { s: 0, level: 1, rate: 1 };
+
+/**
+ * Chop at score time t: the source time the chords play from (s), their level
+ * and playback rate (pitch factor). Active in full parts (the whole piece
+ * outside song mode), restarting with each part.
+ */
+export function chopAt(score: Score, t: number): { s: number; level: number; rate: number } {
+  const c = score.chop;
+  if (!c) return { ...NO_CHOP, s: t };
+  for (const sp of partSpans(score)) {
+    if (t < sp.a || t >= sp.b || !sp.full) continue;
+    const step = score.beat / 4;
+    const pos = (t - sp.a) / step;
+    const loop = Math.floor(pos / c.length);
+    const base = sp.a + loop * c.length * step;
+    const st = c.steps[Math.min(c.length - 1, Math.floor(pos - loop * c.length))];
+    const rs = base + st.start * step;
+    const re = Math.min(sp.b, base + st.end * step);
+    let s = t;
+    let level = 1;
+    let rate = 1;
+    if (st.kind === 'cut') level = 0;
+    else if (st.kind === 'half') level = 0.4;
+    else if (st.kind === 'rev') s = rs + re - t;
+    else if (st.kind === 'rep') s = t - (st.end - st.start) * step;
+    else if (st.kind === 'tape') {
+      const L = Math.max(1e-3, re - rs);
+      const u = t - rs;
+      rate = Math.max(0.03, 1 - u / L);
+      s = rs + u - (u * u) / (2 * L);
+      level = Math.min(1, rate * 3);
+    }
+    // Short fades wherever the sound jumps (run edges), so cuts and jumps don't click.
+    const prev = c.steps[(st.start - 1 + c.length) % c.length];
+    const next = c.steps[st.end % c.length];
+    const FADE = 0.006;
+    if (!(st.kind === 'play' && (prev.kind === 'play' || t - rs > FADE))) level *= Math.min(1, (t - rs) / FADE);
+    if (!(st.kind === 'play' && (next.kind === 'play' || re - t > FADE))) level *= Math.min(1, (re - t) / FADE);
+    return { s, level: Math.max(0, level), rate };
+  }
+  return { ...NO_CHOP, s: t };
 }
 
 /**

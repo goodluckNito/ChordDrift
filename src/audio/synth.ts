@@ -1,4 +1,4 @@
-import { articulationAt, drumHits, duckAt, energyAt, layerAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
+import { articulationAt, chopAt, drumHits, duckAt, energyAt, layerAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
 import { playHit } from './drums';
 import type { Wave } from '../engine/config';
 import { stream } from '../engine/rng';
@@ -130,7 +130,14 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
     lowpass.connect(pre).connect(ws);
     tone = ws;
   }
-  input.connect(lowpass);
+  // Bass: a low shelf under the voices and sub (the drums bypass it), like pushing the low end on an EQ.
+  if (a.bass) {
+    const shelf = ctx.createBiquadFilter();
+    shelf.type = 'lowshelf';
+    shelf.frequency.value = 110;
+    shelf.gain.value = a.bass;
+    input.connect(shelf).connect(lowpass);
+  } else input.connect(lowpass);
   tone.connect(dry).connect(limiter);
   tone.connect(convolver).connect(wet).connect(limiter);
   limiter.connect(out).connect(destination);
@@ -192,6 +199,8 @@ export class VoiceBank {
   private bus: GainNode;
   /** Pluck mode: the shared strike envelope for the chord voices. */
   private art: GainNode | null = null;
+  /** Chop: the step gate for the chord voices (its time remap is applied to the voice curves). */
+  private chop: GainNode | null = null;
   /** Sidechain: ducks the chord voices under the kick/snare. */
   private duck: GainNode | null = null;
   /** Drums: bus (into the limiter) and reverb send, under this bank so stop() silences them. */
@@ -228,6 +237,12 @@ export class VoiceBank {
       this.duck.gain.value = duckAt(score, offset);
       this.duck.connect(chordOut);
       chordOut = this.duck;
+    }
+    if (score.chop) {
+      this.chop = ctx.createGain();
+      this.chop.gain.value = chopAt(score, offset).level;
+      this.chop.connect(chordOut);
+      chordOut = this.chop;
     }
     if (score.config.motion.transition === 'pluck') {
       this.art = ctx.createGain();
@@ -340,20 +355,23 @@ export class VoiceBank {
         const gain = new Float32Array(n);
         for (let i = 0; i < n; i++) {
           const raw = t0 + (i / (n - 1)) * CHUNK;
-          const t = wrap(raw);
+          const tt = wrap(raw);
+          // Chop remaps time (reverse, repeat, tape stop); the rate bends the pitch for tape stops.
+          const ch = chopAt(this.score, tt);
+          const t = ch.s;
           let f: number;
           let layerGain = 1;
           if (this.layers === 2) {
             const st = layerAt(this.score, L, v, t);
-            f = midiToHz(st.p);
+            f = midiToHz(st.p) * ch.rate;
             layerGain = st.g;
-          } else f = midiToHz(pitchAt(this.score, v, t));
+          } else f = midiToHz(pitchAt(this.score, v, t)) * ch.rate;
           freq[i] = f;
           let env = Math.min(1, raw / 0.05); // 50 ms fade-in at the very start
           if (this.offset > 0) env *= Math.min(1, (raw - this.offset) / 0.03); // de-click when starting mid-piece
           if (raw > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (raw - fadeOutStart) / fadeLen)));
           // Song mode: soft parts sit lower, so the full parts lift.
-          const lift = this.score.energy.length ? 0.68 + 0.32 * energyAt(this.score, t) : 1;
+          const lift = this.score.energy.length ? 0.68 + 0.32 * energyAt(this.score, tt) : 1;
           gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env) * swellAt(this.score, v, t) * layerGain * lift;
         }
         setCurve(this.oscs[idx].frequency, freq, at, dur);
@@ -365,7 +383,9 @@ export class VoiceBank {
         const subGain = cfg.audio.sub * 2.4 * (1.25 / V);
         for (let i = 0; i < n; i++) {
           const raw = t0 + (i / (n - 1)) * CHUNK;
-          const t = wrap(raw);
+          const tt = wrap(raw);
+          const ch = chopAt(this.score, tt);
+          const t = ch.s;
           let p: number;
           let g = 1;
           if (this.layers === 2) {
@@ -373,12 +393,12 @@ export class VoiceBank {
             p = st.p;
             g = st.g;
           } else p = pitchAt(this.score, 0, t);
-          freq[i] = midiToHz(p - 12);
+          freq[i] = midiToHz(p - 12) * ch.rate;
           let env = Math.min(1, raw / 0.05);
           if (this.offset > 0) env *= Math.min(1, (raw - this.offset) / 0.03);
           if (raw > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (raw - fadeOutStart) / fadeLen)));
           // In song mode the sub is what makes a full part hit: nearly gone in soft parts, opened up in full ones.
-          const energy = this.score.energy.length ? 0.1 + 1.5 * energyAt(this.score, t) : 1;
+          const energy = this.score.energy.length ? 0.1 + 1.5 * energyAt(this.score, tt) : 1;
           gain[i] = subGain * g * Math.max(0, env) * swellAt(this.score, 0, t) * energy;
         }
         setCurve(sub.osc.frequency, freq, at, dur);
@@ -416,8 +436,14 @@ export class VoiceBank {
       if (this.art) {
         const m = Math.round(CHUNK * ARTIC_RATE) + 1;
         const curve = new Float32Array(m);
-        for (let i = 0; i < m; i++) curve[i] = articulationAt(this.score, wrap(t0 + (i / (m - 1)) * CHUNK));
+        for (let i = 0; i < m; i++) curve[i] = articulationAt(this.score, chopAt(this.score, wrap(t0 + (i / (m - 1)) * CHUNK)).s);
         setCurve(this.art.gain, curve, at, dur);
+      }
+      if (this.chop) {
+        const m = Math.round(CHUNK * ARTIC_RATE) + 1;
+        const curve = new Float32Array(m);
+        for (let i = 0; i < m; i++) curve[i] = chopAt(this.score, wrap(t0 + (i / (m - 1)) * CHUNK)).level;
+        setCurve(this.chop.gain, curve, at, dur);
       }
       if (this.lead) {
         const freq = new Float32Array(n);

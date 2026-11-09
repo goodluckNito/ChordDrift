@@ -3,11 +3,12 @@ import { ProgressionWalker, type ChordSpec } from './progression';
 import { MelodyGenerator, type MelodyNote } from './melody';
 import { parseProgression, type ProgressionToken } from './progression-text';
 import { chordDurations, parseRhythm, strikeOnsets } from './rhythm';
-import { parseDrumRows, type DrumRows } from './drums';
+import { DRUM_VOICES, parseDrumRows, type DrumRows, type DrumVoice } from './drums';
 import { formatSeed, parseSeed, randInt, stream, uniform, type Rng } from './rng';
 import { DEGREE_OFFSETS, SCALES, mod12, parseNote, parsePc, spellNote, tonicName } from './theory';
 import { STYLES } from './styles';
 import { parseSongForm, type SongSection } from './song';
+import { parseChop, type ChopPattern } from './chop';
 import { chordName } from './chords';
 import { spreadTemplate, voiceChord, voiceLeadingCost, type VoicingRules } from './voicing';
 
@@ -35,6 +36,8 @@ export interface ScoreChord extends ChordSpec {
 
 export interface ScoreSection {
   name: string;
+  /** Drums that play in this part. */
+  drums: DrumVoice[];
   label: string;
   full: boolean;
   shift: number;
@@ -92,6 +95,8 @@ export interface Score {
   /** Where the beat grid starts (end of the bloom), and seconds per beat. */
   gridStart: number;
   beat: number;
+  /** Chop pattern when chop is on (and does something). */
+  chop: ChopPattern | null;
   /** Song mode: the parts in order (empty otherwise). */
   sections: ScoreSection[];
   /** Song mode: energy steps (1 = full part, 0 = soft part or collapse); empty otherwise. */
@@ -261,6 +266,7 @@ class ScoreBuilder {
       melody: [],
       sections: [],
       energy: [],
+      chop: cfg.chop.enabled ? parseChop(cfg.chop.pattern).pattern : null,
       gridStart,
       beat,
       errors: [
@@ -269,6 +275,7 @@ class ScoreBuilder {
         ...(cfg.motion.transition === 'pluck' ? parseRhythm(cfg.rhythm.pluck).errors.map((e) => `strike pattern: ${e}`) : []),
         ...(cfg.melody.enabled ? melodyRhythm.errors.map((e) => `melody rhythm: ${e}`) : []),
         ...(songForm ? songForm.errors.map((e) => `song form: ${e}`) : []),
+        ...(cfg.chop.enabled ? parseChop(cfg.chop.pattern).errors.map((e) => `chop: ${e}`) : []),
       ],
       extend: (t: number) => this.extendTo(t),
     };
@@ -434,7 +441,7 @@ class ScoreBuilder {
       if (unison) chord.unison = true;
       else if (item.local === 0) {
         const sec = song.sections[item.section];
-        score.sections.push({ name: sec.name, label: sec.label, full: sec.full, shift: sec.shift, t });
+        score.sections.push({ name: sec.name, label: sec.label, full: sec.full, shift: sec.shift, drums: sec.drums ?? (sec.full ? [...DRUM_VOICES] : []), t });
       }
     }
     score.chords.push(chord);

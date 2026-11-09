@@ -87,7 +87,8 @@
               <dl>
                 <dt class="mono">A B C</dt><dd>Parts (names are letters). A name that comes back plays the same chords again.</dd>
                 <dt class="mono">A4  B16</dt><dd>Length in bars (default 8). Chords change on the chord rhythm, or once a bar without one.</dd>
-                <dt class="mono">B!8</dt><dd>A full part: the sub bass opens up and the drums play. Parts without ! are soft: no drums, almost no sub.</dd>
+                <dt class="mono">B!8</dt><dd>A full part: the sub bass opens up, the drums play and the chop (if on) kicks in. Parts without ! are soft: no drums, almost no sub.</dd>
+                <dt class="mono">B!8[kh]  A8[h]</dt><dd>Pick the drums for a part: k(ick) s(nare) h(at) c(rash) r(ide). [] means none. Without brackets, full parts get every drum and soft parts none.</dd>
                 <dt class="mono">A8+2  B!4-3</dt><dd>Move the part up or down that many semitones from the key.</dd>
                 <dt class="mono">A | B</dt><dd>Collapse: every voice converges on a unison, holds, then blooms out into the next part.</dd>
                 <dt class="mono">A &gt; B</dt><dd>Resolve straight from one part into the next.</dd>
@@ -311,6 +312,18 @@
             <label data-drums>Duck release (s) <output></output>
               <input data-path="drums.duck.release" type="range" min="0.05" max="1" step="0.01" />
             </label>
+            <label class="check wide">
+              <input data-path="chop.enabled" type="checkbox" />
+              <span>Chop — cut, reverse, repeat or tape-stop the chords in time</span>
+            </label>
+            <label class="wide" data-chop>Chop pattern
+              <select id="chop-preset"></select>
+            </label>
+            <label class="wide" data-chop>
+              <input data-path="chop.pattern" class="mono" spellcheck="false" aria-label="Chop pattern" />
+            </label>
+            <p id="chop-errors" class="errors wide" role="alert"></p>
+            <p class="wide muted small" data-chop>One character per 16th note, looping: <span class="mono">x</span> play, <span class="mono">.</span> cut, <span class="mono">-</span> half volume, <span class="mono">&lt;</span> reverse (a run plays that stretch backwards), <span class="mono">=</span> repeat (a run of n replays the n steps before it), <span class="mono">~</span> tape stop (slows to a stop). It works on the chords and sub, not the drums or melody. In song mode it plays in full parts and restarts with each part.</p>
           </fieldset>
 
           <fieldset>
@@ -358,6 +371,9 @@
             </label>
             <label>Sub bass <output></output>
               <input data-path="audio.sub" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label>Bass (dB) <output></output>
+              <input data-path="audio.bass" type="range" min="0" max="12" step="0.5" />
             </label>
             <label>Warmth <output></output>
               <input data-path="audio.warmth" type="range" min="0" max="1" step="0.05" />

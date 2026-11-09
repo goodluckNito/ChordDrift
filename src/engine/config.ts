@@ -78,6 +78,8 @@ export interface ChordDriftConfig {
   progression: string;
   /** Never arrive: keep generating chords forever. */
   endless: boolean;
+  /** Chop: a 16th-step time/volume controller over the chords (see chop.ts). */
+  chop: { enabled: boolean; pattern: string };
   /** Song mode: a piece in parts (see song.ts). Overrides endless. */
   song: { enabled: boolean; form: string };
   /** Loop the piece seamlessly: it returns to the starting unison and starts again (no zoom-out, no fade). */
@@ -147,6 +149,8 @@ export interface ChordDriftConfig {
     sub: number;
     /** 0..1 gentle saturation on the chords. */
     warmth: number;
+    /** Low shelf at 110 Hz, in dB (0..12). */
+    bass: number;
     /** Volume swells (an ambient option). */
     swell: Swell;
     /** 0..1 how deep the swells dip. */
@@ -211,6 +215,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   endless: false,
   loop: false,
   song: { enabled: false, form: DEFAULT_SONG_FORM },
+  chop: { enabled: false, pattern: 'xxxxxxxxxxxx<<<<' },
   driftProbability: 0.25,
   chordCount: [8, 12],
   smoothness: 1,
@@ -235,7 +240,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   motion: { easing: 'smootherstep', transition: 'glide' },
   rhythm: { tempo: 76, chords: '', pluck: 'e' },
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
-  audio: { wave: 'warm', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 10000, width: 0.12, gain: 0.9, sub: 0.5, warmth: 0.35, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
+  audio: { wave: 'warm', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 10000, width: 0.12, gain: 0.9, sub: 0.65, warmth: 0.35, bass: 4, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
   theme: { ...THEME_PRESETS.paper },
   drums: {
     enabled: false,
@@ -290,6 +295,8 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   if (!['orbit', 'drain', 'fly', 'inward'].includes(c.video.spiral)) c.video.spiral = 'orbit';
   c.song.enabled = Boolean(c.song.enabled);
   c.song.form = String(c.song.form ?? '');
+  c.chop.enabled = Boolean(c.chop.enabled);
+  c.chop.pattern = String(c.chop.pattern ?? '');
   c.endless = Boolean(c.endless) && !c.song.enabled;
   c.loop = Boolean(c.loop) && !c.endless;
   c.rhythm.tempo = Math.max(20, Math.min(320, Number(c.rhythm.tempo) || 76));
@@ -303,6 +310,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.melody.glide = Math.max(0, Number(c.melody.glide) || 0);
   c.melody.level = Math.max(0, Math.min(1, Number(c.melody.level)));
   if (!['off', 'chord', 'voice', 'breath'].includes(c.audio.swell)) c.audio.swell = 'off';
+  c.audio.bass = Math.max(0, Math.min(12, Number(c.audio.bass) || 0));
   c.audio.swellDepth = Math.max(0, Math.min(0.95, Number(c.audio.swellDepth)));
   if (c.audio.envelope !== 'pluck') c.audio.envelope = 'sustain';
   c.audio.attack = Math.max(0.001, Math.min(1, Number(c.audio.attack) || 0.008));

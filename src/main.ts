@@ -16,6 +16,7 @@ import {
   STRIKE_PRESETS,
   SCALES,
   SONG_PRESETS,
+  CHOP_PRESETS,
   STYLES,
   chordIndexAt,
   chordToToken,
@@ -327,6 +328,17 @@ function startApp() {
     rebuild(true);
   });
 
+  const chopSelect = $<HTMLSelectElement>('#chop-preset');
+  chopSelect.innerHTML = CHOP_PRESETS.map((_, i) => `<option value="${i}"></option>`).join('') + '<option value="custom">Custom</option>';
+  CHOP_PRESETS.forEach((p, i) => (chopSelect.options[i].textContent = `${p.name} · ${p.pattern}`));
+  chopSelect.addEventListener('change', () => {
+    const preset = CHOP_PRESETS[Number(chopSelect.value)];
+    if (!preset) return;
+    state.chop.pattern = preset.pattern;
+    writeForm();
+    rebuild(true);
+  });
+
   const strikeSelect = $<HTMLSelectElement>('#strike-preset');
   strikeSelect.innerHTML = STRIKE_PRESETS.map((_, i) => `<option value="${i}"></option>`).join('') + '<option value="custom">Custom</option>';
   STRIKE_PRESETS.forEach((p, i) => (strikeSelect.options[i].textContent = p.name + (p.pattern ? `  (${p.pattern})` : '')));
@@ -415,6 +427,9 @@ function startApp() {
     for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-drums]')) el.hidden = !state.drums.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-song]')) el.hidden = !state.song.enabled;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-chop]')) el.hidden = !state.chop.enabled;
+    const chopIdx = CHOP_PRESETS.findIndex((p) => p.pattern === state.chop.pattern.trim());
+    chopSelect.value = chopIdx >= 0 ? String(chopIdx) : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-nodrums]')) if (state.drums.enabled) el.hidden = true;
     const songIdx = SONG_PRESETS.findIndex((p) => p.form === state.song.form.trim());
     songSelect.value = songIdx >= 0 ? String(songIdx) : 'custom';
@@ -456,7 +471,7 @@ function startApp() {
     }
     const errs = (prefix: string | null) =>
       score.errors
-        .filter((e) => (prefix ? e.startsWith(prefix) : !/^((chord|melody) rhythm|strike pattern|song form): /.test(e)))
+        .filter((e) => (prefix ? e.startsWith(prefix) : !/^((chord|melody) rhythm|strike pattern|song form|chop): /.test(e)))
         .map((e) => (prefix ? e.slice(prefix.length) : e))
         .join(' · ');
     $('#prog-errors').textContent = errs(null);
@@ -464,6 +479,7 @@ function startApp() {
     $('#melody-errors').textContent = errs('melody rhythm: ');
     $('#strike-errors').textContent = errs('strike pattern: ');
     $('#song-errors').textContent = errs('song form: ');
+    $('#chop-errors').textContent = errs('chop: ');
     pausedAt = Number.isFinite(score.timeline.end) ? Math.min(t, score.timeline.end) : t;
     score.extend(pausedAt);
     keySelect.options[0].textContent = state.key === 'auto' ? `Auto (${score.keyName})` : 'Auto (seeded)';
@@ -728,7 +744,7 @@ function startApp() {
     const path = el.dataset.path;
     clearTimeout(debounce);
     const delay =
-      path === 'progression' || path === 'song.form' || path.endsWith('rhythm') || path === 'rhythm.chords' || /^drums\.(kick|snare|hat|crash|ride)$/.test(path)
+      path === 'progression' || path === 'song.form' || path === 'chop.pattern' || path.endsWith('rhythm') || path === 'rhythm.chords' || /^drums\.(kick|snare|hat|crash|ride)$/.test(path)
         ? 450
         : path.startsWith('theme.')
           ? 30
