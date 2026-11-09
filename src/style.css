@@ -181,6 +181,7 @@ input[type='range'] { padding: 0; accent-color: var(--accent); background: trans
 }
 #score-list li:hover { background: var(--field); }
 #score-list li.current { background: var(--accent); color: var(--accent-ink); }
+#score-list li.section { margin-top: 6px; font-weight: 700; letter-spacing: 0.02em; }
 #score-list li.current .muted { color: inherit; opacity: .75; }
 #score-list .name { font-weight: 600; }
 #score-list .notes { grid-column: 2 / -1; font-size: 11px; }

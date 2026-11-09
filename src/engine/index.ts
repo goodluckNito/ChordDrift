@@ -13,3 +13,4 @@ export * from './themes';
 export * from './theory';
 export * from './voicing';
 export * from './midi';
+export * from './song';

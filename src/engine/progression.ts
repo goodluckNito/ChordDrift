@@ -69,6 +69,11 @@ export class ProgressionWalker {
     }
   }
 
+  /** True when a style planner picks the chords. */
+  get planned(): boolean {
+    return this.planner !== null;
+  }
+
   /** For finite styled pieces: plan the whole thing up front; returns the number of chords. */
   planPiece(phrases: number): number {
     if (!this.planner) return 0;

@@ -71,6 +71,28 @@
               <input data-path="smoothness" type="range" min="0" max="3" step="0.1" />
             </label>
             <label class="check wide">
+              <input data-path="song.enabled" type="checkbox" />
+              <span>Song — a piece in parts that collapse and resolve into each other</span>
+            </label>
+            <label class="wide" data-song>Form
+              <select id="song-preset"></select>
+            </label>
+            <label class="wide" data-song>
+              <input data-path="song.form" class="mono" spellcheck="false" aria-label="Song form" placeholder="A | B! > C! | A | B!+1" />
+            </label>
+            <p id="song-errors" class="errors wide" role="alert"></p>
+            <details class="help wide" data-song>
+              <summary>Song form</summary>
+              <dl>
+                <dt class="mono">A B C</dt><dd>Parts. A name that comes back plays the same chords again.</dd>
+                <dt class="mono">B!</dt><dd>A full part: the sub bass opens up and the drums play (if on). Parts without ! are soft.</dd>
+                <dt class="mono">A+2  B!-3</dt><dd>Move the part up or down that many semitones from the key.</dd>
+                <dt class="mono">A:6</dt><dd>Number of chords in the part (default 4).</dd>
+                <dt class="mono">A | B</dt><dd>Collapse: every voice converges on a unison, holds, then blooms out into the next part.</dd>
+                <dt class="mono">A &gt; B</dt><dd>Resolve straight from one part into the next.</dd>
+              </dl>
+            </details>
+            <label class="check wide" data-hide="song">
               <input data-path="endless" type="checkbox" />
               <span>Endless — keep generating, never arrive</span>
             </label>
@@ -88,10 +110,10 @@
               </select>
             </label>
             <p class="wide muted small" data-hide="endless" data-loopnote>With Loop on, the voices glide back to the starting unison after the ending, so any ending loops cleanly.</p>
-            <label data-hide="endless written">Chords (min)
+            <label data-hide="endless written song">Chords (min)
               <input data-path="chordCount.0" type="number" min="1" max="60" />
             </label>
-            <label data-hide="endless written">Chords (max)
+            <label data-hide="endless written song">Chords (max)
               <input data-path="chordCount.1" type="number" min="1" max="60" />
             </label>
           </fieldset>

@@ -2,6 +2,7 @@ import { SCALES } from './theory';
 import { STYLE_IDS, type StyleId } from './styles';
 import { DRUM_PRESETS, type DrumVoice, type KitId } from './drums';
 import { FONT_NAMES, THEME_PRESETS, type Theme } from './themes';
+import { DEFAULT_SONG_FORM } from './song';
 
 /**
  * scale    — key-locked: chords built from the selected scale
@@ -77,6 +78,8 @@ export interface ChordDriftConfig {
   progression: string;
   /** Never arrive: keep generating chords forever. */
   endless: boolean;
+  /** Song mode: a piece in parts (see song.ts). Overrides endless. */
+  song: { enabled: boolean; form: string };
   /** Loop the piece seamlessly: it returns to the starting unison and starts again (no zoom-out, no fade). */
   loop: boolean;
   /** Drift mode: chance per change of borrowing a chord from outside the key. */
@@ -207,6 +210,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   progression: '',
   endless: false,
   loop: false,
+  song: { enabled: false, form: DEFAULT_SONG_FORM },
   driftProbability: 0.25,
   chordCount: [8, 12],
   smoothness: 1,
@@ -284,7 +288,9 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   if (!['timeline', 'spiral', 'waterfall'].includes(c.video.view)) c.video.view = 'timeline';
   if ((c.video.spiral as string) === 'zoom') c.video.spiral = 'fly'; // older projects
   if (!['orbit', 'drain', 'fly', 'inward'].includes(c.video.spiral)) c.video.spiral = 'orbit';
-  c.endless = Boolean(c.endless);
+  c.song.enabled = Boolean(c.song.enabled);
+  c.song.form = String(c.song.form ?? '');
+  c.endless = Boolean(c.endless) && !c.song.enabled;
   c.loop = Boolean(c.loop) && !c.endless;
   c.rhythm.tempo = Math.max(20, Math.min(320, Number(c.rhythm.tempo) || 76));
   c.rhythm.chords = String(c.rhythm.chords ?? '');

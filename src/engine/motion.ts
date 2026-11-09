@@ -367,11 +367,40 @@ export function drumSpan(score: Score): [number, number] {
   return [score.gridStart, stop];
 }
 
-/** Drum hits in [a, b). */
+/** Drum hits in [a, b). In song mode only full parts have drums. */
 export function drumHits(score: Score, a: number, b: number): DrumHit[] {
   if (!score.drums) return [];
   const [start, stop] = drumSpan(score);
-  return drumHitsBetween(score.drums, start, stop, score.beat / 4, a, b);
+  const hits = drumHitsBetween(score.drums, start, stop, score.beat / 4, a, b);
+  return score.energy.length ? hits.filter((h) => energyStep(score, h.t) > 0.5) : hits;
+}
+
+/** Song mode: the energy step in force at t (1 = full part). 1 outside song mode. */
+function energyStep(score: Score, t: number): number {
+  const steps = score.energy;
+  if (!steps.length) return 1;
+  let e = steps[0].e;
+  for (const s of steps) {
+    if (s.t > t + 1e-9) break;
+    e = s.e;
+  }
+  return e;
+}
+
+/**
+ * Song mode energy (0..1) at t, smoothed: a part opening up rises in 0.4 s,
+ * a collapse or soft part falls away over 1.5 s. 1 outside song mode.
+ */
+export function energyAt(score: Score, t: number): number {
+  const steps = score.energy;
+  if (!steps.length) return 1;
+  let i = 0;
+  while (i + 1 < steps.length && steps[i + 1].t <= t) i++;
+  const cur = steps[i];
+  const prev = i > 0 ? steps[i - 1].e : cur.e;
+  if (t < cur.t) return cur.e;
+  const ramp = cur.e > prev ? 0.4 : 1.5;
+  return prev + (cur.e - prev) * smootherstep(Math.min(1, (t - cur.t) / ramp));
 }
 
 /**

@@ -1,4 +1,4 @@
-import { articulationAt, drumHits, duckAt, layerAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
+import { articulationAt, drumHits, duckAt, energyAt, layerAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
 import { playHit } from './drums';
 import type { Wave } from '../engine/config';
 import { stream } from '../engine/rng';
@@ -352,7 +352,9 @@ export class VoiceBank {
           let env = Math.min(1, raw / 0.05); // 50 ms fade-in at the very start
           if (this.offset > 0) env *= Math.min(1, (raw - this.offset) / 0.03); // de-click when starting mid-piece
           if (raw > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (raw - fadeOutStart) / fadeLen)));
-          gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env) * swellAt(this.score, v, t) * layerGain;
+          // Song mode: soft parts sit lower, so the full parts lift.
+          const lift = this.score.energy.length ? 0.68 + 0.32 * energyAt(this.score, t) : 1;
+          gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env) * swellAt(this.score, v, t) * layerGain * lift;
         }
         setCurve(this.oscs[idx].frequency, freq, at, dur);
         setCurve(this.gains[idx].gain, gain, at, dur);
@@ -375,7 +377,9 @@ export class VoiceBank {
           let env = Math.min(1, raw / 0.05);
           if (this.offset > 0) env *= Math.min(1, (raw - this.offset) / 0.03);
           if (raw > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (raw - fadeOutStart) / fadeLen)));
-          gain[i] = subGain * g * Math.max(0, env) * swellAt(this.score, 0, t);
+          // In song mode the sub is what makes a full part hit: nearly gone in soft parts, opened up in full ones.
+          const energy = this.score.energy.length ? 0.1 + 1.5 * energyAt(this.score, t) : 1;
+          gain[i] = subGain * g * Math.max(0, env) * swellAt(this.score, 0, t) * energy;
         }
         setCurve(sub.osc.frequency, freq, at, dur);
         setCurve(sub.gain.gain, gain, at, dur);

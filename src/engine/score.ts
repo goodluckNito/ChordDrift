@@ -7,6 +7,8 @@ import { parseDrumRows, type DrumRows } from './drums';
 import { formatSeed, parseSeed, randInt, stream, uniform, type Rng } from './rng';
 import { DEGREE_OFFSETS, SCALES, mod12, parseNote, parsePc, spellNote, tonicName } from './theory';
 import { STYLES } from './styles';
+import { parseSongForm, type SongSection } from './song';
+import { chordName } from './chords';
 import { spreadTemplate, voiceChord, voiceLeadingCost, type VoicingRules } from './voicing';
 
 /** One glide of one voice, in MIDI pitch space. */
@@ -26,6 +28,18 @@ export interface ScoreChord extends ChordSpec {
   t: number;
   /** When every voice has arrived (s). */
   settled: number;
+  /** Song mode: index into score.sections, and whether this is a collapse into a unison between parts. */
+  section?: number;
+  unison?: boolean;
+}
+
+export interface ScoreSection {
+  name: string;
+  label: string;
+  full: boolean;
+  shift: number;
+  /** When its first chord starts (s). */
+  t: number;
 }
 
 export interface Timeline {
@@ -78,6 +92,10 @@ export interface Score {
   /** Where the beat grid starts (end of the bloom), and seconds per beat. */
   gridStart: number;
   beat: number;
+  /** Song mode: the parts in order (empty otherwise). */
+  sections: ScoreSection[];
+  /** Song mode: energy steps (1 = full part, 0 = soft part or collapse); empty otherwise. */
+  energy: { t: number; e: number }[];
   /** Problems reading the written progression or rhythms, if any. */
   errors: string[];
   /** Make sure chords exist up to time t (no-op for finite pieces). Deterministic. */
@@ -137,6 +155,15 @@ class ScoreBuilder {
   private melody: MelodyGenerator | null = null;
   /** When the previous chord's glides had all landed. */
   private lastSettled = 0;
+  /** Song mode: the chord plan, the parts, and a generator per distinct part. */
+  private song: {
+    items: { kind: 'unison' | 'chord'; section: number; local: number }[];
+    sections: SongSection[];
+    parts: Map<string, { walker: ProgressionWalker; specs: ChordSpec[]; count: number; shift: number }>;
+  } | null = null;
+  private songTonic = 0;
+  /** Index into the chord rhythm (collapses don't use a slot of it). */
+  private rhythmIndex = 0;
 
   constructor(input: DeepPartial<ChordDriftConfig> | ChordDriftConfig) {
     const cfg = (this.cfg = resolveConfig(input as DeepPartial<ChordDriftConfig>));
@@ -166,6 +193,28 @@ class ScoreBuilder {
       // Styled finite pieces are planned in 4-chord phrases (chord count sets the phrase count).
       this.total = this.walker.planPiece(Math.max(2, Math.min(6, Math.round(randomCount / 4))));
     }
+    const songForm = cfg.song.enabled ? parseSongForm(cfg.song.form) : null;
+    if (songForm && songForm.sections.length) {
+      const parts = new Map<string, { walker: ProgressionWalker; specs: ChordSpec[]; count: number; shift: number }>();
+      const items: { kind: 'unison' | 'chord'; section: number; local: number }[] = [];
+      songForm.sections.forEach((sec, i) => {
+        let part = parts.get(sec.name);
+        if (!part) {
+          // Each distinct part gets its own seeded generator, in its own key.
+          const walker = new ProgressionWalker(cfg, mod12(keyPc + sec.shift), stream(seed, `progression:${sec.name}`), tokens, stream(seed, `style:${sec.name}`));
+          let count = sec.count ?? 4;
+          if (cfg.style !== 'none' && !tokens.length) count = walker.planPiece(Math.max(1, Math.round(count / 4)));
+          part = { walker, specs: [], count, shift: sec.shift };
+          parts.set(sec.name, part);
+        }
+        if (sec.collapse) items.push({ kind: 'unison', section: i, local: 0 });
+        const n = sec.count ?? part.count;
+        for (let j = 0; j < n; j++) items.push({ kind: 'chord', section: i, local: j });
+      });
+      this.song = { items, sections: songForm.sections, parts };
+      this.total = items.length;
+      this.songTonic = keyPc;
+    }
     this.voicingRng = stream(seed, 'voicing');
     this.timeRng = stream(seed, 'timing');
     this.staggerRng = stream(seed, 'stagger');
@@ -185,7 +234,7 @@ class ScoreBuilder {
       finalKeyPc: keyPc,
       startNote,
       endNote: startNote,
-      endless: cfg.endless,
+      endless: cfg.endless && !this.song,
       loop: cfg.loop,
       chords: [],
       moves: Array.from({ length: V }, () => []),
@@ -198,6 +247,8 @@ class ScoreBuilder {
       strikeGap: Infinity,
       drums: cfg.drums.enabled ? parseDrumRows(cfg.drums) : null,
       melody: [],
+      sections: [],
+      energy: [],
       gridStart,
       beat,
       errors: [
@@ -205,6 +256,7 @@ class ScoreBuilder {
         ...chordRhythm.errors.map((e) => `chord rhythm: ${e}`),
         ...(cfg.motion.transition === 'pluck' ? parseRhythm(cfg.rhythm.pluck).errors.map((e) => `strike pattern: ${e}`) : []),
         ...(cfg.melody.enabled ? melodyRhythm.errors.map((e) => `melody rhythm: ${e}`) : []),
+        ...(songForm ? songForm.errors.map((e) => `song form: ${e}`) : []),
       ],
       extend: (t: number) => this.extendTo(t),
     };
@@ -275,20 +327,61 @@ class ScoreBuilder {
     const T = cfg.timing;
     const V = cfg.voices;
     const k = score.chords.length;
-    const ref = k === 0 ? spreadTemplate(V, score.startNote, rules) : this.current;
+    const song = this.song;
+    const item = song ? song.items[k] : null;
+    const unison = item?.kind === 'unison';
+    // After a collapse the next part blooms out of the unison, like the opening.
+    const reBloom = k > 0 && song?.items[k - 1]?.kind === 'unison';
+    const ref = k === 0 ? spreadTemplate(V, score.startNote, rules) : reBloom ? spreadTemplate(V, this.current[0], rules) : this.current;
     const cost = (c: { root: number; intervals: number[] }) => {
       const v = voiceChord(c, ref, rules, null);
       // Changes where almost nothing moves read as repeats; nudge the choice away from them.
       const moved = v.reduce((n, x, i) => n + (x !== ref[i] ? 1 : 0), 0);
       return voiceLeadingCost(ref, v, rules) + (moved <= 1 ? 6 : moved === 2 ? 2.5 : 0);
     };
-    const spec = this.walker.next(k, this.total, cost);
-    const notes = voiceChord(spec, ref, rules, this.voicingRng);
+    let spec: ChordSpec;
+    let notes: number[];
+    if (song && item && unison) {
+      // Collapse: every voice converges on the next part's tonic, near where the voices are now.
+      const next = song.sections[item.section];
+      const pc = mod12(score.keyPc + next.shift);
+      const sorted = [...this.current].sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+      let u = median - mod12(median - pc);
+      if (median - u > 6) u += 12;
+      u = Math.max(cfg.range.bass[0], Math.min(cfg.range.upper[1], u));
+      const scale = this.walker.scale;
+      spec = { root: pc, intervals: [0], tonic: pc, scale, name: `unison ${spellNote(u, pc, scale)}`, roman: '—', origin: 'cadence' };
+      notes = new Array<number>(V).fill(u);
+    } else if (song && item) {
+      const sec = song.sections[item.section];
+      const part = song.parts.get(sec.name)!;
+      let base: ChordSpec;
+      if (part.specs.length < part.count) {
+        // Parts after the first don't have to open on the tonic (only styled parts follow their plan from the top).
+        const off = song.sections[0].name !== sec.name && !part.walker.planned ? 1 : 0;
+        base = part.walker.next(part.specs.length + off, part.count + off, cost);
+        part.specs.push(base);
+      } else base = part.specs[item.local % part.specs.length];
+      const d = sec.shift - part.shift;
+      spec = d ? transposeSpec(base, d) : base;
+      notes = voiceChord(spec, ref, rules, this.voicingRng);
+      this.songTonic = spec.tonic;
+    } else {
+      spec = this.walker.next(k, this.total, cost);
+      notes = voiceChord(spec, ref, rules, this.voicingRng);
+    }
 
     const t = this.nextChange;
     const bloom = k === 0;
     // With a chord rhythm, each chord owns a fixed slot; glides must finish inside it.
-    const slot = this.durations ? this.durations[k % this.durations.length] : Infinity;
+    // A collapse takes whole bars (it doesn't use a slot of the chord rhythm), so the grid stays on the bar.
+    const bar = 4 * score.beat;
+    const slot = this.durations
+      ? unison
+        ? Math.max(1, Math.ceil((T.arrival + Math.max(0.8, T.hold * 0.6)) / bar - 1e-6)) * bar
+        : this.durations[this.rhythmIndex++ % this.durations.length]
+      : Infinity;
     const crossfade = cfg.motion.transition === 'swell' && !bloom;
     // Plucked chords glide *into* the strike: the slide happens in the quiet tail
     // of the previous chord and every voice lands together on the change, so the
@@ -298,7 +391,7 @@ class ScoreBuilder {
     for (let v = 0; v < V; v++) {
       // Release-&-swell transitions don't glide: the new chord fades in on its own voices (see layerAt).
       if (crossfade) break;
-      const maxDelay = bloom ? Math.min(T.stagger, T.bloom * 0.2) * 0.3 : Math.min(T.stagger, slot * 0.15);
+      const maxDelay = bloom || reBloom ? Math.min(T.stagger, T.bloom * 0.2) * 0.3 : Math.min(T.stagger, slot * 0.15);
       const delay = this.staggerRng() * maxDelay;
       const p0 = this.current[v];
       const p1 = notes[v];
@@ -311,7 +404,7 @@ class ScoreBuilder {
         continue;
       }
       // The bloom fans out with a slight stagger but every voice lands together.
-      let d = bloom ? T.bloom - delay : T.glide * (1 + leap / 12);
+      let d = bloom ? T.bloom - delay : unison ? T.arrival : reBloom ? T.bloom : T.glide * (1 + leap / 12);
       if (!bloom) d = Math.max(0.02, Math.min(d, slot * 0.85 - delay));
       score.moves[v].push({ t0: t + delay, d, p0, p1 });
       span = Math.max(span, delay + d);
@@ -322,14 +415,24 @@ class ScoreBuilder {
       for (let v = 0; v < V; v++) this.staggerRng();
     }
     const chord: ScoreChord = { ...spec, index: k, notes, t, settled: t + span };
+    if (song && item) {
+      chord.section = item.section;
+      if (unison) chord.unison = true;
+      else if (item.local === 0) {
+        const sec = song.sections[item.section];
+        score.sections.push({ name: sec.name, label: sec.label, full: sec.full, shift: sec.shift, t });
+      }
+    }
     score.chords.push(chord);
     score.labels.push({ t, text: spec.name });
-    score.finalKeyPc = this.walker.tonic;
+    score.finalKeyPc = song ? this.songTonic : this.walker.tonic;
     score.pitchRange = [Math.min(score.pitchRange[0], ...notes), Math.max(score.pitchRange[1], ...notes)];
     const jitter = 1 + uniform(this.timeRng, -T.holdJitter, T.holdJitter);
     if (this.durations) {
       // The bloom is a pickup: the beat grid starts when it lands.
       this.nextChange = (bloom ? score.gridStart : t) + slot;
+    } else if (unison) {
+      this.nextChange = t + span + Math.max(0.8, T.hold * 0.6);
     } else if (pluck) {
       // The glide happens before the next strike, so the whole hold is ring time.
       this.nextChange = t + Math.max(0.35 + T.glide * 0.5, T.hold * jitter);
@@ -343,7 +446,8 @@ class ScoreBuilder {
   private addArrival() {
     const { cfg, score } = this;
     const T = cfg.timing;
-    const endNote = cfg.endNote === 'start' ? score.startNote : resolveNote(cfg.endNote, this.walker.tonic, 'high');
+    const tonic = this.song ? this.songTonic : this.walker.tonic;
+    const endNote = cfg.endNote === 'start' ? score.startNote : resolveNote(cfg.endNote, tonic, 'high');
     const arrivalStart = score.chords.length ? this.nextChange : T.intro;
     for (let v = 0; v < cfg.voices; v++) {
       // Slight stagger at the start, but everyone lands together.
@@ -359,17 +463,28 @@ class ScoreBuilder {
       const back = arrivalEnd + Math.max(0.6, T.outro * 0.6);
       const d = Math.max(1, T.arrival * 1.3);
       for (let v = 0; v < cfg.voices; v++) score.moves[v].push({ t0: back, d, p0: endNote, p1: score.startNote });
-      score.labels.push({ t: back, text: `↺ ${spellNote(score.startNote, this.walker.tonic, this.walker.scale)}` });
+      score.labels.push({ t: back, text: `↺ ${spellNote(score.startNote, tonic, this.walker.scale)}` });
       loopEnd = back + d + Math.min(0.6, T.intro);
     }
     if (this.melody) {
       // The melody joins the final unison.
       score.melody.push({ t: arrivalStart, d: musicEnd - arrivalStart, p: endNote, glide: T.arrival, from: this.melody.lastPitch });
     }
+    if (this.song) {
+      // Energy steps: full parts open the sub and the drums; soft parts and collapses close them; the arrival is soft.
+      const steps: { t: number; e: number }[] = [];
+      const push = (t: number, e: number) => {
+        if (!steps.length || steps[steps.length - 1].e !== e) steps.push({ t, e });
+      };
+      const sections = this.song.sections;
+      score.chords.forEach((c, i) => push(i === 0 ? 0 : c.t, c.unison || c.section === undefined ? 0 : sections[c.section].full ? 1 : 0));
+      push(arrivalStart, 0);
+      score.energy = steps;
+    }
     const zoomStart = arrivalEnd + 0.4;
     const zoomEnd = zoomStart + T.zoom;
     score.endNote = endNote;
-    score.labels.push({ t: arrivalStart, text: `→ ${spellNote(endNote, this.walker.tonic, this.walker.scale)}` });
+    score.labels.push({ t: arrivalStart, text: `→ ${spellNote(endNote, tonic, this.walker.scale)}` });
     score.pitchRange = [Math.min(score.pitchRange[0], endNote), Math.max(score.pitchRange[1], endNote)];
     for (const n of score.melody) {
       if (n.p === null) continue;
@@ -400,4 +515,11 @@ class ScoreBuilder {
 
 export function generateScore(input: DeepPartial<ChordDriftConfig> | ChordDriftConfig = {}): Score {
   return new ScoreBuilder(input).score;
+}
+
+/** A chord moved by d semitones, renamed in its new key. */
+function transposeSpec(spec: ChordSpec, d: number): ChordSpec {
+  const root = mod12(spec.root + d);
+  const tonic = mod12(spec.tonic + d);
+  return { ...spec, root, tonic, name: chordName({ root, intervals: spec.intervals }, tonic, spec.scale) };
 }

@@ -84,6 +84,16 @@ e*4   (q e e)*2                   repeat a note or group; patterns loop, | and ,
 
 For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half-note triplets. Presets are in the Rhythm section.
 
+**Song mode.** Turn on *Song* to build a piece from parts that collapse and resolve into each other, like the long-form pieces in the reference videos. Write the form in a small notation, or pick a preset:
+
+- `A B C`: parts. A name that comes back plays the same chords again.
+- `B!`: a full part. The sub bass opens up and the drums play (if they're on). Parts without `!` are soft: no drums, the sub almost gone, a little quieter.
+- `A+2`, `B!-3`: move a part up or down that many semitones (a repeat is transposed).
+- `A:6`: chords in the part (default 4; a styled part rounds to whole phrases).
+- `A | B`: collapse. Every voice converges on the next part's tonic, holds, then blooms out into the next part. `A > B` resolves straight through.
+
+Each distinct part has its own seeded generator, so parts sound different but stay in the key unless shifted. With a chord rhythm, a collapse takes whole bars, so the grid stays on the bar. Song mode replaces Endless; Loop still works.
+
 **MIDI.** *Download MIDI* writes the piece as a Standard MIDI File: a Chords track with one block chord per change (re-struck on every pluck strike), the Melody, and the Drums on General MIDI channel 10. It also carries the tempo and the chord names as markers. The bloom is a pickup, so the beat grid lines up with the bars in a DAW. Endless pieces export the first 32 chords. *Import MIDI* (Project) reads any .mid. It hears a chord on every beat (pitch classes weighted by duration, bass weighted up), folds passing and colour changes into their neighbours, and writes the result as a progression with a matching chord rhythm, tempo and key. Drums on channel 10 become step patterns that repeat every 1, 2 or 4 bars.
 
 **Melody.** Turn on a randomized lead line, drawn in red above the chords. It lands on chord tones on strong beats and whenever the harmony changes, and steps through the scale in between, skipping notes that clash a semitone above a chord tone. It moves with some momentum, leaps occasionally, and joins the final unison. You can give it a rhythm in the notation above, or leave that empty for a random rhythm at the chosen density. It can play throughout or only between chord changes. Register, wave, level and portamento are adjustable.

@@ -15,6 +15,7 @@ import {
   DRUM_PRESETS,
   STRIKE_PRESETS,
   SCALES,
+  SONG_PRESETS,
   STYLES,
   chordIndexAt,
   chordToToken,
@@ -315,6 +316,17 @@ function startApp() {
     rebuild(true);
   });
 
+  const songSelect = $<HTMLSelectElement>('#song-preset');
+  songSelect.innerHTML = SONG_PRESETS.map((_, i) => `<option value="${i}"></option>`).join('') + '<option value="custom">Custom</option>';
+  SONG_PRESETS.forEach((p, i) => (songSelect.options[i].textContent = `${p.name} · ${p.form}`));
+  songSelect.addEventListener('change', () => {
+    const preset = SONG_PRESETS[Number(songSelect.value)];
+    if (!preset) return;
+    state.song.form = preset.form;
+    writeForm();
+    rebuild(true);
+  });
+
   const strikeSelect = $<HTMLSelectElement>('#strike-preset');
   strikeSelect.innerHTML = STRIKE_PRESETS.map((_, i) => `<option value="${i}"></option>`).join('') + '<option value="custom">Custom</option>';
   STRIKE_PRESETS.forEach((p, i) => (strikeSelect.options[i].textContent = p.name + (p.pattern ? `  (${p.pattern})` : '')));
@@ -402,7 +414,9 @@ function startApp() {
       : 'Pick a style for planned phrases, cadences and key changes, or leave it on None for free generation.';
     for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-drums]')) el.hidden = !state.drums.enabled;
-    for (const el of form.querySelectorAll<HTMLElement>('[data-loopnote]')) el.hidden = !state.loop || state.endless;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-song]')) el.hidden = !state.song.enabled;
+    const songIdx = SONG_PRESETS.findIndex((p) => p.form === state.song.form.trim());
+    songSelect.value = songIdx >= 0 ? String(songIdx) : 'custom';
     const dp = DRUM_PRESETS.findIndex((p) => (['kick', 'snare', 'hat', 'crash', 'ride'] as const).every((v) => p[v] === state.drums[v]));
     drumSelect.value = dp >= 0 ? String(dp) : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-swell]')) el.hidden = state.audio.swell === 'off';
@@ -421,8 +435,9 @@ function startApp() {
     presetSelect.value = presetIdx >= 0 ? String(presetIdx) : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-hide]')) {
       const conds = el.dataset.hide!.split(' ');
-      el.hidden = (conds.includes('endless') && state.endless) || (conds.includes('written') && written) || (conds.includes('loopon') && state.loop);
+      el.hidden = (conds.includes('endless') && state.endless && !state.song.enabled) || (conds.includes('written') && written) || (conds.includes('loopon') && state.loop) || (conds.includes('song') && state.song.enabled);
     }
+    for (const el of form.querySelectorAll<HTMLElement>('[data-loopnote]')) if (!state.loop || (state.endless && !state.song.enabled)) el.hidden = true;
   }
 
   // ---- Score ------------------------------------------------------------------
@@ -440,13 +455,14 @@ function startApp() {
     }
     const errs = (prefix: string | null) =>
       score.errors
-        .filter((e) => (prefix ? e.startsWith(prefix) : !/^((chord|melody) rhythm|strike pattern): /.test(e)))
+        .filter((e) => (prefix ? e.startsWith(prefix) : !/^((chord|melody) rhythm|strike pattern|song form): /.test(e)))
         .map((e) => (prefix ? e.slice(prefix.length) : e))
         .join(' · ');
     $('#prog-errors').textContent = errs(null);
     $('#rhythm-errors').textContent = errs('chord rhythm: ');
     $('#melody-errors').textContent = errs('melody rhythm: ');
     $('#strike-errors').textContent = errs('strike pattern: ');
+    $('#song-errors').textContent = errs('song form: ');
     pausedAt = Number.isFinite(score.timeline.end) ? Math.min(t, score.timeline.end) : t;
     score.extend(pausedAt);
     keySelect.options[0].textContent = state.key === 'auto' ? `Auto (${score.keyName})` : 'Auto (seeded)';
@@ -477,12 +493,18 @@ function startApp() {
   }
   function renderList() {
     const s = score;
-    $('#score-meta').textContent = `· ${s.keyName} ${s.scaleName}${s.endless ? ', endless' : `, ${s.chords.length} chords`}`;
+    $('#score-meta').textContent = `· ${s.keyName} ${s.scaleName}${s.endless ? ', endless' : s.sections.length ? `, ${s.sections.length} parts` : `, ${s.chords.length} chords`}`;
     if (renderedRows === 0) list.append(row(0, 'unison', spellNote(s.startNote, s.keyPc, s.config.scale)));
     for (let i = Math.max(0, renderedRows - 1); i < s.chords.length; i++) {
       const c = s.chords[i];
+      const sec = s.sections.find((x) => Math.abs(x.t - c.t) < 1e-9);
+      if (sec) {
+        const li = row(c.t, `§ ${sec.label}${sec.full ? '!' : ''}`, [sec.full ? 'full' : 'soft', sec.shift ? `${sec.shift > 0 ? '+' : ''}${sec.shift}` : ''].filter(Boolean).join(' · '));
+        li.classList.add('section');
+        list.append(li);
+      }
       const origin = c.origin === 'scale' || c.origin === 'cadence' || c.origin === 'written' ? '' : ` · ${c.origin}`;
-      list.append(row(c.t, c.name, c.roman + origin, c.notes.map((n) => spellChordNote(n, c)).join(' ')));
+      list.append(row(c.t, c.name, c.roman + origin, (c.unison ? c.notes.slice(0, 1) : c.notes).map((n) => spellChordNote(n, c)).join(' ')));
     }
     renderedRows = s.chords.length + 1;
     if (!s.endless) {
@@ -700,7 +722,7 @@ function startApp() {
     const path = el.dataset.path;
     clearTimeout(debounce);
     const delay =
-      path === 'progression' || path.endsWith('rhythm') || path === 'rhythm.chords' || /^drums\.(kick|snare|hat|crash|ride)$/.test(path)
+      path === 'progression' || path === 'song.form' || path.endsWith('rhythm') || path === 'rhythm.chords' || /^drums\.(kick|snare|hat|crash|ride)$/.test(path)
         ? 450
         : path.startsWith('theme.')
           ? 30
