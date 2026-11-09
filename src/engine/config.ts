@@ -9,6 +9,8 @@ import { SCALES } from './theory';
 export type Mode = 'scale' | 'drift' | 'voiceled' | 'free';
 const MODE_ALIASES: Record<string, Mode> = { diatonic: 'scale', chromatic: 'voiceled' };
 export type Easing = 'smootherstep' | 'cosine';
+/** How one chord becomes the next: voices glide, or the old chord releases while the new one swells in. */
+export type Transition = 'glide' | 'swell';
 export type Wave = 'sine' | 'triangle' | 'sawtooth' | 'square';
 export type Register = 'low' | 'mid' | 'high' | 'top';
 /** off · chord: dip at each change, swell into the chord · voice: moving voices fade and re-swell · breath: slow waves */
@@ -38,6 +40,10 @@ export interface Timing {
   zoom: number;
   /** Video only: hold on the zoomed-out final frame (s). */
   finalHold: number;
+  /** "Release & swell in" transitions: fade-in time of each new chord (s). */
+  swellIn: number;
+  /** "Release & swell in" transitions: release time of the outgoing chord (s). */
+  release: number;
 }
 
 export interface ChordDriftConfig {
@@ -88,7 +94,7 @@ export interface ChordDriftConfig {
     /** Number of randomized searches per chord. */
     candidates: number;
   };
-  motion: { easing: Easing };
+  motion: { easing: Easing; transition: Transition };
   rhythm: {
     /** Beats (quarter notes) per minute, for chord and melody rhythms. */
     tempo: number;
@@ -158,9 +164,11 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
     outro: 1.2,
     zoom: 1.6,
     finalHold: 2.0,
+    swellIn: 1.8,
+    release: 2.6,
   },
   voicing: { pedalBonus: 1.5, bassWeight: 0.3, movePenalty: 2, mudFloor: 48, minGap: 3, maxCopies: 3, candidates: 24 },
-  motion: { easing: 'smootherstep' },
+  motion: { easing: 'smootherstep', transition: 'glide' },
   rhythm: { tempo: 76, chords: '' },
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
   audio: { wave: 'sine', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 7000, width: 0.6, gain: 0.9, swell: 'off', swellDepth: 0.65 },
@@ -217,14 +225,18 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.timing.glide = Math.max(0.05, c.timing.glide);
   c.timing.arrival = Math.max(0.1, c.timing.arrival);
   c.timing.holdJitter = Math.min(0.9, c.timing.holdJitter);
+  c.timing.swellIn = Math.max(0.05, c.timing.swellIn);
+  c.timing.release = Math.max(0.05, c.timing.release);
+  if (c.motion.transition !== 'swell') c.motion.transition = 'glide';
   c.voicing.candidates = Math.max(1, Math.round(c.voicing.candidates));
   return c;
 }
 
 /** Settings applied by the "Ambient" button: slow, wide, soft, swelling. */
 export const AMBIENT_PRESET: DeepPartial<ChordDriftConfig> = {
-  timing: { hold: 4.8, glide: 1.7, stagger: 0.7, bloom: 5 },
-  audio: { wave: 'triangle', reverb: 0.8, detuneCents: 7, lowpass: 3200, swell: 'chord', swellDepth: 0.7 },
+  timing: { hold: 5, glide: 1.7, stagger: 0.7, bloom: 5, swellIn: 2.4, release: 3.4 },
+  motion: { transition: 'swell' },
+  audio: { wave: 'triangle', reverb: 0.8, detuneCents: 7, lowpass: 3200, swell: 'breath', swellDepth: 0.3 },
   melody: { density: 0.15, glide: 0.3, level: 0.4, wave: 'sine', register: 'top' },
   rhythm: { chords: '' },
 };

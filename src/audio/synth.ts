@@ -1,4 +1,4 @@
-import { melodyAt, pitchAt, swellAt } from '../engine/motion';
+import { layerAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
 import type { Wave } from '../engine/config';
 import { stream } from '../engine/rng';
 import type { Score } from '../engine/score';
@@ -117,6 +117,10 @@ export class VoiceBank {
   private oscs: OscillatorNode[] = [];
   private gains: GainNode[] = [];
   private lead: { osc: OscillatorNode; gain: GainNode } | null = null;
+  /** Everything this bank plays goes through here, so stop() can silence it for sure. */
+  private bus: GainNode;
+  /** 1 voice set for glides; 2 alternating sets for release-&-swell transitions. */
+  private layers: number;
   private nextChunk = 0;
   private stopped = false;
 
@@ -133,19 +137,25 @@ export class VoiceBank {
     private endAt: number,
   ) {
     const a = score.config.audio;
-    for (let v = 0; v < score.config.voices; v++) {
-      const osc = ctx.createOscillator();
-      osc.type = a.wave;
-      osc.detune.value = score.detune[v];
-      osc.frequency.value = midiToHz(pitchAt(score, v, offset));
-      const g = ctx.createGain();
-      g.gain.value = 0;
-      const pan = ctx.createStereoPanner();
-      pan.pan.value = score.pan[v];
-      osc.connect(g).connect(pan).connect(master.input);
-      osc.start(when);
-      this.oscs.push(osc);
-      this.gains.push(g);
+    this.bus = ctx.createGain();
+    this.bus.connect(master.input);
+    this.layers = score.config.motion.transition === 'swell' ? 2 : 1;
+    for (let L = 0; L < this.layers; L++) {
+      for (let v = 0; v < score.config.voices; v++) {
+        const osc = ctx.createOscillator();
+        osc.type = a.wave;
+        // The second layer is detuned the other way, which keeps crossfades shimmering rather than phasing.
+        osc.detune.value = L === 0 ? score.detune[v] : -score.detune[v];
+        osc.frequency.value = midiToHz(this.layers === 2 ? layerAt(score, L as 0 | 1, v, offset).p : pitchAt(score, v, offset));
+        const g = ctx.createGain();
+        g.gain.value = 0;
+        const pan = ctx.createStereoPanner();
+        pan.pan.value = score.pan[v];
+        osc.connect(g).connect(pan).connect(this.bus);
+        osc.start(when);
+        this.oscs.push(osc);
+        this.gains.push(g);
+      }
     }
     if (score.config.melody.enabled) {
       const osc = ctx.createOscillator();
@@ -153,7 +163,7 @@ export class VoiceBank {
       osc.frequency.value = midiToHz(melodyAt(score, offset)?.p ?? score.startNote);
       const g = ctx.createGain();
       g.gain.value = 0;
-      osc.connect(g).connect(master.input);
+      osc.connect(g).connect(this.bus);
       osc.start(when);
       this.oscs.push(osc);
       this.lead = { osc, gain: g };
@@ -200,20 +210,28 @@ export class VoiceBank {
       // curve still ends on the value due at the next chunk's start, so the
       // tiny gap just holds that value — no step in pitch.
       const dur = CHUNK - Math.max(256 / sr, 0.004);
-      for (let v = 0; v < V; v++) {
+      for (let idx = 0; idx < V * this.layers; idx++) {
+        const v = idx % V;
+        const L = (idx >= V ? 1 : 0) as 0 | 1;
         const freq = new Float32Array(n);
         const gain = new Float32Array(n);
         for (let i = 0; i < n; i++) {
           const t = t0 + (i / (n - 1)) * CHUNK;
-          const f = midiToHz(pitchAt(this.score, v, t));
+          let f: number;
+          let layerGain = 1;
+          if (this.layers === 2) {
+            const st = layerAt(this.score, L, v, t);
+            f = midiToHz(st.p);
+            layerGain = st.g;
+          } else f = midiToHz(pitchAt(this.score, v, t));
           freq[i] = f;
           let env = Math.min(1, t / 0.05); // 50 ms fade-in at the very start
           if (this.offset > 0) env *= Math.min(1, (t - this.offset) / 0.03); // de-click when starting mid-piece
           if (t > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (t - fadeOutStart) / fadeLen)));
-          gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env) * swellAt(this.score, v, t);
+          gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env) * swellAt(this.score, v, t) * layerGain;
         }
-        setCurve(this.oscs[v].frequency, freq, at, dur);
-        setCurve(this.gains[v].gain, gain, at, dur);
+        setCurve(this.oscs[idx].frequency, freq, at, dur);
+        setCurve(this.gains[idx].gain, gain, at, dur);
       }
       if (this.lead) {
         const freq = new Float32Array(n);
@@ -239,17 +257,30 @@ export class VoiceBank {
     if (this.stopped) return;
     this.stopped = true;
     const now = this.ctx.currentTime;
-    const gains = this.lead ? [...this.gains, this.lead.gain] : this.gains;
-    for (let v = 0; v < this.oscs.length; v++) {
+    // Fade the whole bank and then disconnect it. Cancelling per-voice automation
+    // isn't reliable everywhere (Firefox can keep an in-progress curve going, and
+    // may reject a second stop()), but a disconnected bus is always silent.
+    try {
+      this.bus.gain.cancelScheduledValues(now);
+      this.bus.gain.setValueAtTime(this.bus.gain.value, now);
+      this.bus.gain.linearRampToValueAtTime(0, now + 0.04);
+    } catch {
+      /* ignore */
+    }
+    for (const o of this.oscs) {
       try {
-        // Quick fade to avoid a click, then stop.
-        gains[v].gain.cancelScheduledValues(now);
-        gains[v].gain.setTargetAtTime(0, now, 0.015);
-        this.oscs[v].stop(now + 0.1);
+        o.stop(now + 0.06);
       } catch {
-        /* already stopped */
+        /* already stopped or stop already scheduled */
       }
     }
+    setTimeout(() => {
+      try {
+        this.bus.disconnect();
+      } catch {
+        /* ignore */
+      }
+    }, 90);
   }
 }
 
@@ -314,6 +345,7 @@ export class LivePlayer {
   private startedAt = 0;
   private startOffset = 0;
   private recordTap: MediaStreamAudioDestinationNode | null = null;
+  private suspendTimer = 0;
   playing = false;
 
   private ensure(score: Score): AudioContext {
@@ -328,6 +360,7 @@ export class LivePlayer {
   }
 
   async play(score: Score, offset: number): Promise<void> {
+    clearTimeout(this.suspendTimer);
     const ctx = this.ensure(score);
     if (ctx.state === 'suspended') await ctx.resume();
     this.stopBank();
@@ -360,6 +393,33 @@ export class LivePlayer {
     this.stopBank();
     this.playing = false;
     this.startOffset = t;
+    // Pause means quiet: fade out the reverb tail too, drop that master chain
+    // (the next play starts with a fresh one), and suspend audio processing to
+    // save battery. Recording keeps its tap on whichever master is current.
+    const ctx = this.ctx;
+    const master = this.master;
+    if (ctx && master && !this.recordTap) {
+      const out = master.output as GainNode;
+      try {
+        out.gain.cancelScheduledValues(ctx.currentTime);
+        out.gain.setValueAtTime(out.gain.value, ctx.currentTime);
+        out.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.12);
+      } catch {
+        /* ignore */
+      }
+      this.master = null;
+      this.masterScore = null;
+      setTimeout(() => {
+        try {
+          out.disconnect();
+        } catch {
+          /* ignore */
+        }
+      }, 160);
+      this.suspendTimer = window.setTimeout(() => {
+        if (!this.playing && ctx.state === 'running') void ctx.suspend();
+      }, 220);
+    }
     return t;
   }
 
@@ -371,6 +431,7 @@ export class LivePlayer {
 
   /** Play a chord voicing once, for auditioning palette chords. */
   async audition(score: Score, notes: number[], seconds = 1.8): Promise<void> {
+    clearTimeout(this.suspendTimer);
     const ctx = this.ensure(score);
     if (ctx.state === 'suspended') await ctx.resume();
     const now = ctx.currentTime + 0.02;

@@ -261,8 +261,11 @@ class ScoreBuilder {
     const bloom = k === 0;
     // With a chord rhythm, each chord owns a fixed slot; glides must finish inside it.
     const slot = this.durations ? this.durations[k % this.durations.length] : Infinity;
+    const crossfade = cfg.motion.transition === 'swell' && !bloom;
     let span = 0;
     for (let v = 0; v < V; v++) {
+      // Release-&-swell transitions don't glide: the new chord fades in on its own voices (see layerAt).
+      if (crossfade) break;
       const maxDelay = bloom ? Math.min(T.stagger, T.bloom * 0.2) * 0.3 : Math.min(T.stagger, slot * 0.15);
       const delay = this.staggerRng() * maxDelay;
       const p0 = this.current[v];
@@ -275,6 +278,11 @@ class ScoreBuilder {
       score.moves[v].push({ t0: t + delay, d, p0, p1 });
       span = Math.max(span, delay + d);
     }
+    if (crossfade) {
+      span = Math.min(T.swellIn, slot * 0.9);
+      // Keep the stagger stream in step so switching transition modes doesn't change later randomness.
+      for (let v = 0; v < V; v++) this.staggerRng();
+    }
     const chord: ScoreChord = { ...spec, index: k, notes, t, settled: t + span };
     score.chords.push(chord);
     score.labels.push({ t, text: spec.name });
@@ -285,7 +293,7 @@ class ScoreBuilder {
       // The bloom is a pickup: the beat grid starts when it lands.
       this.nextChange = (bloom ? score.gridStart : t) + slot;
     } else {
-      this.nextChange = t + span + Math.max(0.35, T.hold * jitter - T.glide);
+      this.nextChange = t + span + Math.max(0.35, T.hold * jitter - (crossfade ? T.swellIn : T.glide));
     }
     this.current = notes;
   }

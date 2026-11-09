@@ -61,12 +61,14 @@ For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half
 
 **Sound.** Choose sine, triangle, saw or square for the chords, and separately for the melody. Saw and square are level-matched, and the Brightness control sets the master low-pass.
 
+**Chord changes.** By default the voices *glide* to the next chord. Switch Timing → Chord changes to **Release & swell in** and each chord instead fades out underneath the next one swelling in, with separate swell-in and release times. Audio uses two alternating sets of voices so chords overlap. In the picture, notes the chords share stay solid and new ones fade in as tapering lines. The opening bloom and the final arrival still glide.
+
 **Swells (ambient).** Volume swells, with a depth control:
 - *Swell into each chord:* each change dips, then the new chord blooms in.
 - *Moving voices re-swell:* only the voices that move fade and come back, like re-bowed strings.
 - *Slow breathing:* slow overlapping waves, independent of the chords.
 
-The lines and dots breathe with the level, in the video as well. **Ambient preset** sets slow glides, long holds, a soft triangle tone, deep reverb with a longer tail, and swells. **Default sound** puts timing and sound back.
+The lines and dots breathe with the level, in the video as well. **Ambient preset** sets release-and-swell-in changes, long holds, a soft triangle tone, deep reverb with a longer tail, and gentle breathing. **Default sound** puts timing and sound back.
 
 **Projects.** Save to the browser's project list, export or import `.chorddrift.json` files, or copy a share link: the URL holds the full config, so a link always reopens the exact piece.
 

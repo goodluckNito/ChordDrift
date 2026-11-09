@@ -171,6 +171,7 @@ function startApp() {
     for (const el of form.querySelectorAll<HTMLElement>('[data-show]')) el.hidden = state.mode !== el.dataset.show;
     for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-swell]')) el.hidden = state.audio.swell === 'off';
+    for (const el of form.querySelectorAll<HTMLElement>('[data-transition]')) el.hidden = state.motion.transition !== el.dataset.transition;
     for (const el of form.querySelectorAll<HTMLElement>('[data-free]')) el.hidden = state.rhythm.chords.trim().length > 0;
     const presetIdx = RHYTHM_PRESETS.findIndex((p) => p.chords === state.rhythm.chords.trim());
     presetSelect.value = presetIdx >= 0 ? String(presetIdx) : 'custom';
@@ -293,14 +294,14 @@ function startApp() {
   });
   $('#ambient').addEventListener('click', () => {
     const p = AMBIENT_PRESET;
-    state = resolveConfig({ ...state, timing: { ...state.timing, ...p.timing }, audio: { ...state.audio, ...p.audio }, melody: { ...state.melody, ...p.melody }, rhythm: { ...state.rhythm, ...p.rhythm } } as DeepPartial<ChordDriftConfig>);
+    state = resolveConfig({ ...state, timing: { ...state.timing, ...p.timing }, motion: { ...state.motion, ...p.motion }, audio: { ...state.audio, ...p.audio }, melody: { ...state.melody, ...p.melody }, rhythm: { ...state.rhythm, ...p.rhythm } } as DeepPartial<ChordDriftConfig>);
     writeForm();
     rebuild(true);
-    setStatus('Ambient preset: slow glides, long holds, soft tone, deep reverb, swells. Tweak anything from here.');
+    setStatus('Ambient preset: each chord releases as the next swells in, long holds, soft tone, deep reverb. Tweak anything from here.');
   });
   $('#sound-reset').addEventListener('click', () => {
     const d = DEFAULT_CONFIG;
-    state = resolveConfig({ ...state, timing: structuredClone(d.timing), audio: structuredClone(d.audio), melody: { ...structuredClone(d.melody), enabled: state.melody.enabled } } as DeepPartial<ChordDriftConfig>);
+    state = resolveConfig({ ...state, timing: structuredClone(d.timing), motion: structuredClone(d.motion), audio: structuredClone(d.audio), melody: { ...structuredClone(d.melody), enabled: state.melody.enabled } } as DeepPartial<ChordDriftConfig>);
     writeForm();
     rebuild(true);
     setStatus('Timing and sound back to defaults.');

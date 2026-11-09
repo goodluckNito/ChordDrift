@@ -58,7 +58,58 @@ describe('swells', () => {
 
   it('ambient preset is a valid config', () => {
     const c = resolveConfig(AMBIENT_PRESET);
-    expect(c.audio.swell).toBe('chord');
-    expect(c.timing.glide).toBeGreaterThan(1);
+    expect(c.motion.transition).toBe('swell');
+    expect(c.timing.swellIn).toBeGreaterThan(1);
+    expect(c.timing.release).toBeGreaterThan(c.timing.swellIn);
+  });
+});
+
+describe('release & swell-in transitions', () => {
+  const cfg = { seed: 2, motion: { transition: 'swell' as const }, timing: { swellIn: 1.5, release: 2.5 } };
+
+  it('picks the same chords and voicings as glide mode', () => {
+    const glide = generateScore({ seed: 2 });
+    const swell = generateScore(cfg);
+    expect(swell.chords.map((c) => c.notes)).toEqual(glide.chords.map((c) => c.notes));
+  });
+
+  it('fades each new chord in while the previous one releases underneath', async () => {
+    const { layerAt } = await import('../src/engine');
+    const s = generateScore(cfg);
+    for (let k = 1; k < s.chords.length; k++) {
+      const c = s.chords[k];
+      const L = (k % 2) as 0 | 1;
+      const O = (1 - L) as 0 | 1;
+      expect(layerAt(s, L, 0, c.t + 1e-6).g).toBeLessThan(0.01); // new chord starts silent…
+      expect(layerAt(s, O, 0, c.t + 1e-6).g).toBeGreaterThan(0.99); // …under the full old one
+      expect(layerAt(s, L, 0, c.t + 1.5).g).toBeGreaterThan(0.99); // swelled in
+      const nextT = s.chords[k + 1]?.t ?? s.timeline.arrivalEnd;
+      if (nextT - c.t > 2.6) expect(layerAt(s, O, 0, c.t + 2.55).g).toBeLessThan(0.01); // old one released
+    }
+  });
+
+  it('only changes a layer\'s pitch while that layer is silent (no audible glides between chords)', async () => {
+    const { layerAt } = await import('../src/engine');
+    const s = generateScore(cfg);
+    const bloomEnd = s.chords[0].settled;
+    for (const L of [0, 1] as const) {
+      for (let v = 0; v < 13; v++) {
+        let prev = layerAt(s, L, v, bloomEnd);
+        for (let t = bloomEnd; t < s.timeline.arrivalStart; t += 0.01) {
+          const cur = layerAt(s, L, v, t);
+          if (cur.p !== prev.p) expect(Math.min(cur.g, prev.g)).toBeLessThan(0.02);
+          prev = cur;
+        }
+      }
+    }
+  });
+
+  it('still converges on the arrival note', async () => {
+    const { layerAt } = await import('../src/engine');
+    const s = generateScore(cfg);
+    const L = ((s.chords.length - 1) % 2) as 0 | 1;
+    const end = layerAt(s, L, 0, s.timeline.arrivalEnd + 0.05);
+    expect(end.p).toBe(s.endNote);
+    expect(end.g).toBe(1);
   });
 });

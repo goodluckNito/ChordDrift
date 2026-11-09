@@ -202,3 +202,49 @@ export function swellAt(score: Score, v: number, t: number): number {
   const ramp = Math.min(1, t / Math.max(0.1, tl.introEnd + score.config.timing.bloom));
   return 1 - depth * ramp * (1 - e);
 }
+
+/**
+ * "Release & swell in" transitions use two alternating layers of voices: chord
+ * k sounds on layer k % 2, swells in when it starts, and releases when chord
+ * k + 1 starts — so each chord fades out underneath the next one swelling in.
+ * The bloom (chord 0) and the arrival still glide. Returns the pitch (MIDI) and
+ * level (0..1) of voice v on layer L at time t.
+ */
+export function layerAt(score: Score, L: 0 | 1, v: number, t: number): { p: number; g: number } {
+  const chords = score.chords;
+  const T = score.config.timing;
+  const tl = score.timeline;
+  let k = chordIndexAt(score, t);
+  if (k >= 0 && k % 2 !== L) k -= 1;
+  if (k < 0) {
+    // Before this layer's first chord: layer 0 holds the opening unison, layer 1 waits silently.
+    return L === 0 ? { p: pitchAt(score, v, t), g: 1 } : { p: chords[1]?.notes[v] ?? score.startNote, g: 0 };
+  }
+  const c = chords[k];
+  const next = chords[k + 1];
+  const after = chords[k + 2];
+  const last = k === chords.length - 1;
+  const p = k === 0 || (last && t >= tl.arrivalStart) ? pitchAt(score, v, t) : c.notes[v];
+  const nextT = next ? next.t : tl.arrivalStart;
+  const swellIn = Math.max(0.01, Math.min(T.swellIn, nextT - c.t));
+  const gIn = k === 0 ? 1 : smootherstep((t - c.t) / swellIn);
+  let gOut = 1;
+  if (next) {
+    // The release must finish before this layer is reused (by chord k + 2) or the arrival ends.
+    const limit = (after ? after.t : Number.isFinite(tl.arrivalEnd) ? tl.arrivalEnd : Infinity) - next.t;
+    const release = Math.max(0.01, Math.min(T.release, limit));
+    gOut = 1 - smootherstep((t - next.t) / release);
+  }
+  return { p, g: gIn * gOut };
+}
+
+/**
+ * The pitches you'd point at right now: the gliding voices, or — with
+ * release-&-swell transitions — the newest chord. Used for the camera, labels and HUD.
+ */
+export function soundingPitches(score: Score, t: number): number[] {
+  if (score.config.motion.transition !== 'swell') return pitchesAt(score, t);
+  const k = chordIndexAt(score, t);
+  if (k <= 0 || t >= score.timeline.arrivalStart) return pitchesAt(score, t);
+  return score.chords[k].notes.slice();
+}

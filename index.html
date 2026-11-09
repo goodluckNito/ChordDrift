@@ -184,13 +184,25 @@
 
           <fieldset>
             <legend>Timing</legend>
+            <label class="wide">Chord changes
+              <select data-path="motion.transition">
+                <option value="glide">Glide — voices slide to the next chord</option>
+                <option value="swell">Release &amp; swell in — the next chord fades in under the last</option>
+              </select>
+            </label>
+            <label data-transition="swell">Swell in (s) <output></output>
+              <input data-path="timing.swellIn" type="range" min="0.2" max="6" step="0.1" />
+            </label>
+            <label data-transition="swell">Release (s) <output></output>
+              <input data-path="timing.release" type="range" min="0.2" max="8" step="0.1" />
+            </label>
             <label data-free>Chord hold (s) <output></output>
               <input data-path="timing.hold" type="range" min="0.8" max="6" step="0.1" />
             </label>
-            <label>Glide (s) <output></output>
+            <label data-transition="glide">Glide (s) <output></output>
               <input data-path="timing.glide" type="range" min="0.2" max="2" step="0.05" />
             </label>
-            <label>Stagger (s) <output></output>
+            <label data-transition="glide">Stagger (s) <output></output>
               <input data-path="timing.stagger" type="range" min="0" max="1" step="0.05" />
             </label>
             <label>Bloom (s) <output></output>

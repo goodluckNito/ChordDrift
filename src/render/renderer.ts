@@ -1,4 +1,4 @@
-import { chordLabelAt, frequencyStats, melodyAt, pitchAt, smootherstep, swellAt } from '../engine/motion';
+import { chordIndexAt, chordLabelAt, frequencyStats, layerAt, melodyAt, pitchAt, smootherstep, soundingPitches, swellAt } from '../engine/motion';
 import type { Score } from '../engine/score';
 import { midiToHz } from '../engine/theory';
 
@@ -52,8 +52,7 @@ interface Extent {
 function instantExtent(score: Score, t: number): Extent {
   let lo = Infinity;
   let hi = -Infinity;
-  for (let v = 0; v < score.config.voices; v++) {
-    const p = pitchAt(score, v, t);
+  for (const p of soundingPitches(score, t)) {
     if (p < lo) lo = p;
     if (p > hi) hi = p;
   }
@@ -139,6 +138,72 @@ function traceVoice(
     }
   }
   ctx.lineTo(xOf(tTo), yOf(pitchAt(score, v, tTo)));
+}
+
+/**
+ * Release-&-swell transitions: each chord is drawn as its own set of lines whose
+ * opacity follows its level, so chords visibly fade in under the previous one.
+ * The bloom and the arrival keep their glides.
+ */
+function traceCrossfades(
+  ctx: CanvasRenderingContext2D,
+  score: Score,
+  tFrom: number,
+  tTo: number,
+  xOf: (t: number) => number,
+  yOf: (p: number) => number,
+  step: number,
+) {
+  const chords = score.chords;
+  const V = score.config.voices;
+  const ink = THEME.ink;
+  const rgb = [parseInt(ink.slice(1, 3), 16), parseInt(ink.slice(3, 5), 16), parseInt(ink.slice(5, 7), 16)].join(',');
+  // Before the bloom everything is the opening unison on layer 0.
+  const first = Math.max(0, chordIndexAt(score, tFrom) - 1);
+  const drawUnison = chords.length === 0 || tFrom < chords[0].t;
+  if (drawUnison) {
+    ctx.beginPath();
+    const end = Math.min(tTo, chords[0]?.t ?? tTo);
+    for (let v = 0; v < V; v++) traceVoice(ctx, score, v, tFrom, end, xOf, yOf, step);
+    ctx.strokeStyle = ink;
+    ctx.stroke();
+  }
+  for (let k = first; k < chords.length && chords[k].t < tTo; k++) {
+    const c = chords[k];
+    const L = (k % 2) as 0 | 1;
+    const next = chords[k + 1];
+    const last = k === chords.length - 1;
+    const a = Math.max(c.t, tFrom);
+    // Draw until fully released (or to now for the newest chord).
+    let b = tTo;
+    if (next) {
+      let end = next.t;
+      while (end < tTo && layerAt(score, L, 0, end).g > 0.01) end += 0.05;
+      b = Math.min(tTo, end);
+    }
+    if (b <= a) continue;
+    // Opacity follows the layer level via a horizontal gradient.
+    const x0 = xOf(a);
+    const x1 = xOf(b);
+    const grad = ctx.createLinearGradient(x0, 0, Math.max(x1, x0 + 1), 0);
+    const N = 12;
+    for (let i = 0; i <= N; i++) {
+      const t = a + ((b - a) * i) / N;
+      grad.addColorStop(i / N, `rgba(${rgb},${layerAt(score, L, 0, t).g.toFixed(3)})`);
+    }
+    ctx.beginPath();
+    for (let v = 0; v < V; v++) {
+      if (k === 0 || (last && b > score.timeline.arrivalStart)) traceVoice(ctx, score, v, a, b, xOf, yOf, step);
+      else {
+        const y = yOf(c.notes[v]);
+        ctx.moveTo(x0, y);
+        ctx.lineTo(x1, y);
+      }
+    }
+    ctx.strokeStyle = grad;
+    ctx.stroke();
+  }
+  ctx.strokeStyle = ink;
 }
 
 function traceMelody(
@@ -238,7 +303,9 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     // Lines are drawn from the score's glides: flat stretches are single
     // segments and only the curves are sampled, which keeps frames cheap on phones.
     const curveStep = 2.5 * u;
-    if (cfg.audio.swell === 'off' || z >= 1) {
+    if (cfg.motion.transition === 'swell') {
+      traceCrossfades(ctx, score, tFrom, tTo, xOf, yOf, curveStep);
+    } else if (cfg.audio.swell === 'off' || z >= 1) {
       ctx.beginPath();
       for (let v = 0; v < V; v++) traceVoice(ctx, score, v, tFrom, tTo, xOf, yOf, curveStep);
       ctx.stroke();
@@ -266,21 +333,40 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   }
 
   // ---- Playhead dots + labels ---------------------------------------------
-  const pitches = Array.from({ length: V }, (_, v) => pitchAt(score, v, tNow));
-  const freqs = Array.from({ length: V }, (_, v) => midiToHz(pitchAt(score, v, t)));
+  const pitches = soundingPitches(score, tNow);
+  const freqs = soundingPitches(score, t).map(midiToHz);
   const dotX = xOf(tNow);
   ctx.fillStyle = THEME.ink;
-  const dotYs = new Set<number>();
   const swelling = cfg.audio.swell !== 'off' && z < 1;
-  pitches.forEach((p, v) => {
-    const y = Math.round(yOf(p) * 2) / 2;
-    if (dotYs.has(y)) return;
-    dotYs.add(y);
-    const r = swelling ? 7 * u * (0.55 + 0.45 * swellAt(score, v, tNow)) : 7 * u;
-    ctx.beginPath();
-    ctx.arc(dotX, y, r, 0, Math.PI * 2);
-    ctx.fill();
-  });
+  if (cfg.motion.transition === 'swell') {
+    // A dot for each sounding layer, sized and faded by its level.
+    for (const L of [0, 1] as const) {
+      const g = layerAt(score, L, 0, tNow).g;
+      if (g < 0.04) continue;
+      ctx.globalAlpha = Math.min(1, 0.25 + g);
+      const seen = new Set<number>();
+      for (let v = 0; v < V; v++) {
+        const y = Math.round(yOf(layerAt(score, L, v, tNow).p) * 2) / 2;
+        if (seen.has(y)) continue;
+        seen.add(y);
+        ctx.beginPath();
+        ctx.arc(dotX, y, 7 * u * (0.45 + 0.55 * g), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+  } else {
+    const dotYs = new Set<number>();
+    pitches.forEach((p, v) => {
+      const y = Math.round(yOf(p) * 2) / 2;
+      if (dotYs.has(y)) return;
+      dotYs.add(y);
+      const r = swelling ? 7 * u * (0.55 + 0.45 * swellAt(score, v, tNow)) : 7 * u;
+      ctx.beginPath();
+      ctx.arc(dotX, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
   const lead = score.melody.length ? melodyAt(score, tNow) : null;
   const leadOn = lead && lead.g > 0.05 && tNow < tl.arrivalStart;
   if (leadOn) {
