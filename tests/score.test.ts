@@ -171,14 +171,22 @@ describe('opening unison', () => {
 });
 
 describe('loop', () => {
-  it('returns to the starting unison and has no zoom-out or fade', () => {
+  it('rises, then glides back to the starting unison, with no zoom-out or fade', () => {
     const s = generateScore({ seed: 4, loop: true });
-    expect(s.endNote).toBe(s.startNote);
+    expect(s.endNote).toBeGreaterThan(s.startNote); // the default ending still rises…
     expect(s.timeline.zoomStart).toBe(Infinity);
     expect(s.timeline.musicEnd).toBe(Infinity);
     const L = s.timeline.end;
     // The end state equals the start state, so it wraps cleanly.
     for (let v = 0; v < 13; v++) expect(pitchAt(s, v, L - 1e-6)).toBe(pitchAt(s, v, 0));
+  });
+  it('falls and comes back up when the ending is below', () => {
+    const s = generateScore({ seed: 4, loop: true, endNote: 'tonic-2oct' });
+    expect(s.endNote).toBeLessThan(s.startNote);
+    const mid = (s.timeline.arrivalEnd + s.timeline.end) / 2;
+    expect(pitchAt(s, 0, s.timeline.arrivalEnd + 0.01)).toBe(s.endNote);
+    for (let v = 0; v < 13; v++) expect(pitchAt(s, v, s.timeline.end - 1e-6)).toBe(s.startNote);
+    expect(mid).toBeGreaterThan(s.timeline.arrivalEnd);
   });
   it('can resolve to the starting unison without looping', () => {
     const s = generateScore({ seed: 4, endNote: 'start' });

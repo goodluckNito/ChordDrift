@@ -343,8 +343,7 @@ class ScoreBuilder {
   private addArrival() {
     const { cfg, score } = this;
     const T = cfg.timing;
-    // Looping (or "start") resolves back to the opening unison so the end meets the beginning.
-    const endNote = cfg.loop || cfg.endNote === 'start' ? score.startNote : resolveNote(cfg.endNote, this.walker.tonic, 'high');
+    const endNote = cfg.endNote === 'start' ? score.startNote : resolveNote(cfg.endNote, this.walker.tonic, 'high');
     const arrivalStart = score.chords.length ? this.nextChange : T.intro;
     for (let v = 0; v < cfg.voices; v++) {
       // Slight stagger at the start, but everyone lands together.
@@ -353,6 +352,16 @@ class ScoreBuilder {
     }
     const arrivalEnd = arrivalStart + T.arrival;
     const musicEnd = arrivalEnd + T.outro;
+    // Loops always come home: if the arrival went up (or down), every voice
+    // glides back to the starting unison after a short hold, then it wraps.
+    let loopEnd = arrivalEnd + T.outro;
+    if (cfg.loop && endNote !== score.startNote) {
+      const back = arrivalEnd + Math.max(0.6, T.outro * 0.6);
+      const d = Math.max(1, T.arrival * 1.3);
+      for (let v = 0; v < cfg.voices; v++) score.moves[v].push({ t0: back, d, p0: endNote, p1: score.startNote });
+      score.labels.push({ t: back, text: `↺ ${spellNote(score.startNote, this.walker.tonic, this.walker.scale)}` });
+      loopEnd = back + d + Math.min(0.6, T.intro);
+    }
     if (this.melody) {
       // The melody joins the final unison.
       score.melody.push({ t: arrivalStart, d: musicEnd - arrivalStart, p: endNote, glide: T.arrival, from: this.melody.lastPitch });
@@ -375,7 +384,7 @@ class ScoreBuilder {
           musicEnd: Number.POSITIVE_INFINITY,
           zoomStart: Number.POSITIVE_INFINITY,
           zoomEnd: Number.POSITIVE_INFINITY,
-          end: arrivalEnd + T.outro,
+          end: loopEnd,
         }
       : {
           introEnd: T.intro,

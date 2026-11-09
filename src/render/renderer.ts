@@ -1,5 +1,5 @@
 import type { ChordDriftConfig } from '../engine/config';
-import { chordIndexAt, chordLabelAt, frequencyStats, hasDynamics, layerAt, melodyAt, pitchAt, smootherstep, soundingPitches, strikeTimesBetween, widthFactor } from '../engine/motion';
+import { chordIndexAt, chordLabelAt, frequencyStats, hasDynamics, layerAt, levelAt, melodyAt, pitchAt, smootherstep, soundingPitches, strikeTimesBetween, voiceHits, widthFactor } from '../engine/motion';
 import type { Score } from '../engine/score';
 import type { ColorBy } from '../engine/themes';
 import { midiToHz, mod12 } from '../engine/theory';
@@ -493,6 +493,57 @@ class Painter {
   }
 }
 
+const RIPPLE_LIFE = 0.9;
+
+/** 0..1: how much a dot is still swollen from landing on a note (a quick pop, ~0.4 s). */
+function hitPop(score: Score, v: number, t: number): number {
+  let pop = 0;
+  for (const h of voiceHits(score, v, t - 0.4, t)) {
+    if (h.strike) continue;
+    const x = (t - h.t) / 0.4;
+    pop = Math.max(pop, (1 - x) * (1 - x));
+  }
+  return pop;
+}
+
+/**
+ * Expanding rings from a dot when its voice lands on a note (or is struck).
+ * `pos(v)` gives the dot's current position, or null to skip that voice.
+ */
+function drawRipples(
+  ctx: CanvasRenderingContext2D,
+  score: Score,
+  t: number,
+  pos: (v: number) => { x: number; y: number; color: string } | null,
+  radius: number,
+  u: number,
+) {
+  if (!score.config.theme.ripples) return;
+  ctx.save();
+  ctx.lineWidth = Math.max(1, 1.8 * u);
+  for (let v = 0; v < score.config.voices; v++) {
+    const hits = voiceHits(score, v, t - RIPPLE_LIFE, t);
+    if (!hits.length) continue;
+    const at = pos(v);
+    if (!at) continue;
+    ctx.strokeStyle = at.color;
+    // Strikes repeat fast; keep only the latest one so rings don't pile up.
+    let lastStrike = -Infinity;
+    for (const h of hits) if (h.strike) lastStrike = Math.max(lastStrike, h.t);
+    for (const h of hits) {
+      if (h.strike && h.t !== lastStrike) continue;
+      const age = (t - h.t) / RIPPLE_LIFE;
+      if (age < 0 || age > 1) continue;
+      const grow = 1 - Math.pow(1 - age, 3); // ease out
+      ctx.globalAlpha = (h.strike ? 0.35 : 0.6) * Math.pow(1 - age, 1.4);
+      ctx.beginPath();
+      ctx.arc(at.x, at.y, radius * (1 + grow * (h.strike ? 2.2 : 4.5)), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 /** Sample times around each pluck strike in [a, b]: just before, at the peak, and as it decays. */
 function strikeSamples(score: Score, a: number, b: number): number[] {
   const atk = score.config.audio.attack;
@@ -740,6 +791,101 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
   }
   ctx.restore();
   ctx.restore(); // plot clip
+}
+
+/**
+ * Waterfall: a rotating 3D spectrograph. Each moment is a spectrum slice —
+ * peaks at the voices' pitches, their height set by how loud each voice is —
+ * and slices recede into depth over time, back-to-front with hidden lines
+ * removed (like a mountain range). The camera sways slowly around the volume.
+ */
+function drawWaterfall(ctx: CanvasRenderingContext2D, score: Score, t: number, st: Style, lay: FrameLayout) {
+  const { width: W } = ctx.canvas;
+  const cfg = score.config;
+  const V = cfg.voices;
+  const u = lay.u;
+  const crossfade = cfg.motion.transition === 'swell';
+
+  // A square surface: pitch across, time in depth (now at the front edge).
+  const cam = cameraExtent(score, t);
+  const lo = cam.lo - 3;
+  const hi = cam.hi + 3;
+  const DEPTH = Math.max(6, cfg.video.historySeconds * 1.6); // seconds of history
+  const SLICES = 56;
+  const POINTS = 120;
+  const sigma = 0.85; // broad, smooth humps (semitones)
+
+  // The camera keeps travelling around the surface: a slow full turn plus a rocking
+  // elevation, so it passes through front, corner, edge-on and near top-down views.
+  const yaw = (t / 38) * Math.PI * 2 + 0.6;
+  const pitch = 0.62 + 0.34 * Math.sin((t / 27) * Math.PI * 2);
+  const camDist = 3.4;
+  const size = Math.min(W * 0.95, (lay.bandBottom - lay.bandTop) * 1.25);
+  const cx = W / 2;
+  const cy = (lay.bandTop + lay.bandBottom) / 2;
+  // World: x, z ∈ [-1, 1] (pitch, time), y up.
+  const project = (x: number, y: number, z: number) => {
+    const xr = x * Math.cos(yaw) - z * Math.sin(yaw);
+    const zr = x * Math.sin(yaw) + z * Math.cos(yaw);
+    const yr = y * Math.cos(pitch) - zr * Math.sin(pitch);
+    const zz = y * Math.sin(pitch) + zr * Math.cos(pitch) + camDist;
+    const k = (size * 1.05) / zz;
+    return { x: cx + xr * k, y: cy - yr * k };
+  };
+
+  // Spectrum of one moment: a smooth hump per voice (and the melody), heights by level.
+  const spectrum = (tau: number): Float32Array => {
+    const out = new Float32Array(POINTS + 1);
+    const add = (p: number, amp: number) => {
+      if (amp <= 0.003) return;
+      const center = ((p - lo) / (hi - lo)) * POINTS;
+      const span = (3 * sigma * POINTS) / (hi - lo);
+      for (let i = Math.max(0, Math.floor(center - span)); i <= Math.min(POINTS, Math.ceil(center + span)); i++) {
+        const d = ((i - center) / POINTS) * (hi - lo);
+        out[i] += amp * Math.exp(-(d * d) / (2 * sigma * sigma));
+      }
+    };
+    for (let v = 0; v < V; v++) {
+      const level = levelAt(score, v, tau);
+      if (crossfade) for (const L of [0, 1] as const) {
+        const sl = layerAt(score, L, v, tau);
+        add(sl.p, sl.g * level);
+      }
+      else add(pitchAt(score, v, tau), level);
+    }
+    const m = score.melody.length ? melodyAt(score, tau) : null;
+    if (m && m.g > 0) add(m.p, m.g);
+    return out;
+  };
+
+  // Wire surface: one line per moment, thin and even, drawn over each other.
+  ctx.save();
+  const heightScale = 0.26;
+  const style = st.colorBy === 'none' ? st.ink : null;
+  ctx.lineJoin = 'round';
+  for (let k = SLICES; k >= 0; k--) {
+    const z = (k / SLICES) * 2 - 1; // front (now) = -1
+    const values = spectrum(t - (k / SLICES) * DEPTH);
+    const path = new Path2D();
+    for (let i = 0; i <= POINTS; i++) {
+      const q = project((i / POINTS) * 2 - 1, Math.min(2, values[i]) * heightScale, z);
+      if (i === 0) path.moveTo(q.x, q.y);
+      else path.lineTo(q.x, q.y);
+    }
+    ctx.globalAlpha = k === 0 ? 1 : 0.85;
+    ctx.lineWidth = Math.max(1, (k === 0 ? 2.4 : 1.5) * u * st.lw);
+    if (style) ctx.strokeStyle = style;
+    else {
+      const a = project(-1, 0, z);
+      const b = project(1, 0, z);
+      const g = ctx.createLinearGradient(a.x, a.y, b.x + 0.01, b.y);
+      for (let i = 0; i <= 8; i++) g.addColorStop(i / 8, st.colorBy === 'pitch' ? pitchColor(lo + ((hi - lo) * i) / 8, st) : registerColor(i / 8, st));
+      ctx.strokeStyle = g;
+    }
+    ctx.stroke(path);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 /**
@@ -1158,7 +1304,8 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   ctx.fillRect(0, 0, W, H);
 
   const freqs = soundingPitches(score, t).map(midiToHz);
-  if (cfg.video.view === 'spiral') {
+  if (cfg.video.view === 'waterfall') drawWaterfall(ctx, score, t, st, lay);
+  else if (cfg.video.view === 'spiral') {
     if (cfg.video.spiral === 'fly') drawTunnel(ctx, score, t, st, lay);
     else if (cfg.video.spiral === 'orbit' || cfg.video.spiral === 'drain') drawOrbit(ctx, score, t, st, lay);
     else drawSpiral(ctx, score, t, st, lay);
@@ -1292,12 +1439,20 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
         const y = Math.round(yOf(p) * 2) / 2;
         if (dotYs.has(y)) return;
         dotYs.add(y);
-        const r = dynamic ? dotR * Math.min(1.6, 0.45 + 0.55 * widthFactor(score, v, tNow)) : dotR;
+        const r = (dynamic ? dotR * Math.min(1.6, 0.45 + 0.55 * widthFactor(score, v, tNow)) : dotR) * (z < 1 && th.ripples ? 1 + 0.9 * hitPop(score, v, tNow) : 1);
         ctx.fillStyle = painter.dotColor(v, p, y);
         ctx.beginPath();
         ctx.arc(dotX, y, r, 0, Math.PI * 2);
         ctx.fill();
       });
+    }
+    if (z < 1) {
+      drawRipples(ctx, score, tNow, (v) => {
+        const p = pitches[v];
+        if (p === undefined) return null;
+        const y = yOf(p);
+        return { x: dotX, y, color: painter.dotColor(v, p, y) };
+      }, dotR, u);
     }
     const lead = score.melody.length ? melodyAt(score, tNow) : null;
     const leadOn = lead && lead.g > 0.05 && tNow < tl.arrivalStart;

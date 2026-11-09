@@ -399,6 +399,7 @@ function startApp() {
       : 'Pick a style for planned phrases, cadences and key changes, or leave it on None for free generation.';
     for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-drums]')) el.hidden = !state.drums.enabled;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-loopnote]')) el.hidden = !state.loop || state.endless;
     const dp = DRUM_PRESETS.findIndex((p) => (['kick', 'snare', 'hat', 'crash', 'ride'] as const).every((v) => p[v] === state.drums[v]));
     drumSelect.value = dp >= 0 ? String(dp) : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-swell]')) el.hidden = state.audio.swell === 'off';

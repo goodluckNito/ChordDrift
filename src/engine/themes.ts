@@ -27,6 +27,8 @@ export interface Theme {
   glow: number;
   /** Faint octave lines with note names. */
   grid: boolean;
+  /** Dots emit an expanding ring when they land on a note (and on pluck strikes). */
+  ripples: boolean;
   hud: boolean;
   labels: boolean;
 }
@@ -50,6 +52,7 @@ const base: Omit<Theme, 'preset' | 'background' | 'ink' | 'accent' | 'text'> = {
   colorSeed: 0,
   glow: 0,
   grid: false,
+  ripples: true,
   hud: true,
   labels: true,
 };

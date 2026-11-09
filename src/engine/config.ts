@@ -179,8 +179,8 @@ export interface ChordDriftConfig {
     fps: number;
     historySeconds: number;
     nowPosition: number;
-    /** timeline = pitch over time (the classic view) · spiral = pitch wrapped around a spiral, history curling inward */
-    view: 'timeline' | 'spiral';
+    /** timeline = pitch over time · spiral = pitch on a spiral · waterfall = rotating 3D spectrograph, depth is time */
+    view: 'timeline' | 'spiral' | 'waterfall';
     /**
      * Spiral motion. orbit = rotation is time, distance from the centre is pitch, the past spirals inward ·
      * drain = like orbit, but the past sinks into the centre · fly = travel forward through time · inward = pitch-class clock
@@ -277,7 +277,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.complexity = Math.max(1, Math.min(5, Math.round(Number(c.complexity) || 3)));
   c.progression = String(c.progression ?? '');
   if (!STYLE_IDS.includes(c.style)) c.style = 'none';
-  if (c.video.view !== 'spiral') c.video.view = 'timeline';
+  if (!['timeline', 'spiral', 'waterfall'].includes(c.video.view)) c.video.view = 'timeline';
   if ((c.video.spiral as string) === 'zoom') c.video.spiral = 'fly'; // older projects
   if (!['orbit', 'drain', 'fly', 'inward'].includes(c.video.spiral)) c.video.spiral = 'orbit';
   c.endless = Boolean(c.endless);
@@ -308,6 +308,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   th.colorSeed = Math.max(0, Math.floor(Number(th.colorSeed) || 0)) >>> 0;
   th.gradient = Boolean(th.gradient);
   th.grid = Boolean(th.grid);
+  th.ripples = th.ripples !== false;
   th.hud = th.hud !== false;
   th.labels = th.labels !== false;
   // Older projects stored the melody colour on video.

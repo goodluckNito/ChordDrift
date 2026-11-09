@@ -391,3 +391,33 @@ export function duckAt(score: Score, t: number): number {
   }
   return 1 - d.duck.depth * env;
 }
+
+/**
+ * Moments a voice "hits" in [a, b]: when a glide lands on its new note, and
+ * every pluck strike. `strike` marks strikes (drawn smaller).
+ */
+export function voiceHits(score: Score, v: number, a: number, b: number): { t: number; strike: boolean }[] {
+  const out: { t: number; strike: boolean }[] = [];
+  const moves = score.moves[v];
+  // Binary search for the first move ending after a.
+  let lo = 0;
+  let hi = moves.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (moves[mid].t0 + moves[mid].d < a) lo = mid + 1;
+    else hi = mid;
+  }
+  for (let i = lo; i < moves.length && moves[i].t0 <= b; i++) {
+    const e = moves[i].t0 + moves[i].d;
+    if (e >= a && e <= b) out.push({ t: e, strike: false });
+  }
+  // Release-&-swell: a new chord "lands" when it has swelled in.
+  if (score.config.motion.transition === 'swell') {
+    for (const c of score.chords) {
+      const e = c.t + Math.min(score.config.timing.swellIn, 2);
+      if (c.index > 0 && e >= a && e <= b) out.push({ t: e, strike: false });
+    }
+  }
+  for (const s of strikeTimesBetween(score, a, b)) out.push({ t: s, strike: true });
+  return out;
+}

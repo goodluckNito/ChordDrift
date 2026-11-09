@@ -78,14 +78,16 @@
               <input data-path="loop" type="checkbox" />
               <span>Loop — end on the starting unison and start again seamlessly</span>
             </label>
-            <label class="wide" data-hide="endless loopon">Ending
+            <label class="wide" data-hide="endless">Ending
               <select data-path="endNote">
                 <option value="tonic+2oct">Rise to the tonic, two octaves up</option>
-                <option value="start">Return to the starting unison</option>
                 <option value="tonic+1oct">Rise to the tonic, one octave up</option>
-                <option value="tonic">Settle on the tonic (low)</option>
+                <option value="tonic">Settle on the middle tonic</option>
+                <option value="tonic-2oct">Fall to the tonic below</option>
+                <option value="start">Return to the starting unison</option>
               </select>
             </label>
+            <p class="wide muted small" data-hide="endless" data-loopnote>With Loop on, the voices glide back to the starting unison after the ending, so any ending loops cleanly.</p>
             <label data-hide="endless written">Chords (min)
               <input data-path="chordCount.0" type="number" min="1" max="60" />
             </label>
@@ -404,6 +406,7 @@
               <select data-path="video.view">
                 <option value="timeline">Timeline</option>
                 <option value="spiral">Spiral</option>
+                <option value="waterfall">3D spectrograph</option>
               </select>
             </label>
             <label data-spiral>Spiral motion
@@ -452,6 +455,7 @@
             <div class="checks wide">
               <label class="check"><input data-path="theme.gradient" type="checkbox" /><span>Gradient background</span></label>
               <label class="check"><input data-path="theme.grid" type="checkbox" /><span>Octave grid</span></label>
+              <label class="check"><input data-path="theme.ripples" type="checkbox" /><span>Ripples on hits</span></label>
               <label class="check"><input data-path="theme.labels" type="checkbox" /><span>Hz labels</span></label>
               <label class="check"><input data-path="theme.hud" type="checkbox" /><span>HUD</span></label>
             </div>
