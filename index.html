@@ -489,6 +489,10 @@
             <input type="file" id="project-file" accept=".json,application/json" hidden />
           </div>
           <div class="row wide">
+            <button type="button" id="midi-import" title="Read the chords (and drums) of a .mid file into a written progression">Import MIDI</button>
+            <input type="file" id="midi-file" accept=".mid,.midi,.rmi,audio/midi,audio/x-midi" hidden />
+          </div>
+          <div class="row wide">
             <button type="button" id="share">Copy share link</button>
             <button type="button" id="reset-all" title="Every setting back to its default (keeps the seed)">Reset all settings</button>
           </div>
@@ -496,6 +500,7 @@
 
         <div class="actions">
           <button type="button" id="wav">Download WAV</button>
+          <button type="button" id="midi">Download MIDI</button>
           <button type="button" id="record">Record video</button>
           <button type="button" id="png">Save frame</button>
           <button type="button" id="json">Copy config</button>

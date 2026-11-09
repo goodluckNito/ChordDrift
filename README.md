@@ -84,6 +84,8 @@ e*4   (q e e)*2                   repeat a note or group; patterns loop, | and ,
 
 For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half-note triplets. Presets are in the Rhythm section.
 
+**MIDI.** *Download MIDI* writes the piece as a Standard MIDI File: a Chords track with one block chord per change (re-struck on every pluck strike), the Melody, and the Drums on General MIDI channel 10. It also carries the tempo and the chord names as markers. The bloom is a pickup, so the beat grid lines up with the bars in a DAW. Endless pieces export the first 32 chords. *Import MIDI* (Project) reads any .mid. It hears a chord on every beat (pitch classes weighted by duration, bass weighted up), folds passing and colour changes into their neighbours, and writes the result as a progression with a matching chord rhythm, tempo and key. Drums on channel 10 become step patterns that repeat every 1, 2 or 4 bars.
+
 **Melody.** Turn on a randomized lead line, drawn in red above the chords. It lands on chord tones on strong beats and whenever the harmony changes, and steps through the scale in between, skipping notes that clash a semitone above a chord tone. It moves with some momentum, leaps occasionally, and joins the final unison. You can give it a rhythm in the notation above, or leave that empty for a random rhythm at the chosen density. It can play throughout or only between chord changes. Register, wave, level and portamento are adjustable.
 
 **Drums.** Drums are synthesized, so exports stay deterministic and there are no sample licences to worry about. They start when the bloom lands.

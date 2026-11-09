@@ -20,6 +20,9 @@ import {
   chordToToken,
   formatSeed,
   generateScore,
+  midiToConfig,
+  readMidi,
+  writeMidi,
   pitchesAt,
   randomSeed,
   resolveConfig,
@@ -734,6 +737,31 @@ function startApp() {
       setStatus(`Audio export failed: ${(err as Error).message}`);
     } finally {
       btn.disabled = false;
+    }
+  });
+
+  $('#midi').addEventListener('click', () => {
+    try {
+      const m = writeMidi(generateScore(state), score.endless ? Math.max(60, currentTime()) : undefined);
+      download(new Blob([m.bytes as BlobPart], { type: 'audio/midi' }), `${baseName()}.mid`);
+      setStatus(`Saved ${baseName()}.mid: ${m.chords} chords, ${m.duration.toFixed(0)} s.`);
+    } catch (err) {
+      setStatus(`MIDI export failed: ${(err as Error).message}`);
+    }
+  });
+  $('#midi-import').addEventListener('click', () => $<HTMLInputElement>('#midi-file').click());
+  $<HTMLInputElement>('#midi-file').addEventListener('change', async (e) => {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    try {
+      const imp = midiToConfig(readMidi(await file.arrayBuffer()));
+      const title = file.name.replace(/\.(mid|midi|rmi)$/i, '');
+      loadConfig({ ...state, ...imp.patch, rhythm: { ...state.rhythm, ...imp.patch.rhythm }, drums: { ...state.drums, ...(imp.patch.drums ?? {}) }, title: state.title || title } as never);
+      setStatus(`Imported ${imp.chords.length} chords from ${file.name} · ${imp.key} · ${imp.tempo} bpm${imp.drums ? ' · drums' : ''}.`);
+    } catch (err) {
+      setStatus(`Couldn't read that MIDI file: ${(err as Error).message}`);
     }
   });
 
