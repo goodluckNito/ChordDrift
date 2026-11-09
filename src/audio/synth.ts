@@ -1,4 +1,5 @@
-import { articulationAt, layerAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
+import { articulationAt, drumHits, duckAt, layerAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
+import { playHit } from './drums';
 import type { Wave } from '../engine/config';
 import { stream } from '../engine/rng';
 import type { Score } from '../engine/score';
@@ -19,6 +20,10 @@ export const WAVE_GAIN: Record<Wave, number> = { sine: 1, triangle: 0.95, sawtoo
 export interface Master {
   input: AudioNode;
   output: AudioNode;
+  /** Straight into the limiter (no tone filter): drums. */
+  direct: AudioNode;
+  /** Into the reverb only. */
+  reverbSend: AudioNode;
 }
 
 /** Long, dark synthetic reverb: decaying stereo noise with a closing low-pass. */
@@ -79,7 +84,12 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
   lowpass.connect(dry).connect(limiter);
   lowpass.connect(convolver).connect(wet).connect(limiter);
   limiter.connect(out).connect(destination);
-  return { input, output: out };
+  const direct = ctx.createGain();
+  direct.connect(limiter);
+  const reverbSend = ctx.createGain();
+  reverbSend.gain.value = 1.4;
+  reverbSend.connect(convolver);
+  return { input, output: out, direct, reverbSend };
 }
 
 /**
@@ -130,10 +140,16 @@ export class VoiceBank {
   private bus: GainNode;
   /** Pluck mode: the shared strike envelope for the chord voices. */
   private art: GainNode | null = null;
+  /** Sidechain: ducks the chord voices under the kick/snare. */
+  private duck: GainNode | null = null;
+  /** Drums: bus (into the limiter) and reverb send, under this bank so stop() silences them. */
+  private drumBus: GainNode | null = null;
+  private drumSend: GainNode | null = null;
   /** 1 voice set for glides; 2 alternating sets for release-&-swell transitions. */
   private layers: number;
   /** Loop length (s) when the piece loops, else 0: score time wraps, sound continues. */
   private loopLen: number;
+  private drumGate: GainNode | null = null;
   private nextChunk = 0;
   private stopped = false;
 
@@ -153,12 +169,32 @@ export class VoiceBank {
     this.loopLen = score.loop ? score.timeline.end : 0;
     this.bus = ctx.createGain();
     this.bus.connect(master.input);
+    let chordOut: AudioNode = this.bus;
+    const d = score.config.drums;
+    if (score.drums && (d.duck.kick || d.duck.snare) && d.duck.depth > 0) {
+      this.duck = ctx.createGain();
+      this.duck.gain.value = duckAt(score, offset);
+      this.duck.connect(chordOut);
+      chordOut = this.duck;
+    }
     if (score.config.motion.transition === 'pluck') {
       this.art = ctx.createGain();
       this.art.gain.value = articulationAt(score, offset);
-      this.art.connect(this.bus);
+      this.art.connect(chordOut);
+      chordOut = this.art;
     }
-    const voiceOut = this.art ?? this.bus;
+    const voiceOut = chordOut;
+    if (score.drums) {
+      // Drums skip the chords' tone filter but share the limiter and reverb; the bank's bus gates them.
+      this.drumBus = ctx.createGain();
+      this.drumBus.gain.value = d.level * 0.9;
+      const gate = ctx.createGain();
+      this.drumBus.connect(gate).connect(master.direct);
+      this.drumSend = ctx.createGain();
+      this.drumSend.gain.value = d.reverb;
+      this.drumSend.connect(master.reverbSend);
+      this.drumGate = gate;
+    }
     this.layers = score.config.motion.transition === 'swell' ? 2 : 1;
     for (let L = 0; L < this.layers; L++) {
       for (let v = 0; v < score.config.voices; v++) {
@@ -255,6 +291,35 @@ export class VoiceBank {
         setCurve(this.oscs[idx].frequency, freq, at, dur);
         setCurve(this.gains[idx].gain, gain, at, dur);
       }
+      if (this.duck) {
+        const m = Math.round(CHUNK * ARTIC_RATE) + 1;
+        const curve = new Float32Array(m);
+        for (let i = 0; i < m; i++) curve[i] = duckAt(this.score, wrap(t0 + (i / (m - 1)) * CHUNK));
+        setCurve(this.duck.gain, curve, at, dur);
+      }
+      if (this.drumBus) {
+        // Drum hits in this chunk (score time may wrap when looping).
+        const cfgD = this.score.config.drums;
+        const live = !(this.ctx instanceof OfflineAudioContext);
+        const segs: [number, number, number][] = []; // [scoreFrom, scoreTo, rawOffset]
+        if (this.loopLen) {
+          const a0 = wrap(t0);
+          const a1 = a0 + CHUNK;
+          if (a1 <= this.loopLen) segs.push([a0, a1, t0 - a0]);
+          else {
+            segs.push([a0, this.loopLen, t0 - a0]);
+            segs.push([0, a1 - this.loopLen, t0 - a0 + this.loopLen]);
+          }
+        } else segs.push([t0, t0 + CHUNK, 0]);
+        for (const [a, b, rawOff] of segs) {
+          for (const h of drumHits(this.score, a, b)) {
+            const when = this.when + (h.t + rawOff - this.offset);
+            if (live && when < this.ctx.currentTime + 0.005) continue;
+            const send = cfgD.reverb > 0 && (!cfgD.reverbSnareOnly || h.voice === 'snare') ? this.drumSend : null;
+            playHit(this.ctx, cfgD.kit, h, cfgD.levels[h.voice], this.drumBus, send, when);
+          }
+        }
+      }
       if (this.art) {
         const m = Math.round(CHUNK * ARTIC_RATE) + 1;
         const curve = new Float32Array(m);
@@ -289,12 +354,15 @@ export class VoiceBank {
     // Fade the whole bank and then disconnect it. Cancelling per-voice automation
     // isn't reliable everywhere (Firefox can keep an in-progress curve going, and
     // may reject a second stop()), but a disconnected bus is always silent.
-    try {
-      this.bus.gain.cancelScheduledValues(now);
-      this.bus.gain.setValueAtTime(this.bus.gain.value, now);
-      this.bus.gain.linearRampToValueAtTime(0, now + 0.04);
-    } catch {
-      /* ignore */
+    for (const g of [this.bus, this.drumGate, this.drumSend]) {
+      if (!g) continue;
+      try {
+        g.gain.cancelScheduledValues(now);
+        g.gain.setValueAtTime(g.gain.value, now);
+        g.gain.linearRampToValueAtTime(0, now + 0.04);
+      } catch {
+        /* ignore */
+      }
     }
     for (const o of this.oscs) {
       try {
@@ -304,10 +372,12 @@ export class VoiceBank {
       }
     }
     setTimeout(() => {
-      try {
-        this.bus.disconnect();
-      } catch {
-        /* ignore */
+      for (const n of [this.bus, this.drumGate, this.drumSend]) {
+        try {
+          n?.disconnect();
+        } catch {
+          /* ignore */
+        }
       }
     }, 90);
   }

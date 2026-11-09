@@ -3,6 +3,7 @@ import { ProgressionWalker, type ChordSpec } from './progression';
 import { MelodyGenerator, type MelodyNote } from './melody';
 import { parseProgression, type ProgressionToken } from './progression-text';
 import { chordDurations, parseRhythm, strikeOnsets } from './rhythm';
+import { parseDrumRows, type DrumRows } from './drums';
 import { formatSeed, parseSeed, randInt, stream, uniform, type Rng } from './rng';
 import { DEGREE_OFFSETS, SCALES, mod12, parseNote, parsePc, spellNote, tonicName } from './theory';
 import { STYLES } from './styles';
@@ -70,6 +71,8 @@ export interface Score {
   strikes: { onsets: number[]; length: number } | null;
   /** Shortest time between pattern strikes (s), Infinity without a pattern. */
   strikeGap: number;
+  /** Parsed drum rows when drums are on. */
+  drums: DrumRows | null;
   /** Melody line (empty when the melody is off). Grows over time when endless. */
   melody: MelodyNote[];
   /** Where the beat grid starts (end of the bloom), and seconds per beat. */
@@ -193,6 +196,7 @@ class ScoreBuilder {
       pitchRange: [startNote, startNote],
       strikes: cfg.motion.transition === 'pluck' ? strikeOnsets(cfg.rhythm.pluck) : null,
       strikeGap: Infinity,
+      drums: cfg.drums.enabled ? parseDrumRows(cfg.drums) : null,
       melody: [],
       gridStart,
       beat,

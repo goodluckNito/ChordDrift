@@ -47,7 +47,8 @@ Pages on a private repo needs a paid GitHub plan; public repos are free.
 | Cinematic | i–♭VI–♭III–♭VII, mediants | sudden chromatic-mediant jumps | ♭VI–♭VII–I |
 | Gospel | I–III7–vi–IV, IV–iv–I, passing dim7 | lifts by half and whole steps | IV–iv–I "amen" |
 | Impressionist | parallel maj7/maj9 planing | drifts by steps and thirds | ♭VII–Imaj7#11 (voices slide together) |
-| Witch house (dark) | phrygian i–♭II, tritone-apart minor triads, lament bass, minor-third cycles | lurches down a half step, by a tritone or a minor third (always minor) | phrygian ♭II–i, with a droning top voice |
+| Witch house | one minor loop, i–♭III–♭VI–V and relatives (falling thirds, ♭6→5), repeated almost unchanged, m7/m9 colour (built from a reference track) | rare | ♭VI–V–i |
+| Occult (phrygian) | phrygian i–♭II, tritone-apart minor triads, minor-third cycles | lurches down a half step, by a tritone or a minor third (always minor) | phrygian ♭II–i, with a droning top voice |
 
 The score list marks every key change (e.g. `V7 (→ G major)`). Styles also run endlessly, closing a phrase with a cadence every four phrases and drifting home now and then.
 
@@ -84,6 +85,12 @@ e*4   (q e e)*2                   repeat a note or group; patterns loop, | and ,
 For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half-note triplets. Presets are in the Rhythm section.
 
 **Melody.** Turn on a randomized lead line, drawn in red above the chords. It lands on chord tones on strong beats and whenever the harmony changes, and steps through the scale in between, skipping notes that clash a semitone above a chord tone. It moves with some momentum, leaps occasionally, and joins the final unison. You can give it a rhythm in the notation above, or leave that empty for a random rhythm at the chosen density. It can play throughout or only between chord changes. Register, wave, level and portamento are adjustable.
+
+**Drums.** Drums are synthesized, so exports stay deterministic and there are no sample licences to worry about. They start when the bloom lands.
+- **Kits:** Witch (dark, distorted, long kick, reverby clap), 808, Acoustic and Industrial.
+- **Patterns:** one row per drum (kick, snare, hat, crash, ride) on a 16th-note grid: `x` hit, `X` accent, `.` rest, `o` open hat, `r` hat roll. Rows loop independently. Presets: Witch house (half-time), Trap (half-time), Four on the floor, Boom bap, Breakbeat, Ride groove and Sparse.
+- **Mix:** a level per drum, a drum bus level, and a reverb send (optionally snare only).
+- **Sidechain:** duck the chords under the kick and/or snare, with depth and release. The lines dip with it.
 
 **Sound.** Choose sine, triangle, saw or square for the chords, and separately for the melody. Saw and square are level-matched, and the Brightness control sets the master low-pass.
 

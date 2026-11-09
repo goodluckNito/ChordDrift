@@ -222,6 +222,72 @@
           </fieldset>
 
           <fieldset>
+            <legend>Drums</legend>
+            <label class="check wide">
+              <input data-path="drums.enabled" type="checkbox" />
+              <span>Drums <span class="muted">— start when the bloom lands</span></span>
+            </label>
+            <label data-drums>Kit
+              <select data-path="drums.kit">
+                <option value="witch">Witch (dark, distorted)</option>
+                <option value="808">808</option>
+                <option value="acoustic">Acoustic</option>
+                <option value="industrial">Industrial</option>
+              </select>
+            </label>
+            <label data-drums>Pattern
+              <select id="drum-preset"></select>
+            </label>
+            <div class="drum-row wide" data-drums>
+              <span class="drum-name">Kick</span>
+              <input data-path="drums.kick" class="mono" spellcheck="false" aria-label="Kick pattern" />
+              <input data-path="drums.levels.kick" type="range" min="0" max="1" step="0.05" aria-label="Kick level" title="Kick level" />
+            </div>
+            <div class="drum-row wide" data-drums>
+              <span class="drum-name">Snare</span>
+              <input data-path="drums.snare" class="mono" spellcheck="false" aria-label="Snare pattern" />
+              <input data-path="drums.levels.snare" type="range" min="0" max="1" step="0.05" aria-label="Snare level" title="Snare level" />
+            </div>
+            <div class="drum-row wide" data-drums>
+              <span class="drum-name">Hat</span>
+              <input data-path="drums.hat" class="mono" spellcheck="false" aria-label="Hat pattern" />
+              <input data-path="drums.levels.hat" type="range" min="0" max="1" step="0.05" aria-label="Hat level" title="Hat level" />
+            </div>
+            <div class="drum-row wide" data-drums>
+              <span class="drum-name">Crash</span>
+              <input data-path="drums.crash" class="mono" spellcheck="false" aria-label="Crash pattern" />
+              <input data-path="drums.levels.crash" type="range" min="0" max="1" step="0.05" aria-label="Crash level" title="Crash level" />
+            </div>
+            <div class="drum-row wide" data-drums>
+              <span class="drum-name">Ride</span>
+              <input data-path="drums.ride" class="mono" spellcheck="false" aria-label="Ride pattern" />
+              <input data-path="drums.levels.ride" type="range" min="0" max="1" step="0.05" aria-label="Ride level" title="Ride level" />
+            </div>
+            <p class="wide muted small" data-drums>Each character is a 16th note: <span class="mono">x</span> hit, <span class="mono">X</span> accent, <span class="mono">.</span> rest, <span class="mono">o</span> open hat, <span class="mono">r</span> hat roll. Rows loop on their own; sliders set each drum's level.</p>
+            <label data-drums>Drum level <output></output>
+              <input data-path="drums.level" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label data-drums>Drum reverb <output></output>
+              <input data-path="drums.reverb" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label class="check wide" data-drums>
+              <input data-path="drums.reverbSnareOnly" type="checkbox" />
+              <span>Reverb on the snare only</span>
+            </label>
+            <div class="checks wide" data-drums>
+              <span class="muted small">Duck the chords under:</span>
+              <label class="check"><input data-path="drums.duck.kick" type="checkbox" /><span>Kick</span></label>
+              <label class="check"><input data-path="drums.duck.snare" type="checkbox" /><span>Snare</span></label>
+            </div>
+            <label data-drums>Duck depth <output></output>
+              <input data-path="drums.duck.depth" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label data-drums>Duck release (s) <output></output>
+              <input data-path="drums.duck.release" type="range" min="0.05" max="1" step="0.01" />
+            </label>
+          </fieldset>
+
+          <fieldset>
             <legend>Timing</legend>
             <label class="wide">Chord changes
               <select data-path="motion.transition">

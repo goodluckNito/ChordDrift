@@ -13,7 +13,7 @@ import { weighted, type Rng } from './rng';
 import { mod12, scaleSteps } from './theory';
 import type { VoicingRules } from './voicing';
 
-export type StyleId = 'none' | 'classical' | 'jazz' | 'pop' | 'cinematic' | 'gospel' | 'impressionist' | 'witchhouse';
+export type StyleId = 'none' | 'classical' | 'jazz' | 'pop' | 'cinematic' | 'gospel' | 'impressionist' | 'witchhouse' | 'occult';
 type Mode = 'major' | 'minor';
 
 interface Modulation {
@@ -57,7 +57,7 @@ export const STYLES: Record<Exclude<StyleId, 'none'>, StyleDef> = {
     complexity: [1, 2],
     phrases: {
       major: ['I IV V I', 'I vi ii V', 'I ii V I', 'I IV I V', 'vi ii V I', 'I V vi IV', 'IV V iii vi', 'I iii IV V'],
-      minor: ['i iv V i', 'i VI iv V', 'i iio V i', 'i iv i V', 'VI iv V i', 'i v VI III'],
+      minor: ['i iv V i', 'i bVI iv V', 'i iio V i', 'i iv i V', 'bVI iv V i', 'i v bVI bIII'],
     },
     final: { major: ['ii V7 I', 'IV V7 I', 'vi ii V7 I'], minor: ['iv V7 i', 'iio V7 i', 'iv V7 I'] },
     modulations: [
@@ -174,9 +174,31 @@ export const STYLES: Record<Exclude<StyleId, 'none'>, StyleDef> = {
     voicing: { strategy: 'parallel' },
   },
   witchhouse: {
-    name: 'Witch house (dark)',
+    name: 'Witch house',
     description:
-      'Phrygian i–♭II sway, minor triads a tritone apart, the descending lament bass and minor-third cycles; lurches down a half step or by a tritone into other minor keys; ends on a phrygian ♭II–i. Always minor, with a droning top voice.',
+      'Built from a reference track: one minor loop (i–♭III–♭VI–V and relatives) that falls by thirds and drops ♭6→5, repeated almost unchanged, with minor 7th/9th colour. Pair it with a slow tempo (half-time drums around 115–120 BPM), deep sub, dark tone and sidechain.',
+    complexity: [2, 3],
+    phrases: {
+      // The reference (F minor): bass F–A♭–D♭–C = i–♭III–♭VI–V, falling thirds then the ♭6→5 half step.
+      major: ['i bIII bVI V', 'i bVI bIII bVII', 'i bIII bVI bVI', 'i bVI iv V'],
+      minor: ['i bIII bVI V', 'i bVI bIII bVII', 'i bIII bVI bVI', 'i bVI iv V'],
+    },
+    final: { major: ['bVI V i'], minor: ['bVI V i', 'iv V i'] },
+    modulations: [
+      { semis: 11, to: 'minor', via: '', w: 1 },
+      { semis: 5, to: 'minor', via: '', w: 1 },
+    ],
+    modProb: 0.08,
+    // Loops: the same four chords come back nearly every phrase.
+    repeatProb: 0.85,
+    returnHome: true,
+    returnVia: '',
+    voicing: { pedalBonus: 2.5, bassWeight: 0.2, movePenalty: 1.6 },
+  },
+  occult: {
+    name: 'Occult (phrygian)',
+    description:
+      'Phrygian i–♭II sway, minor triads a tritone apart and minor-third cycles; lurches down a half step or by a tritone into other minor keys; ends on a phrygian ♭II–i. Always minor, with a droning top voice.',
     complexity: [1, 3],
     phrases: {
       // Deliberately minor even from a major key: the style is the darkness.

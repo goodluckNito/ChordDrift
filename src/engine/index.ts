@@ -1,4 +1,5 @@
 export * from './chords';
+export * from './drums';
 export * from './config';
 export * from './melody';
 export * from './motion';

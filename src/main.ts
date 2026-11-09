@@ -12,6 +12,7 @@ import {
   DEFAULT_CONFIG,
   KEY_NAMES,
   RHYTHM_PRESETS,
+  DRUM_PRESETS,
   STRIKE_PRESETS,
   SCALES,
   STYLES,
@@ -300,6 +301,17 @@ function startApp() {
   });
   applyFill();
 
+  const drumSelect = $<HTMLSelectElement>('#drum-preset');
+  drumSelect.innerHTML = DRUM_PRESETS.map((_, i) => `<option value="${i}"></option>`).join('') + '<option value="custom">Custom</option>';
+  DRUM_PRESETS.forEach((p, i) => (drumSelect.options[i].textContent = p.name));
+  drumSelect.addEventListener('change', () => {
+    const preset = DRUM_PRESETS[Number(drumSelect.value)];
+    if (!preset) return;
+    for (const v of ['kick', 'snare', 'hat', 'crash', 'ride'] as const) state.drums[v] = preset[v];
+    writeForm();
+    rebuild(true);
+  });
+
   const strikeSelect = $<HTMLSelectElement>('#strike-preset');
   strikeSelect.innerHTML = STRIKE_PRESETS.map((_, i) => `<option value="${i}"></option>`).join('') + '<option value="custom">Custom</option>';
   STRIKE_PRESETS.forEach((p, i) => (strikeSelect.options[i].textContent = p.name + (p.pattern ? `  (${p.pattern})` : '')));
@@ -386,6 +398,9 @@ function startApp() {
         : `${def.description} Complexity is kept within ${def.complexity[0]}–${def.complexity[1]} for this style; chord count sets the number of phrases.`
       : 'Pick a style for planned phrases, cadences and key changes, or leave it on None for free generation.';
     for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-drums]')) el.hidden = !state.drums.enabled;
+    const dp = DRUM_PRESETS.findIndex((p) => (['kick', 'snare', 'hat', 'crash', 'ride'] as const).every((v) => p[v] === state.drums[v]));
+    drumSelect.value = dp >= 0 ? String(dp) : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-swell]')) el.hidden = state.audio.swell === 'off';
     for (const el of form.querySelectorAll<HTMLElement>('[data-transition]')) el.hidden = !el.dataset.transition!.split(' ').includes(state.motion.transition);
     for (const el of form.querySelectorAll<HTMLElement>('[data-env]')) el.hidden = state.motion.transition !== 'pluck';
@@ -680,7 +695,12 @@ function startApp() {
     syncVisibility();
     const path = el.dataset.path;
     clearTimeout(debounce);
-    const delay = path === 'progression' || path.endsWith('rhythm') || path === 'rhythm.chords' ? 450 : path.startsWith('theme.') ? 30 : 160;
+    const delay =
+      path === 'progression' || path.endsWith('rhythm') || path === 'rhythm.chords' || /^drums\.(kick|snare|hat|crash|ride)$/.test(path)
+        ? 450
+        : path.startsWith('theme.')
+          ? 30
+          : 160;
     debounce = window.setTimeout(() => rebuild(path !== 'seed'), delay);
   });
   form.addEventListener('submit', (e) => e.preventDefault());

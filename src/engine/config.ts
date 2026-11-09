@@ -1,5 +1,6 @@
 import { SCALES } from './theory';
 import { STYLE_IDS, type StyleId } from './styles';
+import { DRUM_PRESETS, type DrumVoice, type KitId } from './drums';
 import { FONT_NAMES, THEME_PRESETS, type Theme } from './themes';
 
 /**
@@ -153,6 +154,25 @@ export interface ChordDriftConfig {
     sustain: number;
   };
   theme: Theme;
+  drums: {
+    enabled: boolean;
+    kit: KitId;
+    /** One step string per drum (16ths): x hit, X accent, . rest, o open hat, r roll. */
+    kick: string;
+    snare: string;
+    hat: string;
+    crash: string;
+    ride: string;
+    levels: Record<DrumVoice, number>;
+    /** Drum bus level, 0..1. */
+    level: number;
+    /** Reverb send, 0..1. */
+    reverb: number;
+    /** Only the snare goes to the reverb. */
+    reverbSnareOnly: boolean;
+    /** Sidechain: duck the chords under the kick and/or snare. */
+    duck: { kick: boolean; snare: boolean; depth: number; release: number };
+  };
   video: {
     width: number;
     height: number;
@@ -209,6 +229,20 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
   audio: { wave: 'sine', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 7000, width: 0.6, gain: 0.9, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
   theme: { ...THEME_PRESETS.paper },
+  drums: {
+    enabled: false,
+    kit: 'witch',
+    kick: DRUM_PRESETS[0].kick,
+    snare: DRUM_PRESETS[0].snare,
+    hat: DRUM_PRESETS[0].hat,
+    crash: DRUM_PRESETS[0].crash,
+    ride: DRUM_PRESETS[0].ride,
+    levels: { kick: 0.9, snare: 0.75, hat: 0.4, crash: 0.45, ride: 0.4 },
+    level: 0.8,
+    reverb: 0.35,
+    reverbSnareOnly: true,
+    duck: { kick: true, snare: false, depth: 0.65, release: 0.25 },
+  },
   video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'orbit' },
 };
 
@@ -279,6 +313,20 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   // Older projects stored the melody colour on video.
   const legacy = (partial as { video?: { melodyColor?: string } }).video?.melodyColor;
   if (legacy && hex.test(legacy) && !(partial as { theme?: unknown }).theme) th.accent = legacy;
+  const d = c.drums;
+  d.enabled = Boolean(d.enabled);
+  if (!['808', 'witch', 'acoustic', 'industrial'].includes(d.kit)) d.kit = 'witch';
+  for (const v of ['kick', 'snare', 'hat', 'crash', 'ride'] as const) {
+    d[v] = String(d[v] ?? '');
+    d.levels[v] = Math.max(0, Math.min(1, Number(d.levels[v])));
+  }
+  d.level = Math.max(0, Math.min(1, Number(d.level)));
+  d.reverb = Math.max(0, Math.min(1, Number(d.reverb)));
+  d.reverbSnareOnly = Boolean(d.reverbSnareOnly);
+  d.duck.kick = Boolean(d.duck.kick);
+  d.duck.snare = Boolean(d.duck.snare);
+  d.duck.depth = Math.max(0, Math.min(1, Number(d.duck.depth)));
+  d.duck.release = Math.max(0.03, Math.min(2, Number(d.duck.release) || 0.25));
   const waves: Wave[] = ['sine', 'triangle', 'sawtooth', 'square'];
   if (!waves.includes(c.audio.wave)) c.audio.wave = 'sine';
   if (!waves.includes(c.melody.wave)) c.melody.wave = 'triangle';

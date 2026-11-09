@@ -1,5 +1,6 @@
 import type { Easing } from './config';
 import type { Score } from './score';
+import { drumHitsBetween, type DrumHit } from './drums';
 import { midiToHz } from './theory';
 
 /** Smootherstep, clamped: 6x^5 - 15x^4 + 10x^3. */
@@ -341,7 +342,9 @@ export function strikeTimesBetween(score: Score, a: number, b: number): number[]
  * the line; plucks swell it to ~1.6× on each strike and leave it thin between.
  */
 export function widthFactor(score: Score, v: number, t: number): number {
-  const base = 0.25 + 0.75 * swellAt(score, v, t);
+  let base = 0.25 + 0.75 * swellAt(score, v, t);
+  // Sidechain ducking shows as the lines dipping under the drums.
+  if (score.drums) base *= 0.45 + 0.55 * duckAt(score, t);
   if (score.config.motion.transition !== 'pluck') return base;
   return base * (0.35 + 1.25 * articulationAt(score, t));
 }
@@ -353,5 +356,38 @@ export function levelAt(score: Score, v: number, t: number): number {
 
 /** True when lines should be drawn with varying thickness. */
 export function hasDynamics(score: Score): boolean {
-  return score.config.audio.swell !== 'off' || score.config.motion.transition === 'pluck';
+  const d = score.config.drums;
+  return score.config.audio.swell !== 'off' || score.config.motion.transition === 'pluck' || (d.enabled && (d.duck.kick || d.duck.snare) && d.duck.depth > 0);
+}
+
+/** When drums play: from the moment the bloom lands to the arrival (forever when endless; the whole loop when looping). */
+export function drumSpan(score: Score): [number, number] {
+  const tl = score.timeline;
+  const stop = score.loop ? tl.end : tl.arrivalStart;
+  return [score.gridStart, stop];
+}
+
+/** Drum hits in [a, b). */
+export function drumHits(score: Score, a: number, b: number): DrumHit[] {
+  if (!score.drums) return [];
+  const [start, stop] = drumSpan(score);
+  return drumHitsBetween(score.drums, start, stop, score.beat / 4, a, b);
+}
+
+/**
+ * Sidechain gain (0..1) for the chords at time t: dips on kick/snare hits
+ * (5 ms attack) and recovers with the release time. 1 when ducking is off.
+ */
+export function duckAt(score: Score, t: number): number {
+  const d = score.config.drums;
+  if (!score.drums || !(d.duck.kick || d.duck.snare) || d.duck.depth <= 0) return 1;
+  const look = d.duck.release * 5;
+  let env = 0;
+  for (const h of drumHits(score, t - look, t + 1e-9)) {
+    if (!((h.voice === 'kick' && d.duck.kick) || (h.voice === 'snare' && d.duck.snare))) continue;
+    const x = t - h.t;
+    const e = x < 0.005 ? x / 0.005 : Math.exp(-(x - 0.005) / d.duck.release);
+    env = Math.max(env, e * Math.min(1, h.vel + 0.2));
+  }
+  return 1 - d.duck.depth * env;
 }
