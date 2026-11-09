@@ -15,6 +15,16 @@ Space plays/pauses, ← → seek, R rolls a new seed.
 
 **On your phone (same Wi-Fi):** run `npm run dev:lan` and open the `Network:` address it prints, e.g. `http://192.168.1.20:5173`. (`npm run dev --host` doesn't work because npm swallows the flag; the long form is `npm run dev -- --host`.) On Windows, allow Node.js through the firewall for **Private** networks the first time. If you dismissed that prompt, go to *Windows Security → Firewall → Allow an app* and tick Node.js under Private. Make sure your PC's network profile is Private, not Public. On iPhone, turn off the silent switch, because it mutes web audio.
 
+## Hosting it on GitHub Pages
+
+The repo includes a workflow (`.github/workflows/pages.yml`) that tests, builds and publishes the player on every push to `main`:
+
+1. In the repo, go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**.
+2. Push to `main`, or open **Actions → Deploy to GitHub Pages → Run workflow**.
+3. The site appears at `https://<your-user>.github.io/<repo>/`. Share links (`#c=…`) work there too.
+
+Pages on a private repo needs a paid GitHub plan; public repos are free.
+
 ## Exploring progressions
 
 **Key & harmony**
