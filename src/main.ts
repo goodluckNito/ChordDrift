@@ -5,6 +5,7 @@ import './style.css';
 import { LivePlayer, encodeWav, renderOffline } from './audio/synth';
 import {
   AMBIENT_PRESET,
+  DARK_PRESET,
   PLUCK_PRESET,
   THEME_LABELS,
   THEME_PRESETS,
@@ -338,6 +339,9 @@ function startApp() {
   };
   $('#pluck').addEventListener('click', () =>
     applyPatch(PLUCK_PRESET, 'Pluck preset: each chord change strikes and decays, short glides, a tresillo rhythm. Try faster tempos or other rhythms.'),
+  );
+  $('#dark').addEventListener('click', () =>
+    applyPatch(DARK_PRESET, 'Dark preset: witch house harmony in a minor key, detuned saws, crossfades, deep reverb, Hex theme. Try the Spiral view.'),
   );
   $('#reset-all').addEventListener('click', () => {
     if (!confirm('Reset every setting to its default? (The seed is kept.)')) return;

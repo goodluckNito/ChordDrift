@@ -13,7 +13,7 @@ import { weighted, type Rng } from './rng';
 import { mod12, scaleSteps } from './theory';
 import type { VoicingRules } from './voicing';
 
-export type StyleId = 'none' | 'classical' | 'jazz' | 'pop' | 'cinematic' | 'gospel' | 'impressionist';
+export type StyleId = 'none' | 'classical' | 'jazz' | 'pop' | 'cinematic' | 'gospel' | 'impressionist' | 'witchhouse';
 type Mode = 'major' | 'minor';
 
 interface Modulation {
@@ -172,6 +172,28 @@ export const STYLES: Record<Exclude<StyleId, 'none'>, StyleDef> = {
     returnHome: true,
     returnVia: '',
     voicing: { strategy: 'parallel' },
+  },
+  witchhouse: {
+    name: 'Witch house (dark)',
+    description:
+      'Phrygian i–♭II sway, minor triads a tritone apart, the descending lament bass and minor-third cycles; lurches down a half step or by a tritone into other minor keys; ends on a phrygian ♭II–i. Always minor, with a droning top voice.',
+    complexity: [1, 3],
+    phrases: {
+      // Deliberately minor even from a major key: the style is the darkness.
+      major: ['i bII i bII', 'i bVII bVI V', 'i biii #iv vi', 'i #iv i #iv', 'i bvi iv bII', 'i bII bVII i', 'i iv bII V'],
+      minor: ['i bII i bII', 'i bVII bVI V', 'i biii #iv vi', 'i #iv i #iv', 'i bvi iv bII', 'i bII bVII i', 'i iv bII V'],
+    },
+    final: { major: ['bII i', 'iv bII i', 'bvi bII i'], minor: ['bII i', 'iv bII i', 'bvi bII i'] },
+    modulations: [
+      { semis: 11, to: 'minor', via: '', w: 3 },
+      { semis: 6, to: 'minor', via: '', w: 2 },
+      { semis: 3, to: 'minor', via: '', w: 1.5 },
+      { semis: 10, to: 'minor', via: '', w: 1 },
+    ],
+    modProb: 0.45,
+    returnHome: true,
+    returnVia: 'bII',
+    voicing: { pedalBonus: 3, bassWeight: 0.1, movePenalty: 1.5 },
   },
 };
 

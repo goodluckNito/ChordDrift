@@ -82,6 +82,19 @@ export const THEME_PRESETS: Record<string, Theme> = {
     text: '#2d1b3d',
     font: 'playfair',
   },
+  hex: {
+    ...base,
+    preset: 'hex',
+    background: '#050505',
+    background2: '#1c0010',
+    gradient: true,
+    ink: '#cfcfcf',
+    accent: '#c3002f',
+    text: '#8f8f8f',
+    font: 'ibm-plex-mono',
+    glow: 0.3,
+    lineWidth: 0.9,
+  },
 };
 
 export const THEME_LABELS: Record<string, string> = {
@@ -93,4 +106,5 @@ export const THEME_LABELS: Record<string, string> = {
   terminal: 'Terminal',
   chromatic: 'Chromatic',
   sunset: 'Sunset',
+  hex: 'Hex',
 };
