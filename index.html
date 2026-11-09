@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Chord Drift</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23fafbf9'/%3E%3Cpath d='M4 20h5c4 0 4-12 9-12h10M4 20h5c4 0 4-4 9-4h10M4 20h5c4 0 4 5 9 5h10' fill='none' stroke='%23111' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <div class="app">
+      <section class="stage">
+        <div class="frame"><canvas id="view" aria-label="Pitch over time"></canvas></div>
+        <div class="transport">
+          <button id="play" class="primary" type="button" aria-label="Play">▶</button>
+          <button id="restart" type="button" aria-label="Restart" title="Restart">⟲</button>
+          <input id="scrub" type="range" min="0" max="1" step="0.001" value="0" aria-label="Position" />
+          <span id="clock" class="mono">0:00.00 / 0:00.00</span>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <header class="brand">
+          <h1>Chord Drift</h1>
+          <p>Thirteen voices bloom from one note, drift through a voice-led progression, and arrive together. The seed decides everything.</p>
+        </header>
+
+        <form id="controls" autocomplete="off">
+          <fieldset>
+            <legend>Piece</legend>
+            <label class="wide">Seed
+              <span class="row">
+                <input name="seed" class="mono" spellcheck="false" />
+                <button type="button" id="dice" title="Random seed (R)">🎲</button>
+              </span>
+            </label>
+            <label>Mode
+              <select name="mode">
+                <option value="diatonic">Diatonic</option>
+                <option value="drift">Drift (borrow chords)</option>
+                <option value="chromatic">Chromatic</option>
+              </select>
+            </label>
+            <label>Key
+              <select name="key"></select>
+            </label>
+            <label data-show="drift">Drift probability <output></output>
+              <input name="driftProbability" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label>Smoothness <output></output>
+              <input name="smoothness" type="range" min="0" max="3" step="0.1" />
+            </label>
+            <label>Chords (min)
+              <input name="chordMin" type="number" min="1" max="40" />
+            </label>
+            <label>Chords (max)
+              <input name="chordMax" type="number" min="1" max="40" />
+            </label>
+            <label>Voices
+              <input name="voices" type="number" min="2" max="32" />
+            </label>
+            <label>Easing
+              <select name="easing">
+                <option value="smootherstep">Smootherstep</option>
+                <option value="cosine">Cosine</option>
+              </select>
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Timing</legend>
+            <label>Chord hold (s) <output></output>
+              <input name="hold" type="range" min="0.8" max="5" step="0.1" />
+            </label>
+            <label>Glide (s) <output></output>
+              <input name="glide" type="range" min="0.2" max="2" step="0.05" />
+            </label>
+            <label>Stagger (s) <output></output>
+              <input name="stagger" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label>Bloom (s) <output></output>
+              <input name="bloom" type="range" min="1" max="6" step="0.1" />
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Sound</legend>
+            <label>Wave
+              <select name="wave">
+                <option value="sine">Sine</option>
+                <option value="triangle">Triangle</option>
+              </select>
+            </label>
+            <label>Reverb <output></output>
+              <input name="reverb" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label>Detune (cents) <output></output>
+              <input name="detuneCents" type="range" min="0" max="12" step="0.5" />
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Titles</legend>
+            <label class="wide">Header
+              <input name="series" />
+            </label>
+            <label>Episode
+              <input name="episode" type="number" min="0" max="9999" />
+            </label>
+            <label>Name
+              <input name="title" />
+            </label>
+          </fieldset>
+        </form>
+
+        <div class="actions">
+          <button type="button" id="wav">Download WAV</button>
+          <button type="button" id="record">Record video</button>
+          <button type="button" id="png">Save frame</button>
+          <button type="button" id="json">Copy config</button>
+        </div>
+        <p id="status" class="status" role="status"></p>
+
+        <details class="score" open>
+          <summary>Score <span id="score-meta" class="muted"></span></summary>
+          <ol id="score-list"></ol>
+        </details>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
