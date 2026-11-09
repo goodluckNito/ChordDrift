@@ -1519,6 +1519,24 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
         ctx.stroke();
         ctx.fillText(`C${n / 12 - 1}`, 12 * u, y - 3 * tu);
       }
+      // Bar lines when there's a beat grid (a chord rhythm, a strike pattern, drums or a song), so
+      // chord changes can be read against the bars; song parts restart the count.
+      const gridded = cfg.rhythm.chords.trim() !== '' || score.strikes || score.drums || score.sections.length > 0;
+      if (gridded && z < 1) {
+        const bar = 4 * score.beat;
+        const starts = score.sections.length ? score.sections.map((x) => Math.max(x.t, score.gridStart)) : [score.gridStart];
+        ctx.strokeStyle = withAlpha(th.text, 0.1);
+        ctx.beginPath();
+        starts.forEach((a, i) => {
+          const b = Math.min(starts[i + 1] ?? Infinity, tl.arrivalStart, tTo);
+          for (let k = Math.max(0, Math.ceil((tFrom - a) / bar)); a + k * bar <= b; k++) {
+            const x = Math.round(xOf(a + k * bar)) + 0.5;
+            ctx.moveTo(x, lay.clipTop);
+            ctx.lineTo(x, lay.clipBottom);
+          }
+        });
+        ctx.stroke();
+      }
     }
 
     const painter = new Painter(ctx, st, V, yHi, yLo);

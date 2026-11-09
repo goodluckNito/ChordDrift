@@ -560,6 +560,24 @@ function startApp() {
     if (notes) li.children[3].textContent = notes;
     return li;
   }
+  /** How long chord i lasts: bars and beats on a beat grid (chord rhythm or song), else seconds. */
+  function chordLength(s: Score, i: number): string {
+    const c = s.chords[i];
+    const next = s.chords[i + 1]?.t ?? (Number.isFinite(s.timeline.arrivalStart) ? s.timeline.arrivalStart : NaN);
+    if (!Number.isFinite(next)) return '';
+    const start = i === 0 ? s.gridStart : c.t;
+    const secs = next - start;
+    if (secs <= 0) return '';
+    const gridded = s.config.rhythm.chords.trim() !== '' || s.sections.length > 0;
+    if (!gridded) return ` · ${secs.toFixed(1)} s`;
+    const beats = Math.round((secs / s.beat) * 4) / 4;
+    const bars = Math.floor(beats / 4 + 1e-6);
+    const rest = beats - bars * 4;
+    const frac = (b: number) => (Number.isInteger(b) ? String(b) : b.toFixed(2).replace(/0$/, ''));
+    const parts = [bars ? `${bars} bar${bars > 1 ? 's' : ''}` : '', rest ? `${frac(rest)} beat${rest === 1 ? '' : 's'}` : ''].filter(Boolean);
+    return ` · ${parts.join(' ')}`;
+  }
+
   function renderList() {
     const s = score;
     $('#score-meta').textContent = `· ${s.keyName} ${s.scaleName}${s.endless ? ', endless' : s.sections.length ? `, ${s.sections.length} parts` : `, ${s.chords.length} chords`}`;
@@ -573,7 +591,7 @@ function startApp() {
         list.append(li);
       }
       const origin = c.origin === 'scale' || c.origin === 'cadence' || c.origin === 'written' ? '' : ` · ${c.origin}`;
-      list.append(row(c.t, c.name, c.roman + origin, (c.unison ? c.notes.slice(0, 1) : c.notes).map((n) => spellChordNote(n, c)).join(' ')));
+      list.append(row(c.t, c.name, c.roman + origin + chordLength(s, i), (c.unison ? c.notes.slice(0, 1) : c.notes).map((n) => spellChordNote(n, c)).join(' ')));
     }
     renderedRows = s.chords.length + 1;
     if (!s.endless) {

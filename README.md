@@ -50,7 +50,7 @@ Pages on a private repo needs a paid GitHub plan; public repos are free.
 | Witch house | dark minor phrases that fall by thirds and drop ♭6→5, phrygian ♭II, the odd chromatic-mediant spark; loops recur with a chord changed | rare | ♭VI–V–i |
 | Occult (phrygian) | phrygian i–♭II, tritone-apart minor triads, minor-third cycles | lurches down a half step, by a tritone or a minor third (always minor) | phrygian ♭II–i, with a droning top voice |
 
-The score list marks every key change (e.g. `V7 (→ G major)`). Styles also run endlessly, closing a phrase with a cadence every four phrases and drifting home now and then.
+The score list marks every key change (e.g. `V7 (→ G major)`) and shows how long each chord lasts: bars and beats on a beat grid (a chord rhythm or song mode), seconds otherwise. Styles also run endlessly, closing a phrase with a cadence every four phrases and drifting home now and then.
 
 **Loop and ending.** *Ending* chooses where the piece resolves: up to the tonic (two octaves or one), the middle tonic, **down to the tonic below**, or **back to the starting unison**. *Loop* always comes home: after an ending above or below, every voice glides back to the starting unison, then the piece wraps seamlessly, with no zoom-out or fade. WAV and video exports of a loop are exactly one pass, and the WAV carries the reverb tail around to its start, so it loops cleanly in a DAW.
 
@@ -138,7 +138,7 @@ Line thickness and dot size follow the level over time, in the video as well. **
 - **Colours:** background (optionally a gradient), lines, melody and text.
 - **Font:** fourteen to choose from (from Inter and Plex to Cinzel, Pirata One, Syne, Bebas Neue, Space Mono, Major Mono Display and VT323), loaded only when picked.
 - **Line colouring:** one colour, per voice, per note (around the circle of fifths) or by height, through a palette: Rainbow, Ember, Bruise, Tide, Acid, Blood moon, Moss, Ghost, Oil slick, Candy, Rust, Frost, or Duotone and Mono built from the theme's own ink and accent. 🎲 rolls a palette (a dark-to-bright ramp in one hue family, a duotone, or a split scheme); it's saved with the theme.
-- **Extras:** line width, glow, an octave grid with note names, and switches for the Hz labels and HUD.
+- **Extras:** line width, glow, a grid (octave lines with note names, plus faint bar lines when there's a beat grid, restarting with each song part), and switches for the Hz labels and HUD.
 
 Themes are saved in projects and share links and used in video exports. **My theme:**
 - *Save as my theme* keeps a look on this device.
