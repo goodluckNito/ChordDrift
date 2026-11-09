@@ -1,5 +1,6 @@
+import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string';
 /** Project save/load: browser library (localStorage), JSON files, and share links. */
-import { DEFAULT_CONFIG, resolveConfig, type ChordDriftConfig, type DeepPartial } from './engine';
+import { DEFAULT_CONFIG, resolveConfig, songFromText, type ChordDriftConfig, type DeepPartial } from './engine';
 
 export interface Project {
   app: 'chord-drift';
@@ -76,15 +77,45 @@ export function configDiff(config: ChordDriftConfig, base: unknown = DEFAULT_CON
   return out as DeepPartial<ChordDriftConfig>;
 }
 
-const toBase64Url = (s: string) => btoa(String.fromCharCode(...new TextEncoder().encode(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+/** Older links (c=…) are plain base64url JSON. */
 const fromBase64Url = (s: string) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0)));
 
+/** Share code for the URL hash: the settings that differ from the defaults, compressed (z=…). */
 export function encodeShare(config: ChordDriftConfig): string {
   const diff = configDiff(config);
-  return Object.keys(diff).length ? 'c=' + toBase64Url(JSON.stringify(diff)) : '';
+  return Object.keys(diff).length ? 'z=' + compressToEncodedURIComponent(JSON.stringify(diff)) : '';
+}
+
+/** The words of a t=… share code, or null. */
+export function shareText(hash: string): string | null {
+  if (!hash.startsWith('t=')) return null;
+  try {
+    return decodeURIComponent(hash.slice(2).replace(/\+/g, ' ')).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Share code for a song made from words. */
+export function encodeTextShare(text: string): string {
+  return 't=' + encodeURIComponent(text.trim()).replace(/%20/g, '+');
 }
 
 export function decodeShare(hash: string): DeepPartial<ChordDriftConfig> | null {
+  // Compressed (z=…): read raw, since its alphabet includes '+'.
+  if (hash.startsWith('z=')) {
+    try {
+      const json = decompressFromEncodedURIComponent(hash.slice(2));
+      return json ? JSON.parse(json) : null;
+    } catch {
+      return null;
+    }
+  }
+  // A song from words (t=…).
+  if (hash.startsWith('t=')) {
+    const text = shareText(hash);
+    return text ? songFromText(text) : null;
+  }
   const params = new URLSearchParams(hash);
   const c = params.get('c');
   if (c) {

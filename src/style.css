@@ -336,3 +336,6 @@ input[type='color'] { width: 100%; height: 30px; padding: 2px; cursor: pointer; 
 .rec-opts { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .rec-opts label { flex: 1 1 140px; }
 .rec-note { margin-top: 6px; }
+
+.words { display: flex; gap: 6px; margin-top: 12px; }
+.words input { flex: 1; min-width: 0; }

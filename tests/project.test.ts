@@ -42,3 +42,26 @@ describe('sound presets', () => {
     }
   });
 });
+
+describe('short links and songs from words', () => {
+  it('makes the same song from the same words, and different songs from different words', async () => {
+    const { songFromText } = await import('../src/engine');
+    expect(resolveConfig(songFromText('rain on a tin roof'))).toEqual(resolveConfig(songFromText('  rain on a tin roof ')));
+    expect(resolveConfig(songFromText('rain on a tin roof'))).not.toEqual(resolveConfig(songFromText('velvet harbor')));
+  });
+
+  it('round-trips word links and compressed links, and compresses well', async () => {
+    const { encodeTextShare, shareText } = await import('../src/project');
+    const code = encodeTextShare('rain on a tin roof');
+    expect(code).toBe('t=rain+on+a+tin+roof');
+    expect(shareText(code)).toBe('rain on a tin roof');
+    const { songFromText } = await import('../src/engine');
+    expect(resolveConfig(decodeShare(code)!)).toEqual(resolveConfig(songFromText('rain on a tin roof')));
+    const cfg = resolveConfig(songFromText('velvet harbor'));
+    const z = encodeShare(cfg);
+    expect(z.startsWith('z=')).toBe(true);
+    expect(resolveConfig(decodeShare(z)!)).toEqual(cfg);
+    const plain = btoa(JSON.stringify(configDiff(cfg))).length;
+    expect(z.length).toBeLessThan(plain * 0.75);
+  });
+});

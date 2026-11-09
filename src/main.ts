@@ -25,6 +25,7 @@ import {
   chordToToken,
   formatSeed,
   generateScore,
+  songFromText,
   midiToConfig,
   readMidi,
   writeMidi,
@@ -44,7 +45,7 @@ import {
 } from './engine';
 import { ensureFont } from './render/fonts';
 import { frameCount, renderFrame, themeBackground } from './render/renderer';
-import { decodeShare, encodeShare, exportProject, listProjects, parseProject, saveProject, deleteProject } from './project';
+import { decodeShare, encodeShare, encodeTextShare, exportProject, listProjects, parseProject, saveProject, deleteProject, shareText } from './project';
 
 const fontsReady = (async () => {
   try {
@@ -132,6 +133,10 @@ function setPath(obj: unknown, path: string, value: unknown) {
 const LOOP_SVG = '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M17 3l3 3-3 3M4 11V9a3 3 0 0 1 3-3h13M7 21l-3-3 3-3M20 13v2a3 3 0 0 1-3 3H4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const DICE_SVG =
   '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="15.5" cy="8.5" r="1.5" fill="currentColor"/><circle cx="8.5" cy="15.5" r="1.5" fill="currentColor"/></svg>';
+
+/** Word lists for the 🎲 song: two words make a short, readable link. */
+const WORDS_A = ['velvet', 'hollow', 'amber', 'quiet', 'neon', 'paper', 'glass', 'violet', 'rusted', 'distant', 'midnight', 'salt', 'silver', 'drowned', 'golden', 'faded', 'electric', 'winter', 'secret', 'lunar', 'crimson', 'soft', 'broken', 'tidal', 'feral', 'pale', 'burning', 'empty', 'cobalt', 'static'];
+const WORDS_B = ['harbor', 'cathedral', 'orchard', 'signal', 'meridian', 'lantern', 'canyon', 'chapel', 'garden', 'machine', 'river', 'satellite', 'ember', 'fountain', 'mirror', 'tundra', 'arcade', 'lighthouse', 'reef', 'cloud', 'prayer', 'engine', 'meadow', 'comet', 'hallway', 'motel', 'forest', 'basilica', 'radio', 'tide'];
 
 function startApp() {
   let loopReroll = false;
@@ -445,9 +450,11 @@ function startApp() {
     }
     $('#complexity-label').textContent = `${state.complexity} · ${COMPLEXITY_NAMES[state.complexity]}`;
     const written = state.progression.trim().length > 0;
-    for (const el of form.querySelectorAll<HTMLElement>('[data-show]')) el.hidden = state.mode !== el.dataset.show;
     const styled = state.style !== 'none' && !written;
-    for (const el of form.querySelectorAll<HTMLElement>('[data-nostyle]')) if (styled) el.hidden = true;
+    // Generator settings: shown for their mode (data-show), hidden while a style plans the chords (data-nostyle).
+    for (const el of form.querySelectorAll<HTMLElement>('[data-show], [data-nostyle]')) {
+      el.hidden = (el.dataset.show !== undefined && state.mode !== el.dataset.show) || (el.dataset.nostyle !== undefined && styled);
+    }
     const def = state.style !== 'none' ? STYLES[state.style] : null;
     $('#style-note').textContent = def
       ? written
@@ -661,10 +668,38 @@ function startApp() {
   });
 
   // ---- URL / projects -----------------------------------------------------------
+  // A song made from words keeps the short link (#t=words) until anything is changed.
+  let textSong: { text: string; code: string } | null = null;
   function saveHash() {
-    const code = encodeShare(state);
+    let code = encodeShare(state);
+    if (textSong && code === textSong.code) code = encodeTextShare(textSong.text);
+    else textSong = null;
     history.replaceState(null, '', code ? `#${code}` : location.pathname + location.search);
   }
+
+  /** Every setting from these words (keeps the output format). */
+  function makeSong(text: string) {
+    const t = text.trim();
+    if (!t) return;
+    const patch = songFromText(t);
+    const keep = { width: state.video.width, height: state.video.height, fps: state.video.fps };
+    state = resolveConfig({ ...patch, video: { ...(patch.video ?? {}), ...keep } } as DeepPartial<ChordDriftConfig>);
+    applyAutoFormat();
+    textSong = { text: t, code: encodeShare(state) };
+    writeForm();
+    rebuild(false);
+    $<HTMLInputElement>('#words').value = t;
+    setStatus(`"${t}": ${score.keyName} ${score.scaleName}${state.style !== 'none' ? `, ${STYLES[state.style].name}` : ''} — ${score.chords.slice(0, 6).map((c) => c.name).join(' → ')}${score.chords.length > 6 ? ' …' : ''}`);
+  }
+  $<HTMLFormElement>('#words-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    makeSong($<HTMLInputElement>('#words').value);
+  });
+  $('#surprise').addEventListener('click', () => {
+    const r = () => randomSeed() / 4294967296;
+    const word = (xs: string[]) => xs[Math.floor(r() * xs.length)];
+    makeSong(`${word(WORDS_A)} ${word(WORDS_B)}`);
+  });
 
   function refreshProjects(select?: string) {
     const sel = $<HTMLSelectElement>('#project-list');
@@ -1228,6 +1263,11 @@ function startApp() {
   const shared = decodeShare(location.hash.slice(1));
   state = resolveConfig(shared ?? {});
   applyAutoFormat();
+  const sharedWords = shareText(location.hash.slice(1));
+  if (sharedWords) {
+    textSong = { text: sharedWords, code: encodeShare(state) };
+    $<HTMLInputElement>('#words').value = sharedWords;
+  }
   syncThemeUi();
   writeForm();
   refreshProjects();

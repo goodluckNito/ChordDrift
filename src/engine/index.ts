@@ -15,3 +15,4 @@ export * from './voicing';
 export * from './midi';
 export * from './song';
 export * from './chop';
+export * from './surprise';

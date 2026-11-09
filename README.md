@@ -160,7 +160,9 @@ With release-and-swell changes, chords grow in and fade out on the spiral too. T
 
 **Titles.** The header, episode number and name are empty by default, and only what you fill in is drawn. If you set only a name, it takes the header's place.
 
-**Projects.** Save to the browser's project list, export or import `.chorddrift.json` files, or copy a share link: the URL holds the full config, so a link always reopens the exact piece.
+**Songs from words.** Type anything in the box at the top of the panel ("rain on a tin roof at 3am") and press Make: the words seed a whole song, not just the chords (scale, style, generator, rhythm, drums, sound, theme and view), and the same words always make the same song. 🎲 next to it randomizes everything by making a song from two random words. The link for such a song is just the words (`#t=rain+on+a+tin+roof+at+3am`) until you change something.
+
+**Projects.** Save to the browser's project list, export or import `.chorddrift.json` files, or copy a share link: the URL holds every setting that differs from the defaults, compressed (`#z=…`; older `#c=…` links still open), so a link always reopens the exact piece.
 
 ## Video and audio export
 

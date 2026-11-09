@@ -50,6 +50,11 @@
         <header class="brand">
           <h1>Chord Drift</h1>
           <p>Explore chord progressions as voice-led glides: pick a key and scale, write or generate chords, and hear every voice move. The seed decides whatever you leave open.</p>
+          <form id="words-form" class="words" autocomplete="off">
+            <input id="words" type="text" placeholder="Type anything — get a whole song" aria-label="Make a song from words" />
+            <button type="submit" title="Make a song from these words (the same words always make the same song)">Make</button>
+            <button type="button" id="surprise" title="Randomize everything: a song from a few random words">🎲</button>
+          </form>
         </header>
 
         <form id="controls" autocomplete="off">
