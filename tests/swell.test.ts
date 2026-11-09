@@ -58,7 +58,7 @@ describe('swells', () => {
 
   it('ambient preset is a valid config', () => {
     const c = resolveConfig(AMBIENT_PRESET);
-    expect(c.audio.swell).toBe('chord');
+    expect(c.audio.swell).toBe('breath');
     expect(c.audio.reverb).toBeGreaterThan(0.5);
   });
 });

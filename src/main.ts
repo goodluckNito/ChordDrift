@@ -645,7 +645,7 @@ function startApp() {
     setStatus('All settings back to defaults (same seed).');
   });
   $('#ambient').addEventListener('click', () =>
-    applyPatch(AMBIENT_PRESET, 'Ambient: each chord releases as the next swells in underneath, with a dark triangle tone and deep reverb.'),
+    applyPatch(AMBIENT_PRESET, 'Ambient: slow breathing swells, a soft triangle tone and deep reverb.'),
   );
   $('#sound-reset').addEventListener('click', () => {
     state = resolveConfig({ ...state, audio: structuredClone(DEFAULT_CONFIG.audio) } as DeepPartial<ChordDriftConfig>);

@@ -194,6 +194,8 @@ export interface ChordDriftConfig {
     fps: number;
     historySeconds: number;
     nowPosition: number;
+    /** Spiral views: the chord name in the middle. */
+    centerLabel: boolean;
     /** Zoom of the picture (titles and HUD stay put): 1 = normal. */
     zoom: number;
     /** timeline = pitch over time · spiral = pitch on a spiral · waterfall = rotating 3D spectrograph, depth is time */
@@ -227,7 +229,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   smoothness: 1,
   range: { bass: [36, 47], upper: [45, 79] },
   startNote: 'fifth',
-  endNote: 'tonic+2oct',
+  endNote: 'tonic+1oct',
   timing: {
     intro: 1.0,
     bloom: 2.7,
@@ -246,7 +248,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   motion: { easing: 'smootherstep', transition: 'glide' },
   rhythm: { tempo: 76, chords: '', pluck: 'e' },
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
-  audio: { wave: 'warm', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 10000, width: 0.12, gain: 0.9, sub: 0.65, warmth: 0.35, bass: 4, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
+  audio: { wave: 'warm', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 10000, width: 0.12, gain: 0.9, sub: 0.5, warmth: 0, bass: 2, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
   theme: { ...THEME_PRESETS.paper },
   drums: {
     enabled: false,
@@ -263,7 +265,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
     double: false,
     duck: { kick: true, snare: false, depth: 0.65, release: 0.25 },
   },
-  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'orbit', zoom: 1 },
+  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'orbit', zoom: 1, centerLabel: true },
 };
 
 export type DeepPartial<T> = {
@@ -297,6 +299,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.complexity = Math.max(1, Math.min(5, Math.round(Number(c.complexity) || 3)));
   c.progression = String(c.progression ?? '');
   if (!STYLE_IDS.includes(c.style)) c.style = 'none';
+  c.video.centerLabel = c.video.centerLabel !== false;
   c.video.zoom = Math.max(0.4, Math.min(4, Number(c.video.zoom) || 1));
   if (!['timeline', 'spiral', 'waterfall'].includes(c.video.view)) c.video.view = 'timeline';
   if ((c.video.spiral as string) === 'zoom') c.video.spiral = 'fly'; // older projects
@@ -385,8 +388,8 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
  */
 /** "Ambient": soft swells into each chord, a dark triangle tone, wide detune, deep reverb. */
 export const AMBIENT_PRESET: DeepPartial<ChordDriftConfig> = {
-  motion: { transition: 'swell' },
-  audio: { wave: 'triangle', reverb: 0.8, detuneCents: 7, lowpass: 3200, swell: 'chord', swellDepth: 0.6, envelope: 'sustain' },
+  motion: { transition: 'glide' },
+  audio: { wave: 'triangle', reverb: 0.75, detuneCents: 7, lowpass: 3600, swell: 'breath', swellDepth: 0.4, envelope: 'sustain' },
 };
 
 /** "Pluck": a fast strike that decays to a low level, a brighter triangle and a short room (strikes happen with Pluck chord changes). */

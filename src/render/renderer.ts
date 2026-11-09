@@ -834,7 +834,7 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
     ctx.fill();
   }
   // Chord name in the middle.
-  if (th.labels) {
+  if (th.labels && cfg.video.centerLabel) {
     ctx.fillStyle = st.text;
     ctx.font = `700 ${34 * tu}px ${st.font}`;
     ctx.textAlign = 'center';
@@ -1180,7 +1180,7 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
     ctx.fill();
   }
   // Chord name in the eye of the spiral.
-  if (th.labels) {
+  if (th.labels && cfg.video.centerLabel) {
     ctx.fillStyle = st.text;
     ctx.font = `700 ${34 * tu}px ${st.font}`;
     ctx.textAlign = 'center';
@@ -1378,7 +1378,7 @@ function drawTunnel(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
     const a = angleOf(pc, t);
     ctx.fillText(names[pc], cx + Math.cos(a) * (R * 1.05 + 24 * tu), cy + Math.sin(a) * (R * 1.05 + 24 * tu));
   }
-  if (th.labels) {
+  if (th.labels && cfg.video.centerLabel) {
     ctx.fillStyle = st.text;
     ctx.font = `700 ${34 * tu}px ${st.font}`;
     ctx.lineJoin = 'round';
