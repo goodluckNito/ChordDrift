@@ -53,7 +53,10 @@ export function surpriseConfig(seed: string | number, r: Rng): DeepPartial<Chord
     ['timeline', 6],
     ['spiral', 3],
     ['waterfall', 1.5],
-  ] as ['timeline' | 'spiral' | 'waterfall', number][]);
+    ['tonnetz', 1.2],
+    ['fifths', 1.2],
+    ['constellation', 1.2],
+  ] as ['timeline' | 'spiral' | 'waterfall' | 'tonnetz' | 'fifths' | 'constellation', number][]);
   const theme = randomTheme(r);
   return {
     seed,

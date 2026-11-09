@@ -5,6 +5,7 @@ import { PALETTES, type ColorBy, type Theme } from '../engine/themes';
 import { midiToHz, mod12 } from '../engine/theory';
 import { fontStack } from './fonts';
 import { mulberry32 } from '../engine/rng';
+import { drawConstellation, drawFifths, drawTonnetz, type ViewArea, type ViewStyle } from './harmony-views';
 
 /**
  * Pitch-versus-time plot with a moving camera. Everything is a pure function of
@@ -1455,7 +1456,20 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   }
 
   const freqs = soundingPitches(score, t).map(midiToHz);
-  if (cfg.video.view === 'waterfall') drawWaterfall(ctx, score, t, st, lay);
+  const harmonyView = cfg.video.view === 'tonnetz' || cfg.video.view === 'fifths' || cfg.video.view === 'constellation';
+  if (harmonyView) {
+    const vs: ViewStyle = { ink: st.ink, accent: st.accent, text: th.text, font: st.font, lw: st.lw, pcColor: (pc) => (st.colorBy === 'none' ? st.ink : pitchColor(pc, st)) };
+    const area: ViewArea = {
+      cx: W / 2,
+      cy: (lay.bandTop + lay.bandBottom) / 2,
+      R: Math.min(W * 0.44, (lay.bandBottom - lay.bandTop) / 2 + 0.06 * H),
+      u,
+      tu,
+    };
+    if (cfg.video.view === 'tonnetz') drawTonnetz(ctx, score, t, vs, area);
+    else if (cfg.video.view === 'fifths') drawFifths(ctx, score, t, vs, area);
+    else drawConstellation(ctx, score, t, vs, area, cameraExtent(score, t));
+  } else if (cfg.video.view === 'waterfall') drawWaterfall(ctx, score, t, st, lay);
   else if (cfg.video.view === 'spiral') {
     if (cfg.video.spiral === 'fly') drawTunnel(ctx, score, t, st, lay);
     else if (cfg.video.spiral === 'orbit' || cfg.video.spiral === 'drain') drawOrbit(ctx, score, t, st, lay);

@@ -147,6 +147,11 @@ Themes are saved in projects and share links and used in video exports. **My the
 
 **Formats.** Theme → Format sets the frame. **Auto** (the default) picks landscape on wide screens and portrait on tall ones, and switches when you rotate or resize. You can also fix it to Portrait 9:16, Landscape 16:9, Square, Portrait 4:5 or Landscape 4K. The layout adapts: text scales with the frame, and wide frames show more history. Exports and recordings use this size.
 
+**Harmony views.** Three views draw the chords as structures rather than lines over time:
+- **Tonnetz:** the triangular lattice of notes (fifths run across, major and minor thirds on the diagonals). The current chord lights up as a shape on the lattice, the progression trails behind as a walk through it, and the camera glides from chord to chord, so smooth voice-leading shows as short hops and big moves as long jumps.
+- **Circle of fifths:** every chord change draws an arc between the roots (bowing deeper the further the jump), and repeated moves thicken, so the piece's harmonic habits build into a web. The current chord is inscribed as a shape, and the key's tonic is ringed.
+- **Constellation:** the voiced chord as stars (angle is the note, distance from the centre is register), joined from bass to top with their intervals labelled. The last few chords linger as smaller, fainter ghosts, so inversions, spreads and colour changes are easy to see.
+
 **3D spectrograph view.** Theme → View → 3D spectrograph draws a square slab of raked lines in an isometric (orthographic) view. It rocks ±54° around the front view over a minute, on its vertical axis; a full spin would pass through end-on views where the lines hide their own height. The base edges are drawn, so wave heights read against a floor line. Each line is one moment, newest at the front edge, with pitch running across it. Silence is flat floor; each voice raises a hump (height by loudness, saturating so a unison crests rather than walls up), and held notes become ridges running back through time. Nearer lines hide the ones behind them, like a zen garden.
 
 **Ripples.** When a voice lands on a new note (or is struck), its dot swells and sends out a fading ring. Toggle it in Theme.
