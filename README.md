@@ -11,7 +11,7 @@ npm install
 npm run dev          # open the player at http://localhost:5173
 ```
 
-Space plays/pauses, ← → seek, R rolls a new seed.
+Space plays/pauses, ← → seek, R rolls a new seed, M mutes. Under the transport there's a volume slider, remembered per device and never saved into projects or exports, and a stereo level meter: RMS bars, peak-hold ticks and a clip light.
 
 **On your phone (same Wi-Fi):** run `npm run dev:lan` and open the `Network:` address it prints, e.g. `http://192.168.1.20:5173`. (`npm run dev --host` doesn't work because npm swallows the flag; the long form is `npm run dev -- --host`.) On Windows, allow Node.js through the firewall for **Private** networks the first time. If you dismissed that prompt, go to *Windows Security → Firewall → Allow an app* and tick Node.js under Private. Make sure your PC's network profile is Private, not Public. On iPhone, turn off the silent switch, because it mutes web audio.
 

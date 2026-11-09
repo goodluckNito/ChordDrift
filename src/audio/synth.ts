@@ -346,13 +346,61 @@ export class LivePlayer {
   private startOffset = 0;
   private recordTap: MediaStreamAudioDestinationNode | null = null;
   private suspendTimer = 0;
+  /** Listening volume (not part of the piece: exports and recordings ignore it). */
+  private volumeNode: GainNode | null = null;
+  private volume = 1;
+  private analysers: AnalyserNode[] = [];
+  private meterBuf: Float32Array<ArrayBuffer> | null = null;
   playing = false;
+
+  /** Output stage that outlives individual master chains: volume → speakers, with level taps. */
+  private outputStage(ctx: AudioContext): GainNode {
+    if (!this.volumeNode) {
+      this.volumeNode = ctx.createGain();
+      this.volumeNode.gain.value = this.volume;
+      this.volumeNode.connect(ctx.destination);
+      const split = ctx.createChannelSplitter(2);
+      this.volumeNode.connect(split);
+      this.analysers = [0, 1].map((ch) => {
+        const an = ctx.createAnalyser();
+        an.fftSize = 1024;
+        split.connect(an, ch);
+        return an;
+      });
+      this.meterBuf = new Float32Array(1024);
+    }
+    return this.volumeNode;
+  }
+
+  /** Set listening volume, 0..1 (perceptual: squared to gain). */
+  setVolume(v: number) {
+    this.volume = Math.max(0, Math.min(1, v)) ** 2;
+    if (this.volumeNode && this.ctx) this.volumeNode.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.02);
+  }
+
+  /** Current output level per channel: peak and RMS in dBFS (−Infinity when silent or stopped). */
+  levels(): { peak: number; rms: number }[] {
+    if (!this.ctx || !this.meterBuf || this.ctx.state !== 'running') return [{ peak: -Infinity, rms: -Infinity }, { peak: -Infinity, rms: -Infinity }];
+    const buf = this.meterBuf;
+    return this.analysers.map((an) => {
+      an.getFloatTimeDomainData(buf);
+      let peak = 0;
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const a = Math.abs(buf[i]);
+        if (a > peak) peak = a;
+        sum += buf[i] * buf[i];
+      }
+      const db = (x: number) => (x > 0 ? 20 * Math.log10(x) : -Infinity);
+      return { peak: db(peak), rms: db(Math.sqrt(sum / buf.length)) };
+    });
+  }
 
   private ensure(score: Score): AudioContext {
     if (!this.ctx) this.ctx = new AudioContext({ latencyHint: 'playback' });
     if (!this.master || this.masterScore !== score) {
       this.master?.output.disconnect();
-      this.master = createMaster(this.ctx, score, this.ctx.destination);
+      this.master = createMaster(this.ctx, score, this.outputStage(this.ctx));
       if (this.recordTap) this.master.output.connect(this.recordTap);
       this.masterScore = score;
     }

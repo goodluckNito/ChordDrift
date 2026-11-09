@@ -518,6 +518,78 @@ function startApp() {
     await play();
   });
 
+  // ---- Volume & level meter ------------------------------------------------------
+  // Listening volume is a per-device preference (not part of the piece or project).
+  const volumeInput = $<HTMLInputElement>('#volume');
+  const levelsBox = $<HTMLDivElement>('.levels');
+  let volume = 0.9;
+  let muted = false;
+  try {
+    const saved = localStorage.getItem('chord-drift.volume');
+    if (saved !== null && Number.isFinite(Number(saved))) volume = Math.max(0, Math.min(1, Number(saved)));
+  } catch {
+    /* storage unavailable */
+  }
+  const applyVolume = () => {
+    player.setVolume(muted ? 0 : volume);
+    volumeInput.value = String(volume);
+    levelsBox.classList.toggle('muted', muted || volume === 0);
+    $('#mute').setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
+    $('#mute-waves').style.opacity = muted || volume === 0 ? '0.15' : '1';
+  };
+  volumeInput.addEventListener('input', () => {
+    volume = Number(volumeInput.value);
+    muted = false;
+    applyVolume();
+    try {
+      localStorage.setItem('chord-drift.volume', String(volume));
+    } catch {
+      /* ignore */
+    }
+  });
+  const toggleMute = () => {
+    muted = !muted;
+    applyVolume();
+  };
+  $('#mute').addEventListener('click', toggleMute);
+  applyVolume();
+
+  const meterRows = [...document.querySelectorAll<HTMLElement>('.meter-row')];
+  const meterEl = $<HTMLDivElement>('.meter');
+  const clipEl = $<HTMLSpanElement>('#clip');
+  const METER_FLOOR = -48;
+  const pos = (db: number) => Math.max(0, Math.min(1, (db - METER_FLOOR) / -METER_FLOOR));
+  const shown = [METER_FLOOR, METER_FLOOR];
+  const peaks = [{ db: -Infinity, at: 0 }, { db: -Infinity, at: 0 }];
+  let clipUntil = 0;
+  let lastMeterAt = performance.now();
+  function updateMeter(now: number) {
+    const dt = Math.min(0.1, (now - lastMeterAt) / 1000);
+    lastMeterAt = now;
+    const lv = player.levels();
+    lv.forEach((l, ch) => {
+      // RMS bar: rises instantly, falls at 24 dB/s, like a classic meter.
+      const target = Math.max(METER_FLOOR, l.rms);
+      shown[ch] = target > shown[ch] ? target : Math.max(target, shown[ch] - 24 * dt);
+      // Peak tick: holds for a second, then falls at 18 dB/s.
+      const pk = peaks[ch];
+      if (l.peak >= pk.db || now - pk.at > 1000) {
+        if (l.peak >= pk.db) {
+          pk.db = l.peak;
+          pk.at = now;
+        } else pk.db = Math.max(l.peak, pk.db - 18 * dt);
+      }
+      if (l.peak > -0.3) clipUntil = now + 1500;
+      const row = meterRows[ch];
+      (row.children[0] as HTMLElement).style.width = `calc(${(1 - pos(shown[ch])) * 100}% + 1px)`;
+      const tick = row.children[1] as HTMLElement;
+      tick.style.left = `calc(${pos(pk.db) * 100}% - 2px)`;
+      tick.style.opacity = pk.db > METER_FLOOR ? '0.8' : '0';
+    });
+    clipEl.classList.toggle('on', now < clipUntil);
+    meterEl.setAttribute('aria-valuenow', String(Math.round(Math.max(...shown))));
+  }
+
   // ---- Keyboard -----------------------------------------------------------------
   window.addEventListener('keydown', (e) => {
     const tag = (e.target as HTMLElement).tagName;
@@ -528,7 +600,8 @@ function startApp() {
       else void play();
     } else if (e.key === 'r' || e.key === 'R') {
       $<HTMLButtonElement>('#dice').click();
-    } else if (e.key === 'ArrowLeft') seek(currentTime() - 2);
+    } else if (e.key === 'm' || e.key === 'M') toggleMute();
+    else if (e.key === 'ArrowLeft') seek(currentTime() - 2);
     else if (e.key === 'ArrowRight') seek(currentTime() + 2);
   });
 
@@ -581,6 +654,7 @@ function startApp() {
     score.extend(t);
     if (score.endless && score.chords.length + 1 > renderedRows) renderList();
     adaptQuality(performance.now());
+    updateMeter(performance.now());
     resizeCanvas();
     renderFrame(ctx, score, t);
     if (recording) renderFrame(recording.canvas.getContext('2d')!, score, t);

@@ -8,6 +8,7 @@
   --accent-ink: #ffffff;
   --stage: #e6e6e1;
   --field: #f7f7f4;
+  --meter-track: #d4d4ce;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -21,10 +22,12 @@
     --accent-ink: #111112;
     --stage: #0b0b0c;
     --field: #222225;
+    --meter-track: #26262a;
     color-scheme: dark;
   }
 }
 :root[data-theme='dark'] {
+  --meter-track: #26262a;
   --bg: #111112;
   --panel: #19191b;
   --ink: #ececea;
@@ -218,3 +221,71 @@ label.check input { width: 16px; height: 16px; accent-color: var(--accent); }
 .project .row { flex-wrap: wrap; }
 .project .row > button { flex: 1; }
 #project-list { flex: 1; }
+
+/* Volume + level meter */
+.levels {
+  width: min(100%, 560px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: -4px;
+}
+button.icon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--ink);
+}
+#volume { width: 96px; flex: none; }
+.meter { flex: 1; min-width: 80px; display: grid; gap: 3px; }
+.meter-row {
+  position: relative;
+  height: 5px;
+  border-radius: 3px;
+  overflow: hidden;
+  /* The scale: quiet → healthy → hot → clipping. The fill reveals it from the left. */
+  /* Linear in dB from -48 to 0: green to -12 dB (75%), amber by -6 dB, red near 0. */
+  background: linear-gradient(90deg, #4f8f5e 0%, #4f8f5e 75%, #d9a43a 87.5%, #d24b3a 98%);
+}
+.meter-row .fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -1px; /* overhang hides anti-aliased colour at the rounded edge */
+  width: calc(100% + 1px);
+  background: var(--meter-track); /* opaque: it hides the unlit part of the scale */
+}
+.meter-row .peak {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  left: 0;
+  background: var(--ink);
+  opacity: 0;
+}
+.meter-scale {
+  position: relative;
+  height: 10px;
+  font-size: 9px;
+  color: var(--muted);
+  line-height: 1;
+  margin-top: 1px;
+}
+.meter-scale span { position: absolute; top: 0; transform: translateX(-50%); }
+.meter-scale span:first-child { transform: none; }
+.meter-scale span:last-child { transform: translateX(-100%); }
+.clip {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  opacity: 0.45;
+}
+.clip.on { opacity: 1; color: #fff; background: #d24b3a; border-color: #d24b3a; }
+.levels.muted .meter, .levels.muted #volume { opacity: 0.4; }
