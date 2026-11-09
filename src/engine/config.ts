@@ -373,11 +373,13 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
  */
 /** "Ambient": soft swells into each chord, a dark triangle tone, wide detune, deep reverb. */
 export const AMBIENT_PRESET: DeepPartial<ChordDriftConfig> = {
+  motion: { transition: 'swell' },
   audio: { wave: 'triangle', reverb: 0.8, detuneCents: 7, lowpass: 3200, swell: 'chord', swellDepth: 0.6, envelope: 'sustain' },
 };
 
 /** "Pluck": a fast strike that decays to a low level, a brighter triangle and a short room (strikes happen with Pluck chord changes). */
 export const PLUCK_PRESET: DeepPartial<ChordDriftConfig> = {
+  motion: { transition: 'pluck' },
   audio: { attack: 0.006, decay: 0.32, sustain: 0.1, wave: 'triangle', reverb: 0.3, lowpass: 6500, swell: 'off' },
 };
 

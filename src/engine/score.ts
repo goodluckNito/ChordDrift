@@ -158,8 +158,6 @@ class ScoreBuilder {
   /** Chord durations in seconds from the chord rhythm, or null for free timing. */
   private durations: number[] | null;
   private melody: MelodyGenerator | null = null;
-  /** When the previous chord's glides had all landed. */
-  private lastSettled = 0;
   /** Song mode: the chord plan, the parts, and a generator per distinct part. */
   private song: {
     items: { kind: 'unison' | 'chord'; section: number; local: number; slot: number }[];
@@ -404,9 +402,8 @@ class ScoreBuilder {
         : this.durations[this.rhythmIndex++ % this.durations.length]
       : Infinity;
     const crossfade = cfg.motion.transition === 'swell' && !bloom;
-    // Plucked chords glide *into* the strike: the slide happens in the quiet tail
-    // of the previous chord and every voice lands together on the change, so the
-    // attack hits the new chord (on the beat, with a rhythm) instead of the old one.
+    // Plucked chords change like a strum: every voice jumps to its new note right on
+    // the strike, so the attack hits the new chord (on the beat, with a rhythm).
     const pluck = cfg.motion.transition === 'pluck' && !bloom;
     let span = 0;
     for (let v = 0; v < V; v++) {
@@ -419,8 +416,8 @@ class ScoreBuilder {
       if (p0 === p1) continue;
       const leap = Math.abs(p1 - p0);
       if (pluck) {
-        const room = Math.max(0.02, (t - this.lastSettled) * 0.9);
-        const d = Math.max(0.02, Math.min(T.glide * (1 + leap / 12), room));
+        // Strummed: every voice jumps to its new note right on the strike, no slide.
+        const d = 0.003;
         score.moves[v].push({ t0: t - d, d, p0, p1 });
         continue;
       }
@@ -460,7 +457,6 @@ class ScoreBuilder {
     } else {
       this.nextChange = t + span + Math.max(0.35, T.hold * jitter - (crossfade ? T.swellIn : T.glide));
     }
-    this.lastSettled = t + span;
     this.current = notes;
   }
 

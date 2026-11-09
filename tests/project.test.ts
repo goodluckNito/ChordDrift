@@ -34,8 +34,11 @@ describe('themes', () => {
 });
 
 describe('sound presets', () => {
-  it('only change sound settings (envelope, swells, reverb, tone)', async () => {
+  it('only change sound settings (envelope, swells, reverb, tone) and how chords change', async () => {
     const { AMBIENT_PRESET, PLUCK_PRESET, DARK_PRESET } = await import('../src/engine');
-    for (const p of [AMBIENT_PRESET, PLUCK_PRESET, DARK_PRESET]) expect(Object.keys(p)).toEqual(['audio']);
+    for (const p of [AMBIENT_PRESET, PLUCK_PRESET, DARK_PRESET]) {
+      for (const k of Object.keys(p)) expect(['audio', 'motion']).toContain(k);
+      if (p.motion) expect(Object.keys(p.motion)).toEqual(['transition']);
+    }
   });
 });

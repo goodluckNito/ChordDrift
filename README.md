@@ -120,10 +120,10 @@ Each distinct part has its own seeded generator, so parts sound different but st
 Line thickness and dot size follow the level over time, in the video as well. **Ambient** sets soft swells into each chord, a dark triangle tone and deep reverb. Pair it with Release & swell in for crossfading chords.
 
 **Pluck.** Timing → Chord changes → **Pluck** makes chords strike and ring out:
-- **Glide into the hit:** voices slide during the previous chord's quiet tail and land together on the change, so the hit is on the new chord.
+- **Strummed changes:** every voice jumps to its new note right on the strike, with no slide, so the hit is on the new chord.
 - **Strike pattern:** Rhythm → Strike pattern re-strikes the *current* chord at the tempo, with presets (quarters, eighths, sixteenths, tresillo, triplets, offbeats, gallop) or your own pattern in the rhythm notation, where rests skip a strike. Chords still change on their own, slower timing, so you get a fast pulse over an unhurried progression.
 - **Fullness:** the default **Warm** wave is a soft, saw-like tone (strong 2nd and 3rd harmonics, rolling off above), matched to the reference videos. **Sub bass** adds a sine an octave under the lowest voice. It runs dry (no reverb) and ducks under the kick (and the snare, if the chords duck under it), so it doesn't flatten the chords. And **Bass** is a low shelf (default +4 dB) that pushes the low end like an EQ. **Warmth** saturates the mix gently. **Stereo width** sets both the voice panning and how wide the reverb tail is. The default is nearly mono, so the sound stays solid and centred.
-- **Envelope:** attack, decay and sustain (Sound) shape each strike, and the lines show every hit. The sound presets (**Ambient**, **Pluck**, **Dark**) change only the sound: envelope, swells, reverb and tone. They never touch rhythm, timing, harmony or theme. **Default sound** resets just the sound.
+- **Envelope:** attack, decay and sustain (Sound) shape each strike, and the lines show every hit. The sound presets (**Ambient**, **Pluck**, **Dark**) change the sound (envelope, swells, reverb and tone) and how chords change: Pluck switches chord changes to Pluck, Ambient to Release & swell in. They never touch rhythm, harmony or theme. **Default sound** resets just the sound.
 
 **Themes.** Presets: Paper, Sepia, Midnight, Neon, Blueprint, Terminal, Chromatic, Sunset and Hex. You can also choose your own:
 - **Colours:** background (optionally a gradient), lines, melody and text.

@@ -598,7 +598,7 @@ function startApp() {
     setStatus(message);
   };
   $('#pluck').addEventListener('click', () =>
-    applyPatch(PLUCK_PRESET, 'Pluck tone: fast strike, quick decay. For strikes, set Timing → Chord changes → Pluck and pick a strike pattern.'),
+    applyPatch(PLUCK_PRESET, 'Pluck: chords change on a strike with a fast attack and quick decay. Pick a strike pattern under Timing to re-strike them.'),
   );
   $('#dark').addEventListener('click', () =>
     applyPatch(DARK_PRESET, 'Dark: detuned saws through a low filter, deep reverb, slow breathing. Try it with the Witch house style and Hex theme.'),
@@ -610,7 +610,7 @@ function startApp() {
     setStatus('All settings back to defaults (same seed).');
   });
   $('#ambient').addEventListener('click', () =>
-    applyPatch(AMBIENT_PRESET, 'Ambient: soft swells into each chord, a dark triangle tone, deep reverb. For crossfading chords, set Timing → Chord changes → Release & swell in.'),
+    applyPatch(AMBIENT_PRESET, 'Ambient: each chord releases as the next swells in underneath, with a dark triangle tone and deep reverb.'),
   );
   $('#sound-reset').addEventListener('click', () => {
     state = resolveConfig({ ...state, audio: structuredClone(DEFAULT_CONFIG.audio) } as DeepPartial<ChordDriftConfig>);
