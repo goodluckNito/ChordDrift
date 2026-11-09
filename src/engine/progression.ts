@@ -1,10 +1,11 @@
 import { COLOUR_BY_COMPLEXITY, SIZE_BY_COMPLEXITY, alterChord, chordName, chordSuffix, colourVariant, isMinorish, palette, pcOverlap, romanName, stackChord, suffixIntervals, type Chord } from './chords';
 import type { ChordDriftConfig } from './config';
 import type { ProgressionToken } from './progression-text';
+import { STYLES, StylePlanner, type PlanItem } from './styles';
 import { pick, weighted, type Rng } from './rng';
 import { PARALLEL_SCALES, SCALES, mod12, romanFor, scalePcs, scaleSteps, tonicName } from './theory';
 
-export type ChordOrigin = 'scale' | 'altered' | 'secondary' | 'borrowed' | 'mediant' | 'pivot' | 'voiceled' | 'free' | 'cadence' | 'written';
+export type ChordOrigin = 'scale' | 'altered' | 'secondary' | 'borrowed' | 'mediant' | 'pivot' | 'modulation' | 'voiceled' | 'free' | 'cadence' | 'written';
 
 export interface ChordSpec extends Chord {
   /** Tonic and scale the chord was heard in (changes after a pivot). */
@@ -46,23 +47,55 @@ export class ProgressionWalker {
   private sinceHome = 0;
   private complexity: number;
 
+  /** Style planning: a fixed plan (finite pieces) or a planner pulled phrase by phrase (endless). */
+  private plan: PlanItem[] | null = null;
+  private planner: StylePlanner | null = null;
+  private planQueue: PlanItem[] = [];
+
   constructor(
     private cfg: ChordDriftConfig,
     tonic: number,
     private rng: Rng,
     private tokens: ProgressionToken[] = [],
+    styleRng?: Rng,
   ) {
     this.tonic = tonic;
     this.scale = SCALES[cfg.scale] ? cfg.scale : 'major';
     this.complexity = cfg.complexity;
+    if (cfg.style !== 'none' && !tokens.length && styleRng) {
+      const def = STYLES[cfg.style];
+      this.complexity = Math.max(def.complexity[0], Math.min(def.complexity[1], cfg.complexity));
+      this.planner = new StylePlanner(def, tonic, this.scale, styleRng);
+    }
+  }
+
+  /** For finite styled pieces: plan the whole thing up front; returns the number of chords. */
+  planPiece(phrases: number): number {
+    if (!this.planner) return 0;
+    this.plan = this.planner.planPiece(phrases);
+    return this.plan.length;
+  }
+
+  private nextPlanned(index: number): PlanItem | null {
+    if (this.plan) return this.plan[index] ?? null;
+    if (!this.planner) return null;
+    // Endless: keep at least one phrase queued so modulations can rewrite its ending.
+    while (this.planQueue.length < 5) this.planQueue.push(...this.planner.nextPhrase(this.planQueue));
+    return this.planQueue.shift()!;
   }
 
   /** total = number of chords for a finite piece, or null when endless. */
   next(index: number, total: number | null, cost: CostFn): ChordSpec {
     let spec: ChordSpec;
-    const token = this.tokens.length ? this.tokens[index % this.tokens.length] : null;
-    if (token && token.kind === 'chord') spec = this.resolve(token);
-    else spec = this.generate(index === 0 && !token, total !== null && index === total - 1 && total > 1, cost);
+    const planned = this.planner ? this.nextPlanned(index) : null;
+    const token = planned ? planned.token : this.tokens.length ? this.tokens[index % this.tokens.length] : null;
+    if (planned) {
+      // Styled: every chord is heard in its phrase's local key.
+      this.tonic = planned.tonic;
+      this.scale = planned.scale;
+    }
+    if (token && token.kind === 'chord') spec = this.resolve(token, planned?.origin, planned?.keyChange);
+    else spec = this.generate(index === 0 && !token, !planned && total !== null && index === total - 1 && total > 1, cost);
     if (spec.origin === 'pivot') {
       this.tonic = spec.tonic;
       this.scale = spec.scale;
@@ -116,7 +149,7 @@ export class ProgressionWalker {
 
   // ---- Written progressions ---------------------------------------------------
 
-  private resolve(token: Extract<ProgressionToken, { kind: 'chord' }>): ChordSpec {
+  private resolve(token: Extract<ProgressionToken, { kind: 'chord' }>, origin: ChordOrigin = 'written', keyChange = false): ChordSpec {
     const steps = scaleSteps(this.scale);
     const ref = token.root;
     let root: number;
@@ -139,7 +172,9 @@ export class ProgressionWalker {
       if (stacked && (wantMinor === null || isMinorish(stacked.intervals) === wantMinor)) chord = stacked;
       else chord = this.familyChord(root, wantMinor ?? false);
     }
-    return this.spec(chord, 'written');
+    const spec = this.spec(chord, origin);
+    if (keyChange) spec.roman += ` (→ ${tonicName(this.tonic, this.scale)} ${this.scale === 'minor' ? 'minor' : this.scale === 'major' ? 'major' : SCALES[this.scale].name})`;
+    return spec;
   }
 
   // ---- Generation ---------------------------------------------------------------

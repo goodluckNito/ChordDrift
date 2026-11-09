@@ -7,6 +7,7 @@ export * from './progression-text';
 export * from './rhythm';
 export * from './rng';
 export * from './score';
+export * from './styles';
 export * from './themes';
 export * from './theory';
 export * from './voicing';

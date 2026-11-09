@@ -450,6 +450,148 @@ function traceMelody(
   }
 }
 
+/**
+ * Spiral view. Pitch is wrapped around a spiral — one turn per octave (C at
+ * the top), low pitches near the centre — so octaves line up and chord shapes
+ * read like a clock diagram. Each voice leaves a trail that shrinks and rotates
+ * as it ages, so held notes curl inward as logarithmic spirals and glides sweep
+ * along the pitch spiral. The arrival collapses everything into one point.
+ */
+function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: Style, u: number) {
+  const { width: W, height: H } = ctx.canvas;
+  const cfg = score.config;
+  const th = cfg.theme;
+  const V = cfg.voices;
+  const cx = W / 2;
+  const cy = ((LAYOUT.bandTop + LAYOUT.bandBottom) / 2) * H;
+  const R = Math.min(W * 0.46, ((LAYOUT.bandBottom - LAYOUT.bandTop) / 2 + 0.06) * H);
+  const cam = cameraExtent(score, t);
+  const mid = (cam.lo + cam.hi) / 2;
+  const span = Math.max(24, cam.hi - cam.lo + 4);
+  const lo = mid - span / 2;
+  const radiusOf = (p: number) => R * (0.16 + 0.84 * Math.max(0, Math.min(1.08, (p - lo) / span)));
+  const angleOf = (p: number) => (p / 12) * Math.PI * 2 - Math.PI / 2 - (0 / 12) * Math.PI * 2;
+  const history = cfg.video.historySeconds * 1.6;
+  const shrinkT = cfg.video.historySeconds * 0.9;
+  const twist = Math.PI * 0.9; // radians of extra rotation per shrinkT of age
+  const at = (p: number, age: number) => {
+    const s = Math.exp(-age / shrinkT);
+    const r = radiusOf(p) * s;
+    const a = angleOf(p) + (age / shrinkT) * twist;
+    return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, s };
+  };
+
+  // Guides: the pitch spiral itself and the twelve pitch-class spokes with names.
+  ctx.save();
+  ctx.strokeStyle = withAlpha(th.text, 0.1);
+  ctx.lineWidth = Math.max(1, 1.2 * u);
+  ctx.beginPath();
+  for (let p = lo; p <= lo + span; p += 0.25) {
+    const r = radiusOf(p);
+    const a = angleOf(p);
+    if (p === lo) ctx.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+    else ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+  }
+  ctx.stroke();
+  ctx.fillStyle = withAlpha(th.text, 0.5);
+  ctx.font = `500 ${17 * u}px ${st.font}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const names = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+  for (let pc = 0; pc < 12; pc++) {
+    const a = angleOf(pc);
+    ctx.fillText(names[pc], cx + Math.cos(a) * (R + 26 * u), cy + Math.sin(a) * (R + 26 * u));
+  }
+  ctx.restore();
+
+  // Trails.
+  const painter = new Painter(ctx, st, V, cy - R, cy + R);
+  const half = 1.7 * u * st.lw;
+  const crossfade = cfg.motion.transition === 'swell';
+  const pitchFor = (v: number, time: number) => (crossfade ? soundingPitches(score, time)[v] : pitchAt(score, v, time));
+  const samples = 140;
+  /**
+   * Sample a trail from oldest to newest. Fast pitch changes are subdivided so
+   * curves stay curves; silent stretches (melody rests) break the trail.
+   */
+  const trail = (sample: (time: number) => { p: number; g: number }, width: number): RibbonPoint[][] => {
+    const runs: RibbonPoint[][] = [];
+    let run: RibbonPoint[] = [];
+    let lastP = NaN;
+    const push = (age: number) => {
+      const { p, g } = sample(t - age);
+      // Silence, or a jump (crossfaded chords change pitch instantly), starts a new run.
+      if (g < 0.02 || Math.abs(p - lastP) > 1) {
+        if (run.length > 1) runs.push(run);
+        run = [];
+      }
+      lastP = p;
+      if (g < 0.02) return;
+      const q = at(p, age);
+      run.push({ x: q.x, y: q.y, h: width * q.s * g });
+    };
+    let prevAge = history;
+    let prevP = sample(t - history).p;
+    push(history);
+    for (let i = 1; i <= samples; i++) {
+      const age = history * (1 - i / samples);
+      const p = sample(t - age).p;
+      const extra = Math.min(40, Math.floor(Math.abs(p - prevP) / 0.35));
+      for (let j = 1; j <= extra; j++) push(prevAge + ((age - prevAge) * j) / (extra + 1));
+      push(age);
+      prevAge = age;
+      prevP = p;
+    }
+    if (run.length > 1) runs.push(run);
+    return runs;
+  };
+  for (let v = 0; v < V; v++) {
+    const runs = trail((time) => ({ p: pitchFor(v, time), g: 0.25 + 0.75 * levelAt(score, v, time) }), half);
+    for (const r of runs) ribbon(painter.fill(v, pitchFor(v, t)), r);
+  }
+  painter.paint(3.2 * u * st.lw);
+
+  if (score.melody.length) {
+    const runs = trail((time) => melodyAt(score, time) ?? { p: 0, g: 0 }, half * 1.1);
+    for (const r of runs) ribbon(painter.fill(-1, 0, st.accent), r);
+    painter.paint(3.2 * u * st.lw);
+  }
+
+  // The current chord as a shape: its notes joined in pitch order, and dots.
+  const now = soundingPitches(score, t);
+  const pos = now.map((p) => at(p, 0));
+  ctx.save();
+  ctx.strokeStyle = withAlpha(th.ink, 0.28);
+  ctx.lineWidth = Math.max(1, 1.4 * u);
+  ctx.beginPath();
+  pos.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+  ctx.stroke();
+  const dotR = 7 * u * Math.max(0.7, Math.min(1.8, st.lw));
+  now.forEach((p, v) => {
+    ctx.fillStyle = painter.dotColor(v, p, pos[v].y);
+    ctx.beginPath();
+    ctx.arc(pos[v].x, pos[v].y, dotR * (0.55 + 0.45 * levelAt(score, v, t)), 0, Math.PI * 2);
+    ctx.fill();
+  });
+  const lead = score.melody.length ? melodyAt(score, t) : null;
+  if (lead && lead.g > 0.05) {
+    const q = at(lead.p, 0);
+    ctx.fillStyle = st.accent;
+    ctx.beginPath();
+    ctx.arc(q.x, q.y, dotR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Chord name in the middle.
+  if (th.labels) {
+    ctx.fillStyle = st.text;
+    ctx.font = `700 ${34 * u}px ${st.font}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(chordLabelAt(score, t), cx, cy);
+  }
+  ctx.restore();
+}
+
 export interface RenderOptions {
   /** Override the frame number shown in the HUD (defaults to round(t × fps)). */
   frame?: number;
@@ -475,187 +617,192 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   } else ctx.fillStyle = th.background;
   ctx.fillRect(0, 0, W, H);
 
-  // ---- Camera ------------------------------------------------------------
-  // z: 0 while playing, eases to 1 for the final whole-piece view.
-  const z = Number.isFinite(tl.zoomStart) ? smootherstep((t - tl.zoomStart) / Math.max(1e-6, tl.zoomEnd - tl.zoomStart)) : 0;
-  const nowX = cfg.video.nowPosition * W;
-  const H_s = cfg.video.historySeconds;
-  const viewEnd = tl.zoomEnd; // final view spans [0, viewEnd]
-  const tNow = Math.min(t, viewEnd);
+  const freqs = soundingPitches(score, t).map(midiToHz);
+  if (cfg.video.view === 'spiral') drawSpiral(ctx, score, t, st, u);
+  else {
+    // ---- Camera ------------------------------------------------------------
+    // z: 0 while playing, eases to 1 for the final whole-piece view.
+    const z = Number.isFinite(tl.zoomStart) ? smootherstep((t - tl.zoomStart) / Math.max(1e-6, tl.zoomEnd - tl.zoomStart)) : 0;
+    const nowX = cfg.video.nowPosition * W;
+    const H_s = cfg.video.historySeconds;
+    const viewEnd = tl.zoomEnd; // final view spans [0, viewEnd]
+    const tNow = Math.min(t, viewEnd);
 
-  // Time -> x is linear, defined by two anchors that interpolate with z.
-  const tA = lerp(t - H_s, 0, z);
-  const xA = lerp(0, LAYOUT.finalLeft * W, z);
-  const tB = lerp(t, viewEnd, z);
-  const xB = lerp(nowX, LAYOUT.finalRight * W, z);
-  const xOf = (time: number) => xA + ((time - tA) / (tB - tA)) * (xB - xA);
-  const timeAtX = (x: number) => tA + ((x - xA) / (xB - xA)) * (tB - tA);
+    // Time -> x is linear, defined by two anchors that interpolate with z.
+    const tA = lerp(t - H_s, 0, z);
+    const xA = lerp(0, LAYOUT.finalLeft * W, z);
+    const tB = lerp(t, viewEnd, z);
+    const xB = lerp(nowX, LAYOUT.finalRight * W, z);
+    const xOf = (time: number) => xA + ((time - tA) / (tB - tA)) * (xB - xA);
+    const timeAtX = (x: number) => tA + ((x - xA) / (xB - xA)) * (tB - tA);
 
-  // Pitch -> y, also two anchors.
-  const cam = z < 1 ? cameraExtent(score, t) : { lo: 0, hi: 1 };
-  const [pLo, pHi] = score.pitchRange;
-  const fullPad = Math.max(0.5, (pHi - pLo) * 0.02);
-  const loP = lerp(cam.lo, pLo - fullPad, z);
-  const hiP = lerp(cam.hi, pHi + fullPad, z);
-  const yLo = lerp(LAYOUT.bandBottom, LAYOUT.finalBottom, z) * H;
-  const yHi = lerp(LAYOUT.bandTop, LAYOUT.finalTop, z) * H;
-  const yOf = (p: number) => yLo + ((p - loP) / (hiP - loP)) * (yHi - yLo);
+    // Pitch -> y, also two anchors.
+    const cam = z < 1 ? cameraExtent(score, t) : { lo: 0, hi: 1 };
+    const [pLo, pHi] = score.pitchRange;
+    const fullPad = Math.max(0.5, (pHi - pLo) * 0.02);
+    const loP = lerp(cam.lo, pLo - fullPad, z);
+    const hiP = lerp(cam.hi, pHi + fullPad, z);
+    const yLo = lerp(LAYOUT.bandBottom, LAYOUT.finalBottom, z) * H;
+    const yHi = lerp(LAYOUT.bandTop, LAYOUT.finalTop, z) * H;
+    const yOf = (p: number) => yLo + ((p - loP) / (hiP - loP)) * (yHi - yLo);
 
-  // ---- Lines -------------------------------------------------------------
-  const tFrom = lerp(timeAtX(-4), 0, z);
-  const tTo = tNow;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, LAYOUT.clipTop * H, W, (LAYOUT.clipBottom - LAYOUT.clipTop) * H);
-  ctx.clip();
+    // ---- Lines -------------------------------------------------------------
+    const tFrom = lerp(timeAtX(-4), 0, z);
+    const tTo = tNow;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, LAYOUT.clipTop * H, W, (LAYOUT.clipBottom - LAYOUT.clipTop) * H);
+    ctx.clip();
 
-  if (th.grid) {
-    // Octave lines at every C in view, with note names.
-    ctx.strokeStyle = withAlpha(th.text, 0.14);
-    ctx.fillStyle = withAlpha(th.text, 0.45);
-    ctx.lineWidth = Math.max(1, 1.2 * u);
-    ctx.font = `400 ${15 * u}px ${st.font}`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'bottom';
-    const lo = Math.min(loP, hiP);
-    const hi = Math.max(loP, hiP);
-    for (let n = Math.ceil(lo / 12) * 12; n <= hi; n += 12) {
-      const y = Math.round(yOf(n)) + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(W, y);
-      ctx.stroke();
-      ctx.fillText(`C${n / 12 - 1}`, 12 * u, y - 3 * u);
-    }
-  }
-
-  const painter = new Painter(ctx, st, V, yHi, yLo);
-  const baseWidth = 3.2 * u * st.lw;
-  if (tTo > tFrom) {
-    // Lines are drawn from the score's glides: flat stretches are single
-    // segments and only the curves are sampled, which keeps frames cheap on phones.
-    const curveStep = 2.5 * u;
-    if (cfg.motion.transition === 'swell') {
-      traceCrossfades(score, tFrom, tTo, xOf, yOf, u, painter);
-    } else if (!hasDynamics(score) || z >= 1) {
-      for (let v = 0; v < V; v++) {
-        if (st.colorBy === 'pitch') {
-          // Each held note in its own colour; glides blend between the two.
-          for (const seg of voiceSegments(score, v, tFrom, tTo)) {
-            let color: string | CanvasGradient = pitchColor(seg.p0, st);
-            if (seg.p0 !== seg.p1) {
-              const g = ctx.createLinearGradient(xOf(seg.a), 0, Math.max(xOf(seg.b), xOf(seg.a) + 1), 0);
-              g.addColorStop(0, pitchColor(seg.p0, st));
-              g.addColorStop(1, pitchColor(seg.p1, st));
-              color = g;
-            }
-            traceVoice(painter.stroke(v, seg.p0, color), score, v, seg.a, seg.b, xOf, yOf, curveStep);
-          }
-        } else traceVoice(painter.stroke(v, pitchAt(score, v, tTo)), score, v, tFrom, tTo, xOf, yOf, curveStep);
+    if (th.grid) {
+      // Octave lines at every C in view, with note names.
+      ctx.strokeStyle = withAlpha(th.text, 0.14);
+      ctx.fillStyle = withAlpha(th.text, 0.45);
+      ctx.lineWidth = Math.max(1, 1.2 * u);
+      ctx.font = `400 ${15 * u}px ${st.font}`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      const lo = Math.min(loP, hiP);
+      const hi = Math.max(loP, hiP);
+      for (let n = Math.ceil(lo / 12) * 12; n <= hi; n += 12) {
+        const y = Math.round(yOf(n)) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+        ctx.fillText(`C${n / 12 - 1}`, 12 * u, y - 3 * u);
       }
-    } else {
-      // With swells or plucks, line thickness follows each voice's level over
-      // time — the history reads like hairpins, plucks like little strikes.
-      const half = 1.6 * u * st.lw;
-      for (let v = 0; v < V; v++) {
-        const segs = st.colorBy === 'pitch' ? voiceSegments(score, v, tFrom, tTo) : [{ a: tFrom, b: tTo, p0: pitchAt(score, v, tTo), p1: 0 }];
-        for (const seg of segs) {
-          const pts = samplePath(score, v, seg.a, seg.b, xOf, yOf, 3 * u, (t) => half * (0.2 + 0.8 * levelAt(score, v, t)));
-          ribbon(painter.fill(v, seg.p0), pts);
+    }
+
+    const painter = new Painter(ctx, st, V, yHi, yLo);
+    const baseWidth = 3.2 * u * st.lw;
+    if (tTo > tFrom) {
+      // Lines are drawn from the score's glides: flat stretches are single
+      // segments and only the curves are sampled, which keeps frames cheap on phones.
+      const curveStep = 2.5 * u;
+      if (cfg.motion.transition === 'swell') {
+        traceCrossfades(score, tFrom, tTo, xOf, yOf, u, painter);
+      } else if (!hasDynamics(score) || z >= 1) {
+        for (let v = 0; v < V; v++) {
+          if (st.colorBy === 'pitch') {
+            // Each held note in its own colour; glides blend between the two.
+            for (const seg of voiceSegments(score, v, tFrom, tTo)) {
+              let color: string | CanvasGradient = pitchColor(seg.p0, st);
+              if (seg.p0 !== seg.p1) {
+                const g = ctx.createLinearGradient(xOf(seg.a), 0, Math.max(xOf(seg.b), xOf(seg.a) + 1), 0);
+                g.addColorStop(0, pitchColor(seg.p0, st));
+                g.addColorStop(1, pitchColor(seg.p1, st));
+                color = g;
+              }
+              traceVoice(painter.stroke(v, seg.p0, color), score, v, seg.a, seg.b, xOf, yOf, curveStep);
+            }
+          } else traceVoice(painter.stroke(v, pitchAt(score, v, tTo)), score, v, tFrom, tTo, xOf, yOf, curveStep);
+        }
+      } else {
+        // With swells or plucks, line thickness follows each voice's level over
+        // time — the history reads like hairpins, plucks like little strikes.
+        const half = 1.6 * u * st.lw;
+        for (let v = 0; v < V; v++) {
+          const segs = st.colorBy === 'pitch' ? voiceSegments(score, v, tFrom, tTo) : [{ a: tFrom, b: tTo, p0: pitchAt(score, v, tTo), p1: 0 }];
+          for (const seg of segs) {
+            const pts = samplePath(score, v, seg.a, seg.b, xOf, yOf, 3 * u, (t) => half * (0.2 + 0.8 * levelAt(score, v, t)));
+            ribbon(painter.fill(v, seg.p0), pts);
+          }
         }
       }
-    }
-    painter.paint(baseWidth);
+      painter.paint(baseWidth);
 
-    // Melody: a separate line in the accent colour, broken during rests.
-    if (score.melody.length) {
-      const path = painter.stroke(-1, 0, st.accent);
-      traceMelody(path, score, tFrom, tTo, xOf, yOf, curveStep);
-      painter.paint(baseWidth * 1.12);
-    }
-  }
-
-  // ---- Playhead dots + labels ---------------------------------------------
-  const pitches = soundingPitches(score, tNow);
-  const freqs = soundingPitches(score, t).map(midiToHz);
-  const dotX = xOf(tNow);
-  const dynamic = hasDynamics(score) && z < 1;
-  const dotR = 7 * u * Math.max(0.7, Math.min(1.8, st.lw));
-  if (cfg.motion.transition === 'swell') {
-    // A dot for each sounding layer, sized and faded by its level.
-    for (const L of [0, 1] as const) {
-      const g = layerAt(score, L, 0, tNow).g;
-      if (g < 0.04) continue;
-      const seen = new Set<number>();
-      for (let v = 0; v < V; v++) {
-        const p = layerAt(score, L, v, tNow).p;
-        const y = Math.round(yOf(p) * 2) / 2;
-        if (seen.has(y)) continue;
-        seen.add(y);
-        ctx.fillStyle = painter.dotColor(v, p, y);
-        ctx.beginPath();
-        ctx.arc(dotX, y, dotR * g, 0, Math.PI * 2);
-        ctx.fill();
+      // Melody: a separate line in the accent colour, broken during rests.
+      if (score.melody.length) {
+        const path = painter.stroke(-1, 0, st.accent);
+        traceMelody(path, score, tFrom, tTo, xOf, yOf, curveStep);
+        painter.paint(baseWidth * 1.12);
       }
     }
-  } else {
-    const dotYs = new Set<number>();
-    pitches.forEach((p, v) => {
-      const y = Math.round(yOf(p) * 2) / 2;
-      if (dotYs.has(y)) return;
-      dotYs.add(y);
-      const r = dynamic ? dotR * (0.55 + 0.45 * levelAt(score, v, tNow)) : dotR;
-      ctx.fillStyle = painter.dotColor(v, p, y);
-      ctx.beginPath();
-      ctx.arc(dotX, y, r, 0, Math.PI * 2);
-      ctx.fill();
-    });
-  }
-  const lead = score.melody.length ? melodyAt(score, tNow) : null;
-  const leadOn = lead && lead.g > 0.05 && tNow < tl.arrivalStart;
-  if (leadOn) {
-    ctx.fillStyle = st.accent;
-    ctx.beginPath();
-    ctx.arc(dotX, yOf(lead!.p), dotR, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
 
-  const labelAlpha = 1 - smootherstep(z * 2);
-  if (labelAlpha > 0.001 && th.labels) {
-    // One label per distinct value (a unison shows a single label).
-    const byText = new Map<string, number>();
-    for (const p of pitches) {
-      const text = `${midiToHz(p).toFixed(2)} Hz`;
-      const y = yOf(p);
-      byText.set(text, byText.has(text) ? (byText.get(text)! + y) / 2 : y);
+    // ---- Playhead dots + labels ---------------------------------------------
+    const pitches = soundingPitches(score, tNow);
+    const dotX = xOf(tNow);
+    const dynamic = hasDynamics(score) && z < 1;
+    const dotR = 7 * u * Math.max(0.7, Math.min(1.8, st.lw));
+    if (cfg.motion.transition === 'swell') {
+      // A dot for each sounding layer, sized and faded by its level.
+      for (const L of [0, 1] as const) {
+        const g = layerAt(score, L, 0, tNow).g;
+        if (g < 0.04) continue;
+        const seen = new Set<number>();
+        for (let v = 0; v < V; v++) {
+          const p = layerAt(score, L, v, tNow).p;
+          const y = Math.round(yOf(p) * 2) / 2;
+          if (seen.has(y)) continue;
+          seen.add(y);
+          ctx.fillStyle = painter.dotColor(v, p, y);
+          ctx.beginPath();
+          ctx.arc(dotX, y, dotR * g, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    } else {
+      const dotYs = new Set<number>();
+      pitches.forEach((p, v) => {
+        const y = Math.round(yOf(p) * 2) / 2;
+        if (dotYs.has(y)) return;
+        dotYs.add(y);
+        const r = dynamic ? dotR * (0.55 + 0.45 * levelAt(score, v, tNow)) : dotR;
+        ctx.fillStyle = painter.dotColor(v, p, y);
+        ctx.beginPath();
+        ctx.arc(dotX, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      });
     }
-    const labels = [...byText].map(([text, y]) => ({ text, y, ly: y, color: st.text }));
+    const lead = score.melody.length ? melodyAt(score, tNow) : null;
+    const leadOn = lead && lead.g > 0.05 && tNow < tl.arrivalStart;
     if (leadOn) {
-      const text = `${midiToHz(lead!.p).toFixed(2)} Hz`;
-      const y = yOf(lead!.p);
-      const same = labels.find((l) => l.text === text);
-      if (same) same.color = st.accent;
-      else labels.push({ text, y, ly: y, color: st.accent });
+      ctx.fillStyle = st.accent;
+      ctx.beginPath();
+      ctx.arc(dotX, yOf(lead!.p), dotR, 0, Math.PI * 2);
+      ctx.fill();
     }
-    labels.sort((a, b) => a.y - b.y);
-    // Min-gap pass: push labels apart vertically; dots stay where they are.
-    const gap = 25 * u;
-    for (let i = 1; i < labels.length; i++) labels[i].ly = Math.max(labels[i].ly, labels[i - 1].ly + gap);
-    // Re-centre the pushed group around the original positions.
-    const drift = labels.reduce((s, l) => s + (l.ly - l.y), 0) / Math.max(1, labels.length);
-    for (const l of labels) l.ly -= drift;
-    for (let i = labels.length - 2; i >= 0; i--) labels[i].ly = Math.min(labels[i].ly, labels[i + 1].ly - gap);
+    ctx.restore();
 
-    ctx.globalAlpha = labelAlpha;
-    ctx.font = `400 ${19 * u}px ${st.font}`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    for (const l of labels) {
-      ctx.fillStyle = l.color;
-      ctx.fillText(l.text, dotX + 33 * u, l.ly);
+    const labelAlpha = 1 - smootherstep(z * 2);
+    if (labelAlpha > 0.001 && th.labels) {
+      // One label per distinct value (a unison shows a single label).
+      const byText = new Map<string, number>();
+      for (const p of pitches) {
+        const text = `${midiToHz(p).toFixed(2)} Hz`;
+        const y = yOf(p);
+        byText.set(text, byText.has(text) ? (byText.get(text)! + y) / 2 : y);
+      }
+      const labels = [...byText].map(([text, y]) => ({ text, y, ly: y, color: st.text }));
+      if (leadOn) {
+        const text = `${midiToHz(lead!.p).toFixed(2)} Hz`;
+        const y = yOf(lead!.p);
+        const same = labels.find((l) => l.text === text);
+        if (same) same.color = st.accent;
+        else labels.push({ text, y, ly: y, color: st.accent });
+      }
+      labels.sort((a, b) => a.y - b.y);
+      // Min-gap pass: push labels apart vertically; dots stay where they are.
+      const gap = 25 * u;
+      for (let i = 1; i < labels.length; i++) labels[i].ly = Math.max(labels[i].ly, labels[i - 1].ly + gap);
+      // Re-centre the pushed group around the original positions.
+      const drift = labels.reduce((s, l) => s + (l.ly - l.y), 0) / Math.max(1, labels.length);
+      for (const l of labels) l.ly -= drift;
+      for (let i = labels.length - 2; i >= 0; i--) labels[i].ly = Math.min(labels[i].ly, labels[i + 1].ly - gap);
+
+      ctx.globalAlpha = labelAlpha;
+      ctx.font = `400 ${19 * u}px ${st.font}`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      for (const l of labels) {
+        ctx.fillStyle = l.color;
+        ctx.fillText(l.text, dotX + 33 * u, l.ly);
+      }
+      ctx.globalAlpha = 1;
     }
-    ctx.globalAlpha = 1;
+
+
   }
 
   // ---- Title (only what's defined) -----------------------------------------

@@ -15,6 +15,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--scale') patch.scale = args[++i];
   else if (a === '--complexity') patch.complexity = Number(args[++i]);
   else if (a === '--progression') patch.progression = args[++i];
+  else if (a === '--style') patch.style = args[++i] as ChordDriftConfig['style'];
   else if (a === '--drift') patch.driftProbability = Number(args[++i]);
   else if (a === '--voices') patch.voices = Number(args[++i]);
   else seeds.push(a);

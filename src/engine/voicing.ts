@@ -28,6 +28,8 @@ export interface VoicingRules {
   /** Extra cost for each upper voice that moves at all (favours few movers, long plateaus). */
   movePenalty: number;
   candidates: number;
+  /** 'parallel' = planing: the voicing slides with the bass, snapped to chord tones (impressionist style). */
+  strategy?: 'smooth' | 'parallel';
 }
 
 
@@ -214,6 +216,10 @@ function pcCountsOk(upper: number[], cap: number): boolean {
  * (used for cheap cost estimates).
  */
 export function voiceChord(chord: Chord, current: number[], rules: VoicingRules, rng: Rng | null): number[] {
+  if (rules.strategy === 'parallel') {
+    const planed = voiceParallel(chord, current, rules);
+    if (planed) return planed;
+  }
   const U = current.length - 1;
   const bass = chooseBass(chord.root, current[0], rules.bass);
   const pcs = new Set(chord.intervals.map((i) => mod12(chord.root + i)));
@@ -270,4 +276,48 @@ export function spreadTemplate(voices: number, startNote: number, rules: Voicing
     out.push(Math.round(lo + (hi - lo) * Math.pow(x, 0.85)));
   }
   return out;
+}
+
+/**
+ * Planing: move the whole voicing by the bass's interval and snap each voice to
+ * the nearest chord tone — chords slide in parallel, as in Debussy or Ravel.
+ * Returns null if the result would miss a required tone (then the smooth
+ * search takes over).
+ */
+export function voiceParallel(chord: Chord, current: number[], rules: VoicingRules): number[] | null {
+  if (new Set(current).size <= 1) return null; // the opening unison has no shape to plane
+  const bass = chooseBass(chord.root, current[0], rules.bass);
+  let shift = bass - current[0];
+  if (shift > 6) shift -= 12;
+  if (shift < -6) shift += 12;
+  const pcs = new Set(chord.intervals.map((i) => mod12(chord.root + i)));
+  const [lo, hi] = rules.upper;
+  const upper: number[] = [];
+  for (const n of current.slice(1)) {
+    let target = n + shift;
+    if (target > hi + 5) target -= 12;
+    if (target < lo - 5) target += 12;
+    let best = target;
+    for (let d = 0; d <= 2; d++) {
+      if (pcs.has(mod12(target + d))) {
+        best = target + d;
+        break;
+      }
+      if (pcs.has(mod12(target - d))) {
+        best = target - d;
+        break;
+      }
+    }
+    if (!pcs.has(mod12(best))) return null;
+    upper.push(best);
+  }
+  upper.sort((a, b) => a - b);
+  // Keep voices distinct and above the bass.
+  for (let i = 0; i < upper.length; i++) {
+    const floor = i === 0 ? bass + 1 : upper[i - 1] + 1;
+    while (upper[i] < floor || !pcs.has(mod12(upper[i]))) upper[i]++;
+  }
+  const present = new Set(upper.map(mod12));
+  if (!requiredTones(chord.intervals).every((r) => present.has(mod12(chord.root + r)))) return null;
+  return [bass, ...upper];
 }

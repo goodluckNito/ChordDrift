@@ -12,6 +12,7 @@ import {
   KEY_NAMES,
   RHYTHM_PRESETS,
   SCALES,
+  STYLES,
   chordIndexAt,
   chordToToken,
   formatSeed,
@@ -139,6 +140,10 @@ function startApp() {
     rebuild(true);
   });
 
+  const styleSelect = $<HTMLSelectElement>('#style');
+  styleSelect.innerHTML =
+    '<option value="none">None — use the generator below</option>' + Object.entries(STYLES).map(([id, st]) => `<option value="${id}">${st.name}</option>`).join('');
+
   const themeSelect = $<HTMLSelectElement>('#theme-preset');
   themeSelect.innerHTML = Object.keys(THEME_PRESETS).map((id) => `<option value="${id}">${THEME_LABELS[id] ?? id}</option>`).join('') + '<option value="custom">Custom</option>';
   themeSelect.addEventListener('change', () => {
@@ -184,6 +189,14 @@ function startApp() {
     $('#complexity-label').textContent = `${state.complexity} · ${COMPLEXITY_NAMES[state.complexity]}`;
     const written = state.progression.trim().length > 0;
     for (const el of form.querySelectorAll<HTMLElement>('[data-show]')) el.hidden = state.mode !== el.dataset.show;
+    const styled = state.style !== 'none' && !written;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-nostyle]')) if (styled) el.hidden = true;
+    const def = state.style !== 'none' ? STYLES[state.style] : null;
+    $('#style-note').textContent = def
+      ? written
+        ? 'Your written progression takes priority over the style.'
+        : `${def.description} Complexity is kept within ${def.complexity[0]}–${def.complexity[1]} for this style; chord count sets the number of phrases.`
+      : 'Pick a style for planned phrases, cadences and key changes, or leave it on None for free generation.';
     for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-swell]')) el.hidden = state.audio.swell === 'off';
     for (const el of form.querySelectorAll<HTMLElement>('[data-transition]')) el.hidden = state.motion.transition !== el.dataset.transition;

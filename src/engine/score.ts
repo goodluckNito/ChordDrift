@@ -5,6 +5,7 @@ import { parseProgression, type ProgressionToken } from './progression-text';
 import { chordDurations, parseRhythm } from './rhythm';
 import { formatSeed, parseSeed, randInt, stream, uniform, type Rng } from './rng';
 import { DEGREE_OFFSETS, SCALES, mod12, parseNote, parsePc, spellNote, tonicName } from './theory';
+import { STYLES } from './styles';
 import { spreadTemplate, voiceChord, voiceLeadingCost, type VoicingRules } from './voicing';
 
 /** One glide of one voice, in MIDI pitch space. */
@@ -99,7 +100,8 @@ export function resolveNote(spec: string | number, keyPc: number, register: 'low
 }
 
 export function voicingRules(cfg: ChordDriftConfig): VoicingRules {
-  return { ...cfg.voicing, bass: cfg.range.bass, upper: cfg.range.upper };
+  const style = cfg.style !== 'none' ? STYLES[cfg.style].voicing : undefined;
+  return { ...cfg.voicing, bass: cfg.range.bass, upper: cfg.range.upper, ...style };
 }
 
 /** How far ahead of the requested time an endless score keeps chords ready (s). */
@@ -148,7 +150,11 @@ class ScoreBuilder {
     this.total = cfg.endless ? null : tokens.length ? tokens.length : randomCount;
 
     const startNote = resolveNote(cfg.startNote, keyPc, 'low');
-    this.walker = new ProgressionWalker(cfg, keyPc, stream(seed, 'progression'), tokens);
+    this.walker = new ProgressionWalker(cfg, keyPc, stream(seed, 'progression'), tokens, stream(seed, 'style'));
+    if (cfg.style !== 'none' && !tokens.length && this.total !== null) {
+      // Styled finite pieces are planned in 4-chord phrases (chord count sets the phrase count).
+      this.total = this.walker.planPiece(Math.max(2, Math.min(6, Math.round(randomCount / 4))));
+    }
     this.voicingRng = stream(seed, 'voicing');
     this.timeRng = stream(seed, 'timing');
     this.staggerRng = stream(seed, 'stagger');

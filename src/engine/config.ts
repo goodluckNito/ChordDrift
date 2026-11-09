@@ -1,4 +1,5 @@
 import { SCALES } from './theory';
+import { STYLE_IDS, type StyleId } from './styles';
 import { FONT_NAMES, THEME_PRESETS, type Theme } from './themes';
 
 /**
@@ -63,6 +64,8 @@ export interface ChordDriftConfig {
   mode: Mode;
   /** 1 = triads … 3 = 9ths/11ths … 5 = 13ths and altered colours. */
   complexity: number;
+  /** Genre planner: phrases, cadences and key changes in a style ('none' = use the generator). */
+  style: StyleId;
   /**
    * Written progression (see progression-text.ts). Empty = generate everything.
    * "?" tokens are filled by the generator. Loops when endless.
@@ -142,7 +145,15 @@ export interface ChordDriftConfig {
     sustain: number;
   };
   theme: Theme;
-  video: { width: number; height: number; fps: number; historySeconds: number; nowPosition: number };
+  video: {
+    width: number;
+    height: number;
+    fps: number;
+    historySeconds: number;
+    nowPosition: number;
+    /** timeline = pitch over time (the classic view) · spiral = pitch wrapped around a spiral, history curling inward */
+    view: 'timeline' | 'spiral';
+  };
 }
 
 export const DEFAULT_CONFIG: ChordDriftConfig = {
@@ -155,6 +166,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   scale: 'major',
   mode: 'scale',
   complexity: 3,
+  style: 'none',
   progression: '',
   endless: false,
   driftProbability: 0.25,
@@ -183,7 +195,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
   audio: { wave: 'sine', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 7000, width: 0.6, gain: 0.9, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
   theme: { ...THEME_PRESETS.paper },
-  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75 },
+  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline' },
 };
 
 export type DeepPartial<T> = {
@@ -216,6 +228,8 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   if (!SCALES[c.scale]) c.scale = 'major';
   c.complexity = Math.max(1, Math.min(5, Math.round(Number(c.complexity) || 3)));
   c.progression = String(c.progression ?? '');
+  if (!STYLE_IDS.includes(c.style)) c.style = 'none';
+  if (c.video.view !== 'spiral') c.video.view = 'timeline';
   c.endless = Boolean(c.endless);
   c.rhythm.tempo = Math.max(20, Math.min(320, Number(c.rhythm.tempo) || 76));
   c.rhythm.chords = String(c.rhythm.chords ?? '');

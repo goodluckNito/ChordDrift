@@ -37,6 +37,19 @@ Pages on a private repo needs a paid GitHub plan; public repos are free.
 | Smoothness | 0 is a pure random walk. Higher values prefer chords that share tones with the last one, so fewer voices move and the result is calmer. |
 | Endless | Never arrive. Chords are generated on demand ahead of the playhead; a written progression loops, and each `?` is re-rolled every time round. |
 
+**Styles (genres).** Instead of walking chord to chord, a style plans the piece in 4-chord phrases. Each phrase ends on a cadence, key changes happen between phrases using approaches suited to the style, and the piece closes on the style's strongest resolution. Voicing rules change with the style too. Complexity is kept within each style's range, and the chord count sets the number of phrases.
+
+| Style | Phrases | Key changes | Ending |
+| --- | --- | --- | --- |
+| Classical | I–IV–V–I, I–vi–ii–V… | to the dominant or relative key via V7, then home | ii–V7–I (Picardy in minor) |
+| Jazz | ii–V–I, turnarounds, tritone subs | by ii–V to keys a step or a third away | ii–V7alt–Imaj9 or backdoor |
+| Pop | repeating 4-chord loops | a final-chorus lift up a half or whole step | IV–V–I |
+| Cinematic | i–♭VI–♭III–♭VII, mediants | sudden chromatic-mediant jumps | ♭VI–♭VII–I |
+| Gospel | I–III7–vi–IV, IV–iv–I, passing dim7 | lifts by half and whole steps | IV–iv–I "amen" |
+| Impressionist | parallel maj7/maj9 planing | drifts by steps and thirds | ♭VII–Imaj7#11 (voices slide together) |
+
+The score list marks every key change (e.g. `V7 (→ G major)`). Styles also run endlessly, closing a phrase with a cadence every four phrases and drifting home now and then.
+
 **Writing chords.** The Progression box accepts any mix of:
 
 ```
@@ -90,6 +103,8 @@ Line thickness and dot size follow the level over time, in the video as well. **
 
 Themes are saved in projects and share links and used in video exports. **Reset all settings** returns everything to defaults but keeps the seed.
 
+**Spiral view.** Theme → View → Spiral wraps pitch around a spiral: one turn per octave with C at the top, so octaves line up and the current chord shows as a shape, named in the middle. Each voice's trail shrinks and rotates as it ages, so held notes curl inward and glides sweep along the spiral. The arrival collapses everything into one point.
+
 **Titles.** The header, episode number and name are empty by default, and only what you fill in is drawn. If you set only a name, it takes the header's place.
 
 **Projects.** Save to the browser's project list, export or import `.chorddrift.json` files, or copy a share link: the URL holds the full config, so a link always reopens the exact piece.
@@ -138,6 +153,8 @@ seed ─┬─ key ───────────┐
   - `motion.ts`: `pitchAt(v, t)`, a smootherstep (or cosine) S-curve in pitch space, not in Hz, plus `melodyAt(t)` for the lead (pitch and gain, legato glides, re-attacks).
   - `rhythm.ts`: the rhythm notation parser and presets.
   - `melody.ts`: the melody generator (rhythm cells or written rhythm, chord-tone and scale-step random walk).
+  - `styles.ts`: the genre planner (phrase templates, cadences, modulations, closing formulas, per-style voicing).
+  - `themes.ts`: theme presets (colours, fonts, line colouring, glow, grid).
 - **`src/render/renderer.ts`** draws each frame as a pure function of (score, t): the pitch-vs-time plot, a camera that frames the current chord, label de-collision, the HUD (Σf, f↑/f↓, chord), and the final zoom-out to the whole piece.
 - **`src/audio/synth.ts`** runs one oscillator per voice with seeded detune and pan. Pitch and gain curves are sampled from `pitchAt` (and `swellAt`) and scheduled in short value-curve chunks, the same path for live, endless and offline playback. If the page stalls, the scheduler skips the chunks that fell behind instead of getting stuck. On browsers that reject closely spaced curves, it switches to smooth linear ramps. The master chain is a low-pass, a generated convolution reverb, and a limiter.
 
