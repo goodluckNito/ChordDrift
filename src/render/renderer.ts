@@ -1,5 +1,5 @@
 import type { ChordDriftConfig } from '../engine/config';
-import { chordIndexAt, chordLabelAt, frequencyStats, hasDynamics, layerAt, levelAt, melodyAt, pitchAt, smootherstep, soundingPitches } from '../engine/motion';
+import { chordIndexAt, chordLabelAt, frequencyStats, hasDynamics, layerAt, melodyAt, pitchAt, smootherstep, soundingPitches, strikeTimesBetween, widthFactor } from '../engine/motion';
 import type { Score } from '../engine/score';
 import type { ColorBy } from '../engine/themes';
 import { midiToHz, mod12 } from '../engine/theory';
@@ -326,15 +326,22 @@ function samplePath(
   step: number,
   half: (t: number) => number,
   pitch: (t: number) => number = (t) => pitchAt(score, v, t),
+  extra: number[] = [],
 ): RibbonPoint[] {
   const n = Math.max(2, Math.min(600, Math.ceil(Math.abs(xOf(b) - xOf(a)) / step)));
   const pts: RibbonPoint[] = [];
   const at = (t: number): RibbonPoint => ({ x: xOf(t), y: yOf(pitch(t)), h: half(t) });
+  // Uniform samples plus any extra times (e.g. exactly at each pluck strike, so peaks aren't missed).
+  const times: number[] = [];
+  for (let i = 1; i <= n; i++) times.push(a + ((b - a) * i) / n);
+  if (extra.length) {
+    for (const e of extra) if (e > a && e < b) times.push(e);
+    times.sort((x, y) => x - y);
+  }
   let prevT = a;
   let prev = at(a);
   pts.push(prev);
-  for (let i = 1; i <= n; i++) {
-    const t = a + ((b - a) * i) / n;
+  for (const t of times) {
     const cur = at(t);
     // Steep glides (the arrival in the zoomed-out view) need extra points, or
     // the ribbon's corners spike where the curve turns.
@@ -389,7 +396,7 @@ function traceCrossfades(
     if (b <= a) continue;
     const glides = k === 0 || (last && b > score.timeline.arrivalStart);
     for (let v = 0; v < V; v++) {
-      const level = (t: number) => half * layerAt(score, L, v, t).g * (0.3 + 0.7 * levelAt(score, v, t));
+      const level = (t: number) => half * layerAt(score, L, v, t).g * widthFactor(score, v, t);
       const pitch = glides ? (t: number) => layerAt(score, L, v, t).p : () => c.notes[v];
       ribbon(paint.fill(v, c.notes[v]), samplePath(score, v, a, b, xOf, yOf, glides ? 3 * u : 5 * u, level, pitch));
     }
@@ -484,6 +491,14 @@ class Painter {
     this.strokes.clear();
     this.fills.clear();
   }
+}
+
+/** Sample times around each pluck strike in [a, b]: just before, at the peak, and as it decays. */
+function strikeSamples(score: Score, a: number, b: number): number[] {
+  const atk = score.config.audio.attack;
+  const out: number[] = [];
+  for (const s of strikeTimesBetween(score, a, b)) out.push(s - 0.0005, s + atk, s + atk + 0.03, s + atk + 0.09);
+  return out;
 }
 
 /** Split a voice's path in [a, b] into held stretches and glides (for pitch colouring). */
@@ -638,11 +653,14 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
       const q = at(p, age);
       run.push({ x: q.x, y: q.y, h: width * q.s * g });
     };
+    const ages: number[] = [];
+    for (let i = 1; i <= samples; i++) ages.push(history * (1 - i / samples));
+    for (const ts of strikeSamples(score, t - history, t)) if (ts <= t) ages.push(t - ts);
+    ages.sort((x, y) => y - x);
     let prevAge = history;
     let prevP = sample(t - history).p;
     push(history);
-    for (let i = 1; i <= samples; i++) {
-      const age = history * (1 - i / samples);
+    for (const age of ages) {
       const p = sample(t - age).p;
       const extra = Math.min(40, Math.floor(Math.abs(p - prevP) / 0.35));
       for (let j = 1; j <= extra; j++) push(prevAge + ((age - prevAge) * j) / (extra + 1));
@@ -659,12 +677,12 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
       for (const L of [0, 1] as const) {
         const runs = trail((time) => {
           const st2 = layerAt(score, L, v, time);
-          return { p: st2.p, g: st2.g * (0.25 + 0.75 * levelAt(score, v, time)) };
+          return { p: st2.p, g: st2.g * widthFactor(score, v, time) };
         }, half);
         for (const r of runs) ribbon(painter.fill(v, layerAt(score, L, v, t).p), r);
       }
     } else {
-      const runs = trail((time) => ({ p: pitchFor(v, time), g: 0.25 + 0.75 * levelAt(score, v, time) }), half);
+      const runs = trail((time) => ({ p: pitchFor(v, time), g: widthFactor(score, v, time) }), half);
       for (const r of runs) ribbon(painter.fill(v, pitchFor(v, t)), r);
     }
   }
@@ -696,7 +714,7 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
     layer.pitches.forEach((p, v) => {
       ctx.fillStyle = painter.dotColor(v, p, pos[v].y);
       ctx.beginPath();
-      ctx.arc(pos[v].x, pos[v].y, dotR * layer.g * (0.55 + 0.45 * levelAt(score, v, t)), 0, Math.PI * 2);
+      ctx.arc(pos[v].x, pos[v].y, dotR * layer.g * Math.min(1.6, 0.45 + 0.55 * widthFactor(score, v, t)), 0, Math.PI * 2);
       ctx.fill();
     });
   }
@@ -807,11 +825,14 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
       const q = at(p, age);
       run.push({ x: q.x, y: q.y, h: width * (0.25 + 0.75 * q.s) * g });
     };
+    const ages: number[] = [];
+    for (let i = 1; i <= samples; i++) ages.push(memory * Math.pow(1 - i / samples, 1.6)); // denser near the present
+    for (const ts of strikeSamples(score, t - memory, t)) if (ts <= t) ages.push(t - ts);
+    ages.sort((x, y) => y - x);
     let prevAge = memory;
     let prevP = sample(t - memory).p;
     push(memory);
-    for (let i = 1; i <= samples; i++) {
-      const age = memory * Math.pow(1 - i / samples, 1.6); // denser near the present
+    for (const age of ages) {
       const p = sample(t - age).p;
       const extra = Math.min(40, Math.floor(Math.abs(p - prevP) / 0.3));
       for (let j = 1; j <= extra; j++) push(prevAge + ((age - prevAge) * j) / (extra + 1));
@@ -827,12 +848,12 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
       for (const L of [0, 1] as const) {
         const runs = trail((tau) => {
           const sl = layerAt(score, L, v, tau);
-          return { p: sl.p, g: sl.g * (0.3 + 0.7 * levelAt(score, v, tau)) };
+          return { p: sl.p, g: sl.g * widthFactor(score, v, tau) };
         }, half);
         for (const r of runs) ribbon(painter.fill(v, layerAt(score, L, v, t).p), r);
       }
     } else {
-      const runs = trail((tau) => ({ p: pitchAt(score, v, tau), g: 0.3 + 0.7 * levelAt(score, v, tau) }), half);
+      const runs = trail((tau) => ({ p: pitchAt(score, v, tau), g: widthFactor(score, v, tau) }), half);
       for (const r of runs) ribbon(painter.fill(v, pitchAt(score, v, t)), r);
     }
   }
@@ -854,7 +875,7 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
       const q = at(p, 0);
       ctx.fillStyle = painter.dotColor(v, p, q.y);
       ctx.beginPath();
-      ctx.arc(q.x, q.y, dotR * layer.g * (0.55 + 0.45 * levelAt(score, v, t)), 0, Math.PI * 2);
+      ctx.arc(q.x, q.y, dotR * layer.g * Math.min(1.6, 0.45 + 0.55 * widthFactor(score, v, t)), 0, Math.PI * 2);
       ctx.fill();
     });
   }
@@ -969,6 +990,8 @@ function drawTunnel(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
     const s = sMin + ((sMax - sMin) * i) / N;
     offsets.push(Z * (1 / s - 1));
   }
+  for (const ts of strikeSamples(score, t + BEHIND, t + AHEAD)) offsets.push(ts - t);
+  offsets.sort((x, y) => y - x);
   const lineRuns = (sample: (tau: number) => { p: number; g: number }, width: number): RibbonPoint[][] => {
     const runs: RibbonPoint[][] = [];
     let run: RibbonPoint[] = [];
@@ -1006,12 +1029,12 @@ function drawTunnel(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
       for (const L of [0, 1] as const) {
         const runs = lineRuns((tau) => {
           const sl = layerAt(score, L, v, tau);
-          return { p: sl.p, g: sl.g * (0.3 + 0.7 * levelAt(score, v, tau)) };
+          return { p: sl.p, g: sl.g * widthFactor(score, v, tau) };
         }, half);
         for (const r of runs) ribbon(painter.fill(v, layerAt(score, L, v, t).p), r);
       }
     } else {
-      const runs = lineRuns((tau) => ({ p: pitchAt(score, v, tau), g: 0.3 + 0.7 * levelAt(score, v, tau) }), half);
+      const runs = lineRuns((tau) => ({ p: pitchAt(score, v, tau), g: widthFactor(score, v, tau) }), half);
       for (const r of runs) ribbon(painter.fill(v, pitchAt(score, v, t)), r);
     }
   }
@@ -1040,7 +1063,7 @@ function drawTunnel(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
     layer.pitches.forEach((p, v) => {
       ctx.fillStyle = painter.dotColor(v, p, pos[v].y);
       ctx.beginPath();
-      ctx.arc(pos[v].x, pos[v].y, dotR * layer.g * (0.55 + 0.45 * levelAt(score, v, t)), 0, Math.PI * 2);
+      ctx.arc(pos[v].x, pos[v].y, dotR * layer.g * Math.min(1.6, 0.45 + 0.55 * widthFactor(score, v, t)), 0, Math.PI * 2);
       ctx.fill();
     });
   }
@@ -1196,7 +1219,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
         for (let v = 0; v < V; v++) {
           const segs = st.colorBy === 'pitch' ? voiceSegments(score, v, tFrom, tTo) : [{ a: tFrom, b: tTo, p0: pitchAt(score, v, tTo), p1: 0 }];
           for (const seg of segs) {
-            const pts = samplePath(score, v, seg.a, seg.b, xOf, yOf, 3 * u, (t) => half * (0.2 + 0.8 * levelAt(score, v, t)));
+            const pts = samplePath(score, v, seg.a, seg.b, xOf, yOf, 3 * u, (t) => half * widthFactor(score, v, t), undefined, strikeSamples(score, seg.a, seg.b));
             ribbon(painter.fill(v, seg.p0), pts);
           }
         }
@@ -1239,7 +1262,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
         const y = Math.round(yOf(p) * 2) / 2;
         if (dotYs.has(y)) return;
         dotYs.add(y);
-        const r = dynamic ? dotR * (0.55 + 0.45 * levelAt(score, v, tNow)) : dotR;
+        const r = dynamic ? dotR * Math.min(1.6, 0.45 + 0.55 * widthFactor(score, v, tNow)) : dotR;
         ctx.fillStyle = painter.dotColor(v, p, y);
         ctx.beginPath();
         ctx.arc(dotX, y, r, 0, Math.PI * 2);

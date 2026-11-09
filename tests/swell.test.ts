@@ -184,3 +184,24 @@ describe('pluck glides into the strike', () => {
     }
   });
 });
+
+describe('pluck rhythm start and timing', () => {
+  it('holds the unison and bloom at full level, then plucks from the first chord', async () => {
+    const { articulationAt } = await import('../src/engine');
+    const s = generateScore({ seed: 2, motion: { transition: 'pluck' }, rhythm: { tempo: 160, pluck: 's' } });
+    for (let t = 0; t < s.gridStart; t += 0.05) expect(articulationAt(s, t)).toBe(1);
+    expect(articulationAt(s, s.gridStart)).toBeCloseTo(1, 6); // first strike starts at full level: no dip
+    expect(articulationAt(s, s.gridStart + 0.08)).toBeLessThan(0.9);
+  });
+  it('puts strikes exactly on the beat grid', async () => {
+    const { strikeTimesBetween } = await import('../src/engine');
+    const s = generateScore({ seed: 2, motion: { transition: 'pluck' }, rhythm: { tempo: 120, chords: 'h', pluck: 'e' } });
+    const times = strikeTimesBetween(s, s.gridStart, s.gridStart + 8);
+    for (const ts of times) {
+      const beats = (ts - s.gridStart) / s.beat;
+      expect(Math.abs(beats * 2 - Math.round(beats * 2))).toBeLessThan(1e-6); // every eighth
+    }
+    const gaps = times.slice(1).map((x, i) => x - times[i]);
+    for (const g of gaps) expect(g).toBeCloseTo(0.25, 6);
+  });
+});

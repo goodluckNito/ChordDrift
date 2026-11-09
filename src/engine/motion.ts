@@ -277,13 +277,26 @@ export function articulationAt(score: Score, t: number): number {
   const s = a.sustain;
   const tl = score.timeline;
   if (t >= tl.arrivalStart) return s + (1 - s) * Math.min(1, (t - tl.arrivalStart) / 0.3);
-  // Before the piece starts nothing has been struck: draw/sound it plainly.
-  if (t < 0) return 1;
+  // The opening unison and the bloom ring at full level; plucking starts when the first chord lands.
+  if (t < score.gridStart) return 1;
+  const strike = lastStrike(score, t);
+  const x = Math.max(0, t - strike);
+  // Fast patterns shorten the decay so each strike can fall before the next one;
+  // otherwise the pulses blur into a wobble.
+  const decay = Math.min(a.decay, 0.32 * score.strikeGap);
+  // The first strike starts from full level, so it skips the attack (no dip, no click).
+  const first = Math.abs(strike - score.gridStart) < 1e-9;
+  const env = first ? Math.exp(-x / decay) : x < a.attack ? x / a.attack : Math.exp(-(x - a.attack) / decay);
+  return Math.max(0, Math.min(1, s + (1 - s) * env));
+}
+
+/** Time of the most recent strike at or before t (chord changes, the strike pattern, and the first chord's arrival). */
+function lastStrike(score: Score, t: number): number {
+  let strike = score.gridStart;
   const k = chordIndexAt(score, t);
-  let strike = k >= 0 ? score.chords[k].t : 0;
-  // The strike pattern re-strikes the current chord on the beat grid (after the bloom).
+  if (k >= 1) strike = Math.max(strike, score.chords[k].t);
   const pat = score.strikes;
-  if (pat && t >= score.gridStart) {
+  if (pat) {
     const pos = (t - score.gridStart) / score.beat;
     const loop = Math.floor(pos / pat.length);
     const within = pos - loop * pat.length;
@@ -292,9 +305,45 @@ export function articulationAt(score: Score, t: number): number {
     const beats = onset === -Infinity ? (loop - 1) * pat.length + pat.onsets[pat.onsets.length - 1] : loop * pat.length + onset;
     strike = Math.max(strike, score.gridStart + beats * score.beat);
   }
-  const x = Math.max(0, t - strike);
-  const env = x < a.attack ? x / a.attack : Math.exp(-(x - a.attack) / a.decay);
-  return Math.max(0, Math.min(1, s + (1 - s) * env));
+  return strike;
+}
+
+/** All strike times in [a, b] (for drawing strikes crisply). Empty unless chord changes are Pluck. */
+export function strikeTimesBetween(score: Score, a: number, b: number): number[] {
+  if (score.config.motion.transition !== 'pluck') return [];
+  const tl = score.timeline;
+  const lo = Math.max(a, score.gridStart);
+  const hi = Math.min(b, tl.arrivalStart);
+  if (hi < lo) return [];
+  const out: number[] = [];
+  if (score.gridStart >= lo && score.gridStart <= hi) out.push(score.gridStart);
+  for (let k = Math.max(1, chordIndexAt(score, lo)); k < score.chords.length && score.chords[k].t <= hi; k++) {
+    if (score.chords[k].t >= lo) out.push(score.chords[k].t);
+  }
+  const pat = score.strikes;
+  if (pat) {
+    const first = Math.floor((lo - score.gridStart) / score.beat / pat.length);
+    for (let loop = first; ; loop++) {
+      const base = score.gridStart + loop * pat.length * score.beat;
+      if (base > hi) break;
+      for (const o of pat.onsets) {
+        const ts = base + o * score.beat;
+        if (ts >= lo && ts <= hi) out.push(ts);
+      }
+      if (out.length > 4000) break;
+    }
+  }
+  return [...new Set(out)].sort((x, y) => x - y);
+}
+
+/**
+ * Line-width multiplier for drawing a voice's dynamics: swells widen and thin
+ * the line; plucks swell it to ~1.6× on each strike and leave it thin between.
+ */
+export function widthFactor(score: Score, v: number, t: number): number {
+  const base = 0.25 + 0.75 * swellAt(score, v, t);
+  if (score.config.motion.transition !== 'pluck') return base;
+  return base * (0.35 + 1.25 * articulationAt(score, t));
 }
 
 /** Combined dynamic level of a voice: swells × articulation (1 when both are off). */

@@ -1,4 +1,4 @@
-import { layerAt, levelAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
+import { articulationAt, layerAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
 import type { Wave } from '../engine/config';
 import { stream } from '../engine/rng';
 import type { Score } from '../engine/score';
@@ -58,16 +58,22 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
   // Wetter settings get a longer tail (kept moderate: long convolutions cost CPU on phones).
   convolver.buffer = makeImpulse(ctx, score.seed, 2.8 + 2.4 * Math.max(0, a.reverb - 0.3));
 
-  // The limiter matters most at unison, where all voices add up in phase.
+  // The limiter matters most at unison, where all voices add up in phase. For
+  // sustained chords it rides gently; for plucks it must only catch peaks and
+  // let go fast, or it flattens every strike and pumps between them (which
+  // smears the attacks and makes the pulse feel loose).
+  const pluck = score.config.motion.transition === 'pluck';
   const limiter = ctx.createDynamicsCompressor();
-  limiter.threshold.value = -12;
-  limiter.knee.value = 6;
-  limiter.ratio.value = 12;
-  limiter.attack.value = 0.003;
-  limiter.release.value = 0.25;
+  limiter.threshold.value = pluck ? -3 : -12;
+  limiter.knee.value = pluck ? 2 : 6;
+  limiter.ratio.value = pluck ? 20 : 12;
+  limiter.attack.value = pluck ? 0.001 : 0.003;
+  limiter.release.value = pluck ? 0.05 : 0.25;
 
   const out = ctx.createGain();
   out.gain.value = a.gain;
+  // Headroom for strikes going into the faster limiter.
+  input.gain.value = pluck ? 0.8 : 1;
 
   input.connect(lowpass);
   lowpass.connect(dry).connect(limiter);
@@ -104,6 +110,9 @@ function setCurve(param: AudioParam, curve: Float32Array, at: number, dur: numbe
   }
 }
 
+/** Pluck strikes share one envelope, scheduled at a high rate so every attack is identical. */
+const ARTIC_RATE = 2000;
+
 /** Length of each scheduled automation chunk (s). */
 const CHUNK = 0.5;
 
@@ -119,6 +128,8 @@ export class VoiceBank {
   private lead: { osc: OscillatorNode; gain: GainNode } | null = null;
   /** Everything this bank plays goes through here, so stop() can silence it for sure. */
   private bus: GainNode;
+  /** Pluck mode: the shared strike envelope for the chord voices. */
+  private art: GainNode | null = null;
   /** 1 voice set for glides; 2 alternating sets for release-&-swell transitions. */
   private layers: number;
   private nextChunk = 0;
@@ -139,6 +150,12 @@ export class VoiceBank {
     const a = score.config.audio;
     this.bus = ctx.createGain();
     this.bus.connect(master.input);
+    if (score.config.motion.transition === 'pluck') {
+      this.art = ctx.createGain();
+      this.art.gain.value = articulationAt(score, offset);
+      this.art.connect(this.bus);
+    }
+    const voiceOut = this.art ?? this.bus;
     this.layers = score.config.motion.transition === 'swell' ? 2 : 1;
     for (let L = 0; L < this.layers; L++) {
       for (let v = 0; v < score.config.voices; v++) {
@@ -151,7 +168,7 @@ export class VoiceBank {
         g.gain.value = 0;
         const pan = ctx.createStereoPanner();
         pan.pan.value = score.pan[v];
-        osc.connect(g).connect(pan).connect(this.bus);
+        osc.connect(g).connect(pan).connect(voiceOut);
         osc.start(when);
         this.oscs.push(osc);
         this.gains.push(g);
@@ -228,10 +245,16 @@ export class VoiceBank {
           let env = Math.min(1, t / 0.05); // 50 ms fade-in at the very start
           if (this.offset > 0) env *= Math.min(1, (t - this.offset) / 0.03); // de-click when starting mid-piece
           if (t > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (t - fadeOutStart) / fadeLen)));
-          gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env) * levelAt(this.score, v, t) * layerGain;
+          gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env) * swellAt(this.score, v, t) * layerGain;
         }
         setCurve(this.oscs[idx].frequency, freq, at, dur);
         setCurve(this.gains[idx].gain, gain, at, dur);
+      }
+      if (this.art) {
+        const m = Math.round(CHUNK * ARTIC_RATE) + 1;
+        const curve = new Float32Array(m);
+        for (let i = 0; i < m; i++) curve[i] = articulationAt(this.score, t0 + (i / (m - 1)) * CHUNK);
+        setCurve(this.art.gain, curve, at, dur);
       }
       if (this.lead) {
         const freq = new Float32Array(n);

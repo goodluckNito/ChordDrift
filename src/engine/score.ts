@@ -66,6 +66,8 @@ export interface Score {
   pitchRange: [number, number];
   /** Pluck strike pattern (onsets in beats within a loop), or null for strikes only on chord changes. */
   strikes: { onsets: number[]; length: number } | null;
+  /** Shortest time between pattern strikes (s), Infinity without a pattern. */
+  strikeGap: number;
   /** Melody line (empty when the melody is off). Grows over time when endless. */
   melody: MelodyNote[];
   /** Where the beat grid starts (end of the bloom), and seconds per beat. */
@@ -187,6 +189,7 @@ class ScoreBuilder {
       timeline: { introEnd: cfg.timing.intro, arrivalStart: inf, arrivalEnd: inf, musicEnd: inf, zoomStart: inf, zoomEnd: inf, end: inf },
       pitchRange: [startNote, startNote],
       strikes: cfg.motion.transition === 'pluck' ? strikeOnsets(cfg.rhythm.pluck) : null,
+      strikeGap: Infinity,
       melody: [],
       gridStart,
       beat,
@@ -198,6 +201,12 @@ class ScoreBuilder {
       ],
       extend: (t: number) => this.extendTo(t),
     };
+    if (this.score.strikes) {
+      const { onsets, length } = this.score.strikes;
+      let gap = Infinity;
+      onsets.forEach((o, i) => (gap = Math.min(gap, (i + 1 < onsets.length ? onsets[i + 1] : onsets[0] + length) - o)));
+      this.score.strikeGap = gap * beat;
+    }
     if (cfg.melody.enabled) {
       this.melody = new MelodyGenerator(cfg, gridStart, melodyRhythm.steps, stream(seed, 'melody-rhythm'), stream(seed, 'melody-pitch'));
       this.score.melody = this.melody.notes;
