@@ -230,6 +230,11 @@ export function voiceChord(chord: Chord, current: number[], rules: VoicingRules,
   const pcs = new Set(chord.intervals.map((i) => mod12(chord.root + i)));
   let required = requiredTones(chord.intervals).map((i) => mod12(chord.root + i));
   if (inverted) required = [mod12(chord.root), ...required.filter((p) => p !== mod12(bassPc))];
+  // Then the fifth: with few voices every chord tone gets a voice before anything is doubled
+  // (3 voices on a triad = root, 3rd, 5th, not an octave).
+  const fifth = chord.intervals.map(mod12).find((i) => i === 7);
+  const bassPcNow = mod12(bass);
+  if (fifth !== undefined && !required.includes(mod12(chord.root + 7)) && mod12(chord.root + 7) !== bassPcNow) required.push(mod12(chord.root + 7));
   required = required.slice(0, Math.max(0, U));
   const top = current[U];
   const pedalOk = pcs.has(mod12(top));

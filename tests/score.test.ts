@@ -216,3 +216,15 @@ describe('inversion chance', () => {
     }
   });
 });
+
+describe('small voice counts', () => {
+  it('three voices on triads play root, third and fifth', async () => {
+    const { generateScore, resolveConfig, mod12 } = await import('../src/engine');
+    for (const seed of [1, 2, 3, 4]) {
+      const s = generateScore(resolveConfig({ seed, voices: 3, complexity: 1 }));
+      for (const c of s.chords.filter((x) => x.intervals.length === 3)) {
+        expect(new Set(c.notes.map((n) => mod12(n))).size, `${seed} ${c.name}`).toBe(3);
+      }
+    }
+  });
+});
