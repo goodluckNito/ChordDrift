@@ -25,6 +25,8 @@ export interface DrumStep {
   vel: number;
   open?: boolean;
   roll?: boolean;
+  /** "?": decided per bar by the seed (nothing, a ghost note, a hit, an accent, sometimes a roll or an open hat). */
+  maybe?: boolean;
 }
 
 export function parseSteps(text: string): { steps: DrumStep[]; length: number } {
@@ -36,6 +38,7 @@ export function parseSteps(text: string): { steps: DrumStep[]; length: number } 
     else if (c === 'o') steps.push({ i, vel: 0.8, open: true });
     else if (c === 'O') steps.push({ i, vel: 1, open: true });
     else if (c === 'r') steps.push({ i, vel: 0.65, roll: true });
+    else if (c === '?') steps.push({ i, vel: 0.8, maybe: true });
   });
   return { steps, length: chars.length };
 }
@@ -121,11 +124,34 @@ export function parseDrumRows(p: Record<DrumVoice, string>): DrumRows {
   return { rows };
 }
 
+/** Three uniform numbers for (seed, voice, absolute step): the same every time, so "?" steps are reproducible. */
+function rolls(seed: number, voice: number, n: number): [number, number, number] {
+  let h = (seed ^ Math.imul(voice + 1, 0x9e3779b1) ^ Math.imul(n + 0x632be5ab, 0x85ebca6b)) >>> 0;
+  const next = () => {
+    h = (h + 0x6d2b79f5) >>> 0;
+    let x = h;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+  return [next(), next(), next()];
+}
+
+/** What a "?" step does this time round, or null for nothing. */
+function resolveMaybe(seed: number, voice: DrumVoice, n: number): Omit<DrumStep, 'i'> | null {
+  const [play, loud, extra] = rolls(seed, DRUM_VOICES.indexOf(voice), n);
+  if (play < 0.45) return null;
+  const vel = loud < 0.3 ? 0.45 : loud < 0.8 ? 0.8 : 1;
+  if ((voice === 'snare' || voice === 'hat') && extra < 0.12) return { vel: 0.65, roll: true };
+  if (voice === 'hat' && extra < 0.27) return { vel, open: true };
+  return { vel };
+}
+
 /**
  * All drum hits in [a, b), from `start` (when the bloom lands) to `stop`.
- * step = seconds per 16th note.
+ * step = seconds per 16th note. `seed` decides the "?" steps.
  */
-export function drumHitsBetween(rows: DrumRows, start: number, stop: number, step: number, a: number, b: number): DrumHit[] {
+export function drumHitsBetween(rows: DrumRows, start: number, stop: number, step: number, a: number, b: number, seed = 0): DrumHit[] {
   const out: DrumHit[] = [];
   const lo = Math.max(a, start);
   const hi = Math.min(b, stop);
@@ -136,8 +162,10 @@ export function drumHitsBetween(rows: DrumRows, start: number, stop: number, ste
     const loopSec = length * step;
     const first = Math.floor((lo - start) / loopSec);
     for (let loop = first; start + loop * loopSec < hi; loop++) {
-      for (const s of steps) {
-        const t = start + (loop * length + s.i) * step;
+      for (const raw of steps) {
+        const s = raw.maybe ? resolveMaybe(seed, voice, loop * length + raw.i) : raw;
+        if (!s) continue;
+        const t = start + (loop * length + raw.i) * step;
         if (s.roll) {
           for (let k = 0; k < 3; k++) {
             const tr = t + (k * step) / 3;

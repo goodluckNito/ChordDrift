@@ -78,16 +78,17 @@
               <select id="song-preset"></select>
             </label>
             <label class="wide" data-song>
-              <input data-path="song.form" class="mono" spellcheck="false" aria-label="Song form" placeholder="A | B! > C! | A | B!+1" />
+              <input data-path="song.form" class="mono" spellcheck="false" aria-label="Song form" placeholder="A8 | B!8 > C!8 | A4 | B!8+1" />
             </label>
             <p id="song-errors" class="errors wide" role="alert"></p>
+            <p class="wide muted small" data-song data-nodrums>Drums are off, so full parts only open up the sub. Turn on Drums to hear them in the ! parts.</p>
             <details class="help wide" data-song>
               <summary>Song form</summary>
               <dl>
-                <dt class="mono">A B C</dt><dd>Parts. A name that comes back plays the same chords again.</dd>
-                <dt class="mono">B!</dt><dd>A full part: the sub bass opens up and the drums play (if on). Parts without ! are soft.</dd>
-                <dt class="mono">A+2  B!-3</dt><dd>Move the part up or down that many semitones from the key.</dd>
-                <dt class="mono">A:6</dt><dd>Number of chords in the part (default 4).</dd>
+                <dt class="mono">A B C</dt><dd>Parts (names are letters). A name that comes back plays the same chords again.</dd>
+                <dt class="mono">A4  B16</dt><dd>Length in bars (default 8). Chords change on the chord rhythm, or once a bar without one.</dd>
+                <dt class="mono">B!8</dt><dd>A full part: the sub bass opens up and the drums play. Parts without ! are soft: no drums, almost no sub.</dd>
+                <dt class="mono">A8+2  B!4-3</dt><dd>Move the part up or down that many semitones from the key.</dd>
                 <dt class="mono">A | B</dt><dd>Collapse: every voice converges on a unison, holds, then blooms out into the next part.</dd>
                 <dt class="mono">A &gt; B</dt><dd>Resolve straight from one part into the next.</dd>
               </dl>
@@ -288,7 +289,7 @@
               <input data-path="drums.ride" class="mono" spellcheck="false" aria-label="Ride pattern" />
               <input data-path="drums.levels.ride" type="range" min="0" max="1" step="0.05" aria-label="Ride level" title="Ride level" />
             </div>
-            <p class="wide muted small" data-drums>Each character is a 16th note: <span class="mono">x</span> hit, <span class="mono">X</span> accent, <span class="mono">.</span> rest, <span class="mono">o</span> open hat, <span class="mono">r</span> hat roll. Rows loop on their own; sliders set each drum's level.</p>
+            <p class="wide muted small" data-drums>Each character is a 16th note: <span class="mono">x</span> hit, <span class="mono">X</span> accent, <span class="mono">.</span> rest, <span class="mono">o</span> open hat, <span class="mono">r</span> hat roll, <span class="mono">?</span> random: each bar the seed decides (rest, ghost, hit, accent, sometimes a roll or open hat). Rows loop on their own; sliders set each drum's level.</p>
             <label data-drums>Drum level <output></output>
               <input data-path="drums.level" type="range" min="0" max="1" step="0.05" />
             </label>

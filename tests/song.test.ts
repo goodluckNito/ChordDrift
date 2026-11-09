@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { drumHits, energyAt, generateScore, parseSongForm, pitchesAt, resolveConfig } from '../src/engine';
 
 describe('song form', () => {
-  it('parses parts, energy, shifts, counts and joins', () => {
-    const f = parseSongForm('A | B!+2:6 > c-1 D');
+  it('parses parts, bars, energy, shifts and joins', () => {
+    const f = parseSongForm('A | B!6+2 > c2-1 D B4!');
     expect(f.errors).toEqual([]);
-    expect(f.sections.map((s) => [s.name, s.full, s.shift, s.count, s.collapse])).toEqual([
-      ['a', false, 0, null, false],
-      ['b', true, 2, 6, true],
-      ['c', false, -1, null, false],
-      ['d', false, 0, null, false],
+    expect(f.sections.map((s) => [s.name, s.bars, s.full, s.shift, s.collapse])).toEqual([
+      ['a', 8, false, 0, false],
+      ['b', 6, true, 2, true],
+      ['c', 2, false, -1, false],
+      ['d', 8, false, 0, false],
+      ['b', 4, true, 0, false],
     ]);
     expect(parseSongForm('A ?? B').errors.length).toBe(1);
   });
@@ -62,6 +63,24 @@ describe('song mode', () => {
       expect(Number.isFinite(s.timeline.end)).toBe(true);
       expect(s.sections.length).toBe(3);
     }
+  });
+
+  it('makes each part last its bars, one chord a bar by default', () => {
+    const s = generateScore(cfg('A4 > B!2 > A1', { rhythm: { tempo: 120 } }));
+    const bar = 2;
+    expect((s.sections[1].t - s.gridStart) / bar).toBeCloseTo(4);
+    expect((s.sections[2].t - s.gridStart) / bar).toBeCloseTo(6);
+    expect(s.chords.filter((c) => c.section === 0).length).toBe(4);
+    expect(s.chords.filter((c) => c.section === 1).length).toBe(2);
+    expect(s.timeline.arrivalStart - s.gridStart).toBeCloseTo(7 * bar);
+  });
+
+  it('follows the chord rhythm inside a part, cut at the part end', () => {
+    const s = generateScore(cfg('A3 > B1', { rhythm: { tempo: 120, chords: 'h. h.' } }));
+    // 12 beats of dotted halves = 4 chords; then B's single bar = 3 + 1 beats.
+    expect(s.chords.filter((c) => c.section === 0).length).toBe(4);
+    expect(s.chords.filter((c) => c.section === 1).length).toBe(2);
+    expect(s.timeline.arrivalStart - s.gridStart).toBeCloseTo(16 * 0.5);
   });
 
   it('turns endless off', () => {

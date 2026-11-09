@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DRUM_PRESETS, drumHits, duckAt, generateScore, parseSteps, resolveConfig } from '../src/engine';
+import { DRUM_PRESETS, drumHits, drumHitsBetween, duckAt, generateScore, parseDrumRows, parseSteps, resolveConfig } from '../src/engine';
 
 describe('drum patterns', () => {
   it('parses 16th-note step strings', () => {
@@ -59,5 +59,22 @@ describe('witch house style', () => {
     const roots = s.chords.map((c) => c.root);
     expect(roots.slice(0, 4)).toEqual([5, 8, 1, 0]); // F Ab Db C
     expect(s.chords.at(-1)!.root).toBe(5);
+  });
+});
+
+describe('random steps', () => {
+  const rows = parseDrumRows({ kick: '', snare: '????????????????', hat: '', crash: '', ride: '' });
+  const bars = (seed: number) => {
+    const hits = drumHitsBetween(rows, 0, 64, 0.125, 0, 64, seed);
+    return Array.from({ length: 32 }, (_, k) => hits.filter((h) => h.t >= k * 2 && h.t < k * 2 + 2).map((h) => `${(h.t - k * 2).toFixed(3)}:${h.vel.toFixed(2)}`).join(','));
+  };
+  it('changes from bar to bar, repeatably, and differs by seed', () => {
+    const a = bars(1);
+    expect(new Set(a).size).toBeGreaterThan(20);
+    expect(bars(1)).toEqual(a);
+    expect(bars(2)).not.toEqual(a);
+    const count = drumHitsBetween(rows, 0, 64, 0.125, 0, 64, 1).length;
+    expect(count).toBeGreaterThan(512 * 0.4);
+    expect(count).toBeLessThan(512 * 0.9);
   });
 });

@@ -1,13 +1,14 @@
 /**
  * Song form: a piece made of parts.
  *
- *   A | B! > C! | A | B!+1
+ *   A8 | B!8 > C!8 | A4 | B!8+1
  *
- * - A name is a part. The same name plays the same chords every time it comes back.
- * - `!` makes a part full: the sub bass opens up and the drums (if on) play.
+ * - A name (letters) is a part. The same name plays the same chords every time it comes back.
+ * - A number after the name is its length in bars (default 8). Chords change on the
+ *   chord rhythm, or once a bar without one, restarting at each part.
+ * - `!` makes a part full: the sub bass opens up and the drums play.
  *   Parts without it are soft: no drums, the sub almost gone.
  * - `+N` / `-N` moves the part N semitones from the home key (a repeat is transposed).
- * - `:N` sets the number of chords (default 4).
  * - `|` between parts collapses every voice into a unison, holds, and blooms
  *   out into the next part. `>` resolves straight into it. Nothing between
  *   two parts means `>`.
@@ -18,8 +19,8 @@ export interface SongSection {
   label: string;
   full: boolean;
   shift: number;
-  /** Chords in this part, or null for the default (4, or the first appearance's count). */
-  count: number | null;
+  /** Length in bars of 4 beats. */
+  bars: number;
   /** Collapse into a unison before this part (always false for the first). */
   collapse: boolean;
 }
@@ -29,17 +30,18 @@ export interface SongForm {
   errors: string[];
 }
 
-export const DEFAULT_SONG_FORM = 'A | B! > C! | A | B!+1';
+export const DEFAULT_PART_BARS = 8;
+export const DEFAULT_SONG_FORM = 'A8 | B!8 > C!8 | A4 | B!8+1';
 
 export const SONG_PRESETS: { name: string; form: string }[] = [
   { name: 'Build, drop, lift', form: DEFAULT_SONG_FORM },
-  { name: 'Verse / chorus', form: 'V > C! | V > C! > B | C!+2' },
-  { name: 'Nebula-ish', form: 'intro:6 > drop!:8 | drop!+1:8 > lift!:6 | break:4 > drop!+1:4' },
-  { name: 'Rondo', form: 'A | B | A | C | A' },
-  { name: 'Climb', form: 'A > A+2 > A+4 > A+5!' },
+  { name: 'Verse / chorus', form: 'V8 > C!8 | V8 > C!8 > B4 | C!8+2' },
+  { name: 'Long drops', form: 'intro8 > drop!16 | drop!16+1 > lift!8 | break8 > drop!8+1' },
+  { name: 'Rondo', form: 'A8 | B8 | A8 | C8 | A8' },
+  { name: 'Climb', form: 'A4 > A4+2 > A4+4 > A!8+5' },
 ];
 
-const SECTION = /^([A-Za-z][\w']*)(!?)([+-]\d{1,2})?(?::(\d{1,2}))?$/;
+const SECTION = /^([A-Za-z][A-Za-z']*)((?::?\d{1,3}|!|[+-]\d{1,2})*)$/;
 
 export function parseSongForm(text: string): SongForm {
   const sections: SongSection[] = [];
@@ -55,14 +57,15 @@ export function parseSongForm(text: string): SongForm {
       errors.push(`can't read part "${tok}"`);
       continue;
     }
-    sections.push({
-      name: m[1].toLowerCase(),
-      label: m[1],
-      full: m[2] === '!',
-      shift: m[3] ? Math.max(-24, Math.min(24, Number(m[3]))) : 0,
-      count: m[4] ? Math.max(1, Math.min(32, Number(m[4]))) : null,
-      collapse: sections.length > 0 && pending === '|',
-    });
+    let bars = DEFAULT_PART_BARS;
+    let full = false;
+    let shift = 0;
+    for (const [, n, bang, sh] of m[2].matchAll(/:?(\d{1,3})|(!)|([+-]\d{1,2})/g)) {
+      if (n) bars = Math.max(1, Math.min(128, Number(n)));
+      else if (bang) full = true;
+      else if (sh) shift = Math.max(-24, Math.min(24, Number(sh)));
+    }
+    sections.push({ name: m[1].toLowerCase(), label: m[1], full, shift, bars, collapse: sections.length > 0 && pending === '|' });
     pending = null;
     if (sections.length >= 32) {
       errors.push('at most 32 parts');

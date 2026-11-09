@@ -371,7 +371,7 @@ export function drumSpan(score: Score): [number, number] {
 export function drumHits(score: Score, a: number, b: number): DrumHit[] {
   if (!score.drums) return [];
   const [start, stop] = drumSpan(score);
-  const hits = drumHitsBetween(score.drums, start, stop, score.beat / 4, a, b);
+  const hits = drumHitsBetween(score.drums, start, stop, score.beat / 4, a, b, score.seed);
   return score.energy.length ? hits.filter((h) => energyStep(score, h.t) > 0.5) : hits;
 }
 

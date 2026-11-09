@@ -415,6 +415,7 @@ function startApp() {
     for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-drums]')) el.hidden = !state.drums.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-song]')) el.hidden = !state.song.enabled;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-nodrums]')) if (state.drums.enabled) el.hidden = true;
     const songIdx = SONG_PRESETS.findIndex((p) => p.form === state.song.form.trim());
     songSelect.value = songIdx >= 0 ? String(songIdx) : 'custom';
     const dp = DRUM_PRESETS.findIndex((p) => (['kick', 'snare', 'hat', 'crash', 'ride'] as const).every((v) => p[v] === state.drums[v]));
@@ -717,6 +718,11 @@ function startApp() {
     const el = e.target as Field;
     if (!el.dataset.path) return;
     readField(el);
+    // Full song parts are built around the drums: switching Song on brings them in.
+    if (el.dataset.path === 'song.enabled' && state.song.enabled && !state.drums.enabled) {
+      state.drums.enabled = true;
+      writeForm();
+    }
     if (el.dataset.path.startsWith('theme.') && !useMine) state.theme.preset = 'custom';
     syncVisibility();
     const path = el.dataset.path;

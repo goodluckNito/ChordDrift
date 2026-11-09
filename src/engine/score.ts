@@ -157,7 +157,7 @@ class ScoreBuilder {
   private lastSettled = 0;
   /** Song mode: the chord plan, the parts, and a generator per distinct part. */
   private song: {
-    items: { kind: 'unison' | 'chord'; section: number; local: number }[];
+    items: { kind: 'unison' | 'chord'; section: number; local: number; slot: number }[];
     sections: SongSection[];
     parts: Map<string, { walker: ProgressionWalker; specs: ChordSpec[]; count: number; shift: number }>;
   } | null = null;
@@ -196,20 +196,32 @@ class ScoreBuilder {
     const songForm = cfg.song.enabled ? parseSongForm(cfg.song.form) : null;
     if (songForm && songForm.sections.length) {
       const parts = new Map<string, { walker: ProgressionWalker; specs: ChordSpec[]; count: number; shift: number }>();
-      const items: { kind: 'unison' | 'chord'; section: number; local: number }[] = [];
+      const items: { kind: 'unison' | 'chord'; section: number; local: number; slot: number }[] = [];
+      // Parts last whole bars. Chords change on the chord rhythm (once a bar without one),
+      // restarting at each part; the last chord is cut to end on the part's last bar line.
+      const rhythm = durs.length ? durs : [4];
+      const bar = 4 * beat;
+      const collapseSlot = Math.max(1, Math.ceil((cfg.timing.arrival + Math.max(0.8, cfg.timing.hold * 0.6)) / bar - 1e-6)) * bar;
       songForm.sections.forEach((sec, i) => {
+        const slots: number[] = [];
+        let left = sec.bars * 4;
+        for (let r = 0; left > 1e-6 && slots.length < 512; r++) {
+          const b = Math.min(rhythm[r % rhythm.length], left);
+          slots.push(b * beat);
+          left -= b;
+        }
         let part = parts.get(sec.name);
         if (!part) {
           // Each distinct part gets its own seeded generator, in its own key.
           const walker = new ProgressionWalker(cfg, mod12(keyPc + sec.shift), stream(seed, `progression:${sec.name}`), tokens, stream(seed, `style:${sec.name}`));
-          let count = sec.count ?? 4;
-          if (cfg.style !== 'none' && !tokens.length) count = walker.planPiece(Math.max(1, Math.round(count / 4)));
+          let count = slots.length;
+          // A styled part plays its planned phrases, then repeats them to fill its bars.
+          if (cfg.style !== 'none' && !tokens.length) count = Math.min(count, walker.planPiece(Math.max(1, Math.round(count / 4))));
           part = { walker, specs: [], count, shift: sec.shift };
           parts.set(sec.name, part);
         }
-        if (sec.collapse) items.push({ kind: 'unison', section: i, local: 0 });
-        const n = sec.count ?? part.count;
-        for (let j = 0; j < n; j++) items.push({ kind: 'chord', section: i, local: j });
+        if (sec.collapse) items.push({ kind: 'unison', section: i, local: 0, slot: collapseSlot });
+        slots.forEach((slot, j) => items.push({ kind: 'chord', section: i, local: j, slot }));
       });
       this.song = { items, sections: songForm.sections, parts };
       this.total = items.length;
@@ -377,7 +389,9 @@ class ScoreBuilder {
     // With a chord rhythm, each chord owns a fixed slot; glides must finish inside it.
     // A collapse takes whole bars (it doesn't use a slot of the chord rhythm), so the grid stays on the bar.
     const bar = 4 * score.beat;
-    const slot = this.durations
+    const slot = item
+      ? item.slot
+      : this.durations
       ? unison
         ? Math.max(1, Math.ceil((T.arrival + Math.max(0.8, T.hold * 0.6)) / bar - 1e-6)) * bar
         : this.durations[this.rhythmIndex++ % this.durations.length]
@@ -428,7 +442,7 @@ class ScoreBuilder {
     score.finalKeyPc = song ? this.songTonic : this.walker.tonic;
     score.pitchRange = [Math.min(score.pitchRange[0], ...notes), Math.max(score.pitchRange[1], ...notes)];
     const jitter = 1 + uniform(this.timeRng, -T.holdJitter, T.holdJitter);
-    if (this.durations) {
+    if (this.durations || song) {
       // The bloom is a pickup: the beat grid starts when it lands.
       this.nextChange = (bloom ? score.gridStart : t) + slot;
     } else if (unison) {

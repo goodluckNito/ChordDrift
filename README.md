@@ -84,15 +84,15 @@ e*4   (q e e)*2                   repeat a note or group; patterns loop, | and ,
 
 For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half-note triplets. Presets are in the Rhythm section.
 
-**Song mode.** Turn on *Song* to build a piece from parts that collapse and resolve into each other, like the long-form pieces in the reference videos. Write the form in a small notation, or pick a preset:
+**Song mode.** Turn on *Song* to build a piece from parts that collapse and resolve into each other. Write the form in a small notation, or pick a preset. The default is `A8 | B!8 > C!8 | A4 | B!8+1`:
 
-- `A B C`: parts. A name that comes back plays the same chords again.
-- `B!`: a full part. The sub bass opens up and the drums play (if they're on). Parts without `!` are soft: no drums, the sub almost gone, a little quieter.
-- `A+2`, `B!-3`: move a part up or down that many semitones (a repeat is transposed).
-- `A:6`: chords in the part (default 4; a styled part rounds to whole phrases).
-- `A | B`: collapse. Every voice converges on the next part's tonic, holds, then blooms out into the next part. `A > B` resolves straight through.
+- `A B C`: parts (names are letters). A name that comes back plays the same chords again.
+- `A4`, `B16`: length in bars (default 8). Chords change on the chord rhythm (restarting at each part), or once a bar without one. A chord that would run past the end of the part is cut at its last bar line.
+- `B!8`: a full part. The sub bass opens up and the drums play. Parts without `!` are soft: no drums, the sub almost gone, a little quieter. Turning Song on also turns the Drums on.
+- `A8+2`, `B!4-3`: move a part up or down that many semitones. A repeat is transposed, so `B!8+1` at the end is the B part again, a half step up.
+- `A | B`: collapse. Every voice converges on the next part's tonic, holds for a bar or two, then blooms out into the next part. `A > B` resolves straight through.
 
-Each distinct part has its own seeded generator, so parts sound different but stay in the key unless shifted. With a chord rhythm, a collapse takes whole bars, so the grid stays on the bar. Song mode replaces Endless; Loop still works.
+Each distinct part has its own seeded generator, so parts sound different but stay in the key unless shifted. Song mode replaces Endless; Loop still works.
 
 **MIDI.** *Download MIDI* writes the piece as a Standard MIDI File: a Chords track with one block chord per change (re-struck on every pluck strike), the Melody, and the Drums on General MIDI channel 10. It also carries the tempo and the chord names as markers. The bloom is a pickup, so the beat grid lines up with the bars in a DAW. Endless pieces export the first 32 chords. *Import MIDI* (Project) reads any .mid. It hears a chord on every beat (pitch classes weighted by duration, bass weighted up), folds passing and colour changes into their neighbours, and writes the result as a progression with a matching chord rhythm, tempo and key. Drums on channel 10 become step patterns that repeat every 1, 2 or 4 bars.
 
@@ -101,6 +101,7 @@ Each distinct part has its own seeded generator, so parts sound different but st
 **Drums.** Drums are synthesized, so exports stay deterministic and there are no sample licences to worry about. They start when the bloom lands.
 - **Kits:** Witch (dark, distorted, long kick, reverby clap), 808, Acoustic and Industrial.
 - **Patterns:** one row per drum (kick, snare, hat, crash, ride) on a 16th-note grid: `x` hit, `X` accent, `.` rest, `o` open hat, `r` hat roll. Rows loop independently. Presets: Witch house (half-time), Trap (half-time), Four on the floor, Boom bap, Breakbeat, Ride groove and Sparse.
+- **Random steps:** a `?` in any drum row is decided by the seed each bar: a rest, a ghost note, a hit or an accent, and on snare and hats sometimes a roll or an open hat. The same seed always plays the same fills.
 - **Mix:** a level per drum, a drum bus level, and a reverb send (optionally snare only).
 - **Sidechain:** duck the chords under the kick and/or snare, with depth and release. The lines dip with it.
 
