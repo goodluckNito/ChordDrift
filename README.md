@@ -23,7 +23,7 @@ Space plays/pauses, ← → seek, R rolls a new seed.
 | --- | --- |
 | Tonic + Scale | Any of 12 tonics × 35 scales: the church modes, harmonic/melodic minor modes, harmonic major, double harmonic, Hungarian, Neapolitan, Persian, enigmatic, pentatonics, hirajoshi, in-sen, iwato, blues, whole tone, Prometheus, augmented, octatonic, bebop. |
 | Generator | **Key-locked** walks the scale's degrees. **+ borrowing** sometimes borrows from parallel modes, takes a chromatic mediant, or pivots to a neighbouring key. **Voice-led** allows any root and quality but strongly prefers the smoothest move. **Free** allows anything. |
-| Complexity 1–5 | Triads, then sevenths, ninths/elevenths, elevenths/thirteenths, and finally 13ths with altered colours. In a scale, chords are built by stacking every other scale note, so this works in *any* scale. Avoid notes (a minor 9th above a chord tone, like the 11th over a major 3rd) are dropped automatically. |
+| Complexity 1–5 | 1 is triads, 2 sevenths, 3 ninths and elevenths. 4 adds richer stacks with a little chromatic colour. 5 adds altered tensions (7♭9, 7alt, maj7♯5…) and secondary dominants that resolve to their target (V7/vi → vi). In a scale, chords are built by stacking every other scale note, so this works in *any* scale. Avoid notes (a minor 9th above a chord tone, like the 11th over a major 3rd) are dropped automatically. Generators avoid repeating recent chords and changes where almost nothing moves. |
 | Smoothness | 0 is a pure random walk. Higher values prefer chords that share tones with the last one, so fewer voices move and the result is calmer. |
 | Endless | Never arrive. Chords are generated on demand ahead of the playhead; a written progression loops, and each `?` is re-rolled every time round. |
 
@@ -134,5 +134,5 @@ Everything the UI sets is a plain config object (see `src/engine/config.ts` for 
 npm test            # vitest: theory, chords, parser + freeze round-trip, voicing, rhythm, melody, determinism, endless, projects
 npm run typecheck
 npm run build       # static site in dist/ (relative paths, host anywhere)
-npm run stats       # musical health check over 200 seeds: voices moved per change, pedal hold rate
+npm run stats       # musical health check: voices moved per change, repeats, variety, pedal hold rate, generation speed
 ```

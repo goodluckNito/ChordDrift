@@ -136,21 +136,42 @@ function solve(
     if (!validStep(bass, notes[j], true, rules, strict)) continue;
     dp[at(0, j, bit[j])] = cost[j];
   }
+
+  // Whether note jp may sit directly below note j is monotone in j (once legal,
+  // always legal higher up), so each jp "activates" at one j. Keeping a running
+  // best per coverage mask makes each layer O(M·S) instead of O(M²·S).
+  const activate: number[][] = Array.from({ length: M }, () => []);
+  for (let jp = 0; jp < M; jp++) {
+    for (let j = jp; j < M; j++) {
+      if (validStep(notes[jp], notes[j], false, rules, strict)) {
+        activate[j].push(jp);
+        break;
+      }
+    }
+  }
+  const best = new Float64Array(S);
+  const bestFrom = new Int32Array(S);
   for (let i = 1; i < U; i++) {
+    best.fill(INF);
+    bestFrom.fill(-1);
     for (let j = 0; j < M; j++) {
-      const cij = cost[i * M + j];
-      for (let jp = 0; jp <= j; jp++) {
-        if (!validStep(notes[jp], notes[j], false, rules, strict)) continue;
+      for (const jp of activate[j]) {
         for (let m = 0; m < S; m++) {
-          const prev = dp[at(i - 1, jp, m)];
-          if (prev === INF) continue;
-          const m2 = m | bit[j];
-          const k = at(i, j, m2);
-          const v = prev + cij;
-          if (v < dp[k]) {
-            dp[k] = v;
-            back[k] = jp * S + m;
+          const v = dp[at(i - 1, jp, m)];
+          if (v < best[m]) {
+            best[m] = v;
+            bestFrom[m] = jp;
           }
+        }
+      }
+      const cij = cost[i * M + j];
+      for (let m = 0; m < S; m++) {
+        if (best[m] === INF) continue;
+        const k = at(i, j, m | bit[j]);
+        const v = best[m] + cij;
+        if (v < dp[k]) {
+          dp[k] = v;
+          back[k] = bestFrom[m] * S + m;
         }
       }
     }

@@ -4,7 +4,7 @@
  * A chord is a root pitch class plus intervals in semitones above it
  * (extensions written above the octave: 14 = 9th, 17 = 11th, 21 = 13th).
  */
-import { mod12, romanFor, scaleSteps, spellPc } from './theory';
+import { mod12, romanFor, scalePcs, scaleSteps, spellPc, spellPcParts } from './theory';
 
 export interface Chord {
   root: number;
@@ -257,16 +257,84 @@ export function palette(complexity: number): { suffixes: string[]; weights: numb
 }
 
 /** How many stacked tones a scale chord gets at each complexity level. */
+// Stacks of 7 in a 7-note scale contain the whole scale, so every such chord has
+// the same notes; keep them rare and get complexity from colour instead.
 export const SIZE_BY_COMPLEXITY: Record<number, [sizes: number[], weights: number[]]> = {
   1: [[3], [1]],
   2: [[3, 4], [0.2, 0.8]],
   3: [[4, 5, 6], [0.3, 0.45, 0.25]],
-  4: [[5, 6, 7], [0.35, 0.4, 0.25]],
-  5: [[6, 7], [0.4, 0.6]],
+  4: [[4, 5, 6, 7], [0.15, 0.4, 0.35, 0.1]],
+  5: [[4, 5, 6, 7], [0.2, 0.4, 0.3, 0.1]],
 };
+
+/** Chance per chord of chromatic colour (altered tensions) and of a secondary dominant. */
+export const COLOUR_BY_COMPLEXITY: Record<number, { alter: number; secondary: number }> = {
+  1: { alter: 0, secondary: 0 },
+  2: { alter: 0, secondary: 0.04 },
+  3: { alter: 0.04, secondary: 0.08 },
+  4: { alter: 0.18, secondary: 0.16 },
+  5: { alter: 0.4, secondary: 0.24 },
+};
+
+/** Out-of-scale colour for a chord, chosen by its function. */
+const ALTERATIONS: { when: (pcs: Set<number>) => boolean; options: string[] }[] = [
+  { when: (p) => p.has(4) && p.has(10), options: ['7b9', '7#9', '7alt', '13b9', '7#11', '9#11', '7b9b13', '7#5'] },
+  { when: (p) => p.has(4) && p.has(11), options: ['maj7#11', 'maj9#11', 'maj13#11', 'maj7#5'] },
+  { when: (p) => p.has(3) && p.has(6), options: ['m11b5', 'dim7'] },
+  { when: (p) => p.has(3), options: ['mMaj7', 'mMaj9', 'm6/9', 'm6'] },
+  { when: (p) => p.has(5) && p.has(10), options: ['13sus4', '7b9'] },
+  { when: (p) => p.has(4), options: ['maj7#11', '6/9', 'add9'] },
+];
+
+/** Replace a chord's colour with a chromatic one that keeps its function, or null. */
+export function alterChord(chord: Chord, pickIndex: (n: number) => number): Chord | null {
+  const pcs = new Set(chord.intervals.map(mod12));
+  const rule = ALTERATIONS.find((r) => r.when(pcs));
+  if (!rule) return null;
+  const options = rule.options.filter((o) => signature(suffixIntervals(o)!) !== signature(chord.intervals));
+  if (!options.length) return null;
+  return { root: chord.root, intervals: suffixIntervals(options[pickIndex(options.length)])! };
+}
+
+/** Jaccard similarity of two chords' pitch-class sets (0 = disjoint, 1 = same notes). */
+export function pcOverlap(a: Chord, b: Chord): number {
+  const A = new Set(a.intervals.map((i) => mod12(a.root + i)));
+  const B = new Set(b.intervals.map((i) => mod12(b.root + i)));
+  let inter = 0;
+  for (const x of A) if (B.has(x)) inter++;
+  return inter / (A.size + B.size - inter);
+}
 
 /** Most typical size for a complexity (used by the chord palette UI). */
 export function typicalSize(complexity: number): number {
   const [sizes, weights] = SIZE_BY_COMPLEXITY[Math.max(1, Math.min(5, Math.round(complexity)))];
   return sizes[weights.indexOf(Math.max(...weights))];
+}
+
+const LETTERS = 'CDEFGAB';
+const LETTER_PC = [0, 2, 4, 5, 7, 9, 11];
+
+/**
+ * Spell one note of a chord. Scale tones follow the key; anything else is
+ * spelled from the chord's root by its function (E9's third is G#, not Ab;
+ * C7#9's ninth is D#, its b13 is Ab).
+ */
+export function spellChordNote(midi: number, chord: Chord & { tonic: number; scale: string }): string {
+  const n = Math.round(midi);
+  const pc = mod12(n);
+  let name: string;
+  let acc: number;
+  if (scalePcs(chord.tonic, chord.scale).has(pc)) {
+    ({ name, acc } = spellPcParts(pc, chord.tonic, chord.scale));
+  } else {
+    const rootName = spellPc(chord.root, chord.tonic, chord.scale);
+    const has = (i: number) => chord.intervals.some((x) => mod12(x) === i);
+    const rel = mod12(pc - chord.root);
+    const steps: Record<number, number> = { 0: 0, 1: 1, 2: 1, 3: has(4) ? 1 : 2, 4: 2, 5: 3, 6: has(7) ? 3 : 4, 7: 4, 8: has(7) ? 5 : 4, 9: 5, 10: 6, 11: 6 };
+    const letter = (LETTERS.indexOf(rootName[0]) + steps[rel]) % 7;
+    acc = mod12(pc - LETTER_PC[letter] + 6) - 6;
+    if (Math.abs(acc) <= 1) name = LETTERS[letter] + (acc === 1 ? '#' : acc === -1 ? 'b' : '');
+    else ({ name, acc } = spellPcParts(pc, chord.tonic, chord.scale));
+  }
+  return name + (Math.floor((n - acc) / 12) - 1);
 }

@@ -75,6 +75,25 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
   return { input, output: out };
 }
 
+/**
+ * Schedule a value curve, never letting one rejected chunk stop the scheduler:
+ * on failure, clear what's pending from that time and fall back to a ramp to
+ * the chunk's final value.
+ */
+function setCurve(param: AudioParam, curve: Float32Array, at: number, dur: number) {
+  try {
+    param.setValueCurveAtTime(curve, at, dur);
+  } catch {
+    try {
+      param.cancelScheduledValues(at);
+      param.setValueAtTime(curve[0], at);
+      param.linearRampToValueAtTime(curve[curve.length - 1], at + dur);
+    } catch {
+      /* give up on this chunk only */
+    }
+  }
+}
+
 /** Length of each scheduled automation chunk (s). */
 const CHUNK = 0.5;
 
@@ -151,7 +170,19 @@ export class VoiceBank {
     const baseGain = (1.25 / V) * WAVE_GAIN[cfg.audio.wave];
     const leadGain = 0.55 * cfg.melody.level * WAVE_GAIN[cfg.melody.wave];
     const n = Math.round(CHUNK * CONTROL_RATE) + 1;
+    const live = !(this.ctx instanceof OfflineAudioContext);
     while (this.scheduledUntil < Math.min(until, this.endAt)) {
+      // If the page stalled (slow phone, app switch, background tab) and we fell
+      // behind the audio clock, skip the chunks that are already in the past
+      // rather than scheduling them late — late curves overlap and get rejected,
+      // which used to freeze every voice on one chord.
+      if (live) {
+        const behind = this.ctx.currentTime + 0.03 - (this.when + this.nextChunk * CHUNK);
+        if (behind > 0) {
+          this.nextChunk += Math.ceil(behind / CHUNK);
+          continue;
+        }
+      }
       const t0 = this.scheduledUntil;
       this.score.extend(t0 + CHUNK);
       const at = this.when + this.nextChunk * CHUNK;
@@ -169,8 +200,8 @@ export class VoiceBank {
           if (t > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (t - fadeOutStart) / fadeLen)));
           gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env);
         }
-        this.oscs[v].frequency.setValueCurveAtTime(freq, at, dur);
-        this.gains[v].gain.setValueCurveAtTime(gain, at, dur);
+        setCurve(this.oscs[v].frequency, freq, at, dur);
+        setCurve(this.gains[v].gain, gain, at, dur);
       }
       if (this.lead) {
         const freq = new Float32Array(n);
@@ -185,8 +216,8 @@ export class VoiceBank {
           if (t > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (t - fadeOutStart) / fadeLen)));
           gain[i] = leadGain * (m?.g ?? 0) * Math.pow(f / 440, -cfg.audio.tilt) * Math.max(0, env);
         }
-        this.lead.osc.frequency.setValueCurveAtTime(freq, at, dur);
-        this.lead.gain.gain.setValueCurveAtTime(gain, at, dur);
+        setCurve(this.lead.osc.frequency, freq, at, dur);
+        setCurve(this.lead.gain.gain, gain, at, dur);
       }
       this.nextChunk++;
     }
@@ -291,16 +322,23 @@ export class LivePlayer {
     const when = ctx.currentTime + 0.08;
     this.bank = new VoiceBank(ctx, score, this.master!, when, offset, score.timeline.musicEnd);
     const bank = this.bank;
-    const pump = () => bank.scheduleUntil(this.time() + 2.5);
+    // Hidden tabs only get timer ticks about once a second (or less), so schedule further ahead there.
+    const pump = () => bank.scheduleUntil(this.time() + (document.hidden ? 12 : 3));
     pump();
     this.timer = window.setInterval(pump, 200);
+    this.onVisibility = pump;
+    document.addEventListener('visibilitychange', pump);
     this.startedAt = when;
     this.startOffset = offset;
     this.playing = true;
   }
 
+  private onVisibility: (() => void) | null = null;
+
   private stopBank() {
     clearInterval(this.timer);
+    if (this.onVisibility) document.removeEventListener('visibilitychange', this.onVisibility);
+    this.onVisibility = null;
     this.bank?.stop();
     this.bank = null;
   }

@@ -248,7 +248,12 @@ class ScoreBuilder {
     const V = cfg.voices;
     const k = score.chords.length;
     const ref = k === 0 ? spreadTemplate(V, score.startNote, rules) : this.current;
-    const cost = (c: { root: number; intervals: number[] }) => voiceLeadingCost(ref, voiceChord(c, ref, rules, null), rules);
+    const cost = (c: { root: number; intervals: number[] }) => {
+      const v = voiceChord(c, ref, rules, null);
+      // Changes where almost nothing moves read as repeats; nudge the choice away from them.
+      const moved = v.reduce((n, x, i) => n + (x !== ref[i] ? 1 : 0), 0);
+      return voiceLeadingCost(ref, v, rules) + (moved <= 1 ? 6 : moved === 2 ? 2.5 : 0);
+    };
     const spec = this.walker.next(k, this.total, cost);
     const notes = voiceChord(spec, ref, rules, this.voicingRng);
 

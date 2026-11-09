@@ -3,7 +3,7 @@
  *   npm run score -- 0xF5E68707 12345 --mode drift --key C --scale dorian --complexity 4
  *   npm run score -- 1 --progression "I vi ? IV"
  */
-import { generateScore, midiToHz, spellNote, type ChordDriftConfig, type DeepPartial } from '../src/engine';
+import { generateScore, midiToHz, spellChordNote, spellNote, type ChordDriftConfig, type DeepPartial } from '../src/engine';
 
 const args = process.argv.slice(2);
 const seeds: string[] = [];
@@ -29,7 +29,7 @@ for (const seed of seeds) {
   let prev = new Array(s.config.voices).fill(s.startNote);
   for (const c of s.chords) {
     const moved = c.notes.filter((n, i) => n !== prev[i]).length;
-    const notes = c.notes.map((n) => spellNote(n, c.tonic, c.scale)).join(' ');
+    const notes = c.notes.map((n) => spellChordNote(n, c)).join(' ');
     console.log(`  ${c.t.toFixed(2).padStart(6)}s  ${c.name.padEnd(12)} ${c.roman.padEnd(14)} ${c.origin.padEnd(8)} ${String(moved).padStart(2)} moved  ${notes}`);
     prev = c.notes;
   }

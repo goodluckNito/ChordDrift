@@ -104,3 +104,53 @@ describe('score generation', () => {
     }
   });
 });
+
+describe('variety at high complexity', () => {
+  const pcs = (c: { root: number; intervals: number[] }) => [...new Set(c.intervals.map((i) => (c.root + i) % 12))].sort((a, b) => a - b).join(',');
+  for (const mode of ['scale', 'drift', 'voiceled'] as const) {
+    it(`keeps moving and avoids repeats at complexity 5 (${mode})`, () => {
+      let changes = 0;
+      let moved = 0;
+      let samePcs = 0;
+      let recentRepeats = 0;
+      for (let seed = 1; seed <= 20; seed++) {
+        const s = generateScore({ seed, mode, complexity: 5, endless: true });
+        s.extend(60);
+        const keys = s.chords.map((c) => `${c.root}|${pcs(c)}`);
+        for (let k = 1; k < s.chords.length; k++) {
+          changes++;
+          moved += s.chords[k].notes.filter((n, i) => n !== s.chords[k - 1].notes[i]).length;
+          if (pcs(s.chords[k]) === pcs(s.chords[k - 1])) samePcs++;
+          if (keys.slice(Math.max(0, k - 4), k).includes(keys[k])) recentRepeats++;
+        }
+      }
+      expect(moved / changes).toBeGreaterThan(3.5);
+      expect(samePcs).toBe(0);
+      expect(recentRepeats / changes).toBeLessThan(0.1);
+    });
+  }
+
+  it('resolves secondary dominants to their target', () => {
+    let found = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const s = generateScore({ seed, complexity: 5, endless: true });
+      s.extend(60);
+      s.chords.forEach((c, i) => {
+        const next = s.chords[i + 1];
+        if (c.origin !== 'secondary' || !next) return;
+        found++;
+        expect(c.roman).toMatch(/^V.*\//);
+        if (next.root !== (c.root + 5) % 12) found -= 0.15; // the occasional deceptive move is fine
+      });
+    }
+    expect(found).toBeGreaterThan(10);
+  });
+
+  it('spells chromatic chord tones from the chord root', async () => {
+    const { spellChordNote } = await import('../src/engine');
+    const e9 = { root: 4, intervals: [0, 4, 7, 10, 14], tonic: 0, scale: 'major' };
+    expect(spellChordNote(68, e9)).toBe('G#4');
+    const c7s9 = { root: 0, intervals: [0, 4, 7, 10, 15], tonic: 0, scale: 'major' };
+    expect(spellChordNote(63, c7s9)).toBe('D#4');
+  });
+});

@@ -1,10 +1,10 @@
-import { SIZE_BY_COMPLEXITY, chordName, colourVariant, isMinorish, palette, romanName, stackChord, suffixIntervals, type Chord } from './chords';
+import { COLOUR_BY_COMPLEXITY, SIZE_BY_COMPLEXITY, alterChord, chordName, chordSuffix, colourVariant, isMinorish, palette, pcOverlap, romanName, stackChord, suffixIntervals, type Chord } from './chords';
 import type { ChordDriftConfig } from './config';
 import type { ProgressionToken } from './progression-text';
 import { pick, weighted, type Rng } from './rng';
-import { PARALLEL_SCALES, SCALES, mod12, scalePcs, scaleSteps, tonicName } from './theory';
+import { PARALLEL_SCALES, SCALES, mod12, romanFor, scalePcs, scaleSteps, tonicName } from './theory';
 
-export type ChordOrigin = 'scale' | 'borrowed' | 'mediant' | 'pivot' | 'voiceled' | 'free' | 'cadence' | 'written';
+export type ChordOrigin = 'scale' | 'altered' | 'secondary' | 'borrowed' | 'mediant' | 'pivot' | 'voiceled' | 'free' | 'cadence' | 'written';
 
 export interface ChordSpec extends Chord {
   /** Tonic and scale the chord was heard in (changes after a pivot). */
@@ -39,6 +39,10 @@ export class ProgressionWalker {
   scale: string;
   private prev: ChordSpec | null = null;
   private prevPrev: ChordSpec | null = null;
+  /** The last few chords, for avoiding repeats. */
+  private recent: ChordSpec[] = [];
+  /** Root a secondary dominant wants to resolve to next. */
+  private resolveTo: number | null = null;
   private sinceHome = 0;
   private complexity: number;
 
@@ -66,14 +70,19 @@ export class ProgressionWalker {
     this.sinceHome = spec.root === this.tonic ? 0 : this.sinceHome + 1;
     this.prevPrev = this.prev;
     this.prev = spec;
+    this.recent = [...this.recent.slice(-3), spec];
     return spec;
   }
 
   // ---- Building blocks ------------------------------------------------------
 
-  private spec(chord: Chord, origin: ChordOrigin, tonic = this.tonic, scale = this.scale): ChordSpec {
+  private spec(chord: Chord, origin: ChordOrigin, tonic = this.tonic, scale = this.scale, target?: number): ChordSpec {
     let roman = romanName(chord, tonic);
     if (origin === 'pivot') roman += ` (→ ${tonicName(tonic, scale)})`;
+    if (origin === 'secondary' && target !== undefined) {
+      const t = stackChord(tonic, scale, Math.max(0, this.degreeOf(target, tonic, scale)), 3);
+      roman = `V${chordSuffix(chord.intervals)}/${romanFor(target, tonic, isMinorish(t.intervals))}`;
+    }
     return { root: mod12(chord.root), intervals: chord.intervals, tonic, scale, name: chordName(chord, tonic, scale), roman, origin };
   }
 
@@ -139,22 +148,44 @@ export class ProgressionWalker {
     const mode = this.cfg.mode;
     const want = isFirst || mode === 'free' ? 1 : mode === 'voiceled' ? 10 : this.cfg.smoothness > 0 ? 4 : 1;
     const pool: ChordSpec[] = [];
-    for (let attempt = 0; attempt < 40 && pool.length < want; attempt++) {
+    // A secondary dominant usually resolves to its target.
+    if (this.resolveTo !== null && !isLast) {
+      const target = this.resolveTo;
+      this.resolveTo = null;
+      if (this.rng() < 0.85) {
+        const d = this.degreeOf(target);
+        const chord = d >= 0 ? this.scaleChord(d) : this.familyChord(target, false);
+        return this.spec(chord, d >= 0 ? 'scale' : 'borrowed');
+      }
+    }
+    const same = (a: Chord, b: Chord) => a.root === b.root && pcOverlap(a, b) === 1;
+    for (let attempt = 0; attempt < 48 && pool.length < want; attempt++) {
       const s = this.propose(isFirst, isLast);
       if (!s) continue;
-      if (this.prev && s.root === this.prev.root && s.intervals.join() === this.prev.intervals.join()) continue;
+      if (this.prev && (same(s, this.prev) || (mode !== 'free' && pcOverlap(s, this.prev) === 1))) continue;
       if (this.prev && s.root === this.prev.root && mode !== 'free' && this.rng() < 0.85) continue;
-      // Discourage A–B–A ping-pong (I–V–I–V).
+      // Discourage A–B–A ping-pong (I–V–I–V) and recently heard chords.
       if (!isLast && this.prevPrev && s.root === this.prevPrev.root && this.rng() < 0.75) continue;
-      if (pool.some((p) => p.root === s.root && p.intervals.join() === s.intervals.join())) continue;
+      if (!isLast && mode !== 'free' && this.recent.some((r) => same(r, s)) && this.rng() < 0.7) continue;
+      if (pool.some((p) => same(p, s))) continue;
       pool.push(s);
     }
     if (!pool.length) return this.spec(this.scaleChord(Math.floor(this.rng() * scaleSteps(this.scale).length)), 'scale');
-    if (pool.length === 1) return pool[0];
+    const pickedSecondary = (s: ChordSpec) => {
+      if (s.origin === 'secondary') this.resolveTo = mod12(s.root + 5);
+      return s;
+    };
+    if (pool.length === 1) return pickedSecondary(pool[0]);
     const costs = pool.map(cost);
     const min = Math.min(...costs);
     const k = this.cfg.smoothness * (mode === 'voiceled' ? 1.5 : 1);
-    return weighted(this.rng, pool, costs.map((c) => Math.exp(-((c - min) * k) / 2)));
+    const weights = pool.map((s, i) => {
+      let w = Math.exp(-((costs[i] - min) * k) / 2);
+      // Novelty: chords that share almost every note with the last one sound static.
+      if (this.prev && mode !== 'free') w *= pcOverlap(s, this.prev) > 0.75 ? 0.35 : 1;
+      return w;
+    });
+    return pickedSecondary(weighted(this.rng, pool, weights));
   }
 
   private propose(isFirst: boolean, isLast: boolean): ChordSpec | null {
@@ -182,7 +213,25 @@ export class ProgressionWalker {
       return w;
     });
     const d = weighted(this.rng, steps.map((_, i) => i), weights);
-    return this.spec(this.scaleChord(d), 'scale');
+    const colour = COLOUR_BY_COMPLEXITY[Math.max(1, Math.min(5, Math.round(this.complexity)))];
+    // Secondary dominant: the dominant of the chord we were heading to, which then resolves.
+    if (d !== 0 && this.rng() < colour.secondary) {
+      const target = mod12(this.tonic + steps[d]);
+      const c = Math.round(this.complexity);
+      const options = c >= 5 ? ['7b9', '7alt', '13b9', '7#9', '9', '13'] : c >= 4 ? ['9', '13', '7b9', '7'] : ['7', '9'];
+      const chord = { root: mod12(target + 7), intervals: suffixIntervals(options[Math.floor(this.rng() * options.length)])! };
+      return this.spec(chord, 'secondary', this.tonic, this.scale, target);
+    }
+    let chord = this.scaleChord(d);
+    let origin: ChordOrigin = 'scale';
+    if (this.rng() < colour.alter) {
+      const altered = alterChord(chord, (n) => Math.floor(this.rng() * n));
+      if (altered) {
+        chord = altered;
+        origin = 'altered';
+      }
+    }
+    return this.spec(chord, origin);
   }
 
   /** Last chord before the arrival: something that leads home (V, IV, bVII…). */

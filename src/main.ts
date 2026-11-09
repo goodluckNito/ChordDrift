@@ -15,6 +15,7 @@ import {
   randomSeed,
   resolveConfig,
   scaleChords,
+  spellChordNote,
   spellNote,
   typicalSize,
   voiceChord,
@@ -86,7 +87,7 @@ const api = {
 // ---------------------------------------------------------------------------
 type Field = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
-const COMPLEXITY_NAMES = ['', 'triads', 'sevenths', 'ninths & elevenths', 'elevenths & thirteenths', '13ths & altered'];
+const COMPLEXITY_NAMES = ['', 'triads', 'sevenths', 'ninths & elevenths', 'richer + some colour', 'altered & secondary dominants'];
 
 function getPath(obj: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((o, k) => (o as Record<string, unknown>)?.[k], obj);
@@ -230,7 +231,7 @@ function startApp() {
     for (let i = Math.max(0, renderedRows - 1); i < s.chords.length; i++) {
       const c = s.chords[i];
       const origin = c.origin === 'scale' || c.origin === 'cadence' || c.origin === 'written' ? '' : ` · ${c.origin}`;
-      list.append(row(c.t, c.name, c.roman + origin, c.notes.map((n) => spellNote(n, c.tonic, c.scale)).join(' ')));
+      list.append(row(c.t, c.name, c.roman + origin, c.notes.map((n) => spellChordNote(n, c)).join(' ')));
     }
     renderedRows = s.chords.length + 1;
     if (!s.endless) {
@@ -514,10 +515,32 @@ function startApp() {
   });
 
   // ---- Render loop -----------------------------------------------------------------
+  // Adaptive preview resolution: slow devices drop pixel density until frames
+  // keep up, then creep back. (Exports always render at full size.)
+  let quality = 1;
+  let frameEma = 16;
+  let lastFrameAt = 0;
+  let framesSinceAdjust = 0;
+  function adaptQuality(now: number) {
+    if (lastFrameAt && player.playing) {
+      frameEma = frameEma * 0.92 + Math.min(100, now - lastFrameAt) * 0.08;
+      if (++framesSinceAdjust > 60) {
+        if (frameEma > 24 && quality > 0.5) {
+          quality = Math.max(0.5, quality - 0.15);
+          framesSinceAdjust = 0;
+        } else if (frameEma < 15 && quality < 1 && framesSinceAdjust > 240) {
+          quality = Math.min(1, quality + 0.1);
+          framesSinceAdjust = 0;
+        }
+      }
+    }
+    lastFrameAt = now;
+  }
+
   function resizeCanvas() {
     const { width: vw, height: vh } = score.config.video;
     const rect = canvas.getBoundingClientRect();
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2) * quality);
     const h = Math.round(Math.min(rect.height || 640, (rect.width || 360) * (vh / vw)) * dpr);
     const w = Math.round((h * vw) / vh);
     if (canvas.width !== w || canvas.height !== h) {
@@ -527,6 +550,7 @@ function startApp() {
   }
 
   let lastHighlight = -2;
+  let lastDom = 0;
   function tick() {
     let t = currentTime();
     const end = score.timeline.end;
@@ -538,13 +562,19 @@ function startApp() {
     }
     score.extend(t);
     if (score.endless && score.chords.length + 1 > renderedRows) renderList();
+    adaptQuality(performance.now());
     resizeCanvas();
     renderFrame(ctx, score, t);
     if (recording) renderFrame(recording.canvas.getContext('2d')!, score, t);
-    const scrubMax = Number.isFinite(end) ? end : Math.max(30, t + 10, score.chords.at(-1)?.t ?? 0);
-    scrub.max = String(scrubMax);
-    if (document.activeElement !== scrub) scrub.value = String(t);
-    clock.textContent = `${fmt(t)} / ${Number.isFinite(end) ? fmt(end) : '∞'}`;
+    // DOM updates are throttled; layout work every frame adds up on phones.
+    const nowMs = performance.now();
+    if (nowMs - lastDom > 100 || !player.playing) {
+      lastDom = nowMs;
+      const scrubMax = Number.isFinite(end) ? end : Math.max(30, t + 10, score.chords.at(-1)?.t ?? 0);
+      scrub.max = String(scrubMax);
+      if (document.activeElement !== scrub) scrub.value = String(t);
+      clock.textContent = `${fmt(t)} / ${Number.isFinite(end) ? fmt(end) : '∞'}`;
+    }
 
     // Highlight the current row (rows are keyed by start time).
     const idx = chordIndexAt(score, t);

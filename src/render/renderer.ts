@@ -103,6 +103,83 @@ function formatClock(t: number): string {
   return `${String(m).padStart(2, '0')}:${rest.toFixed(2).padStart(5, '0')}`;
 }
 
+/** Index of the first item whose [t, t + d) ends after `t`. Items are sorted and non-overlapping. */
+function firstEndingAfter<T>(items: T[], t: number, start: (x: T) => number, dur: (x: T) => number): number {
+  let lo = 0;
+  let hi = items.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (start(items[mid]) + dur(items[mid]) <= t) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function traceVoice(
+  ctx: CanvasRenderingContext2D,
+  score: Score,
+  v: number,
+  tFrom: number,
+  tTo: number,
+  xOf: (t: number) => number,
+  yOf: (p: number) => number,
+  step: number,
+) {
+  const moves = score.moves[v];
+  ctx.moveTo(xOf(tFrom), yOf(pitchAt(score, v, tFrom)));
+  for (let i = firstEndingAfter(moves, tFrom, (m) => m.t0, (m) => m.d); i < moves.length && moves[i].t0 < tTo; i++) {
+    const m = moves[i];
+    const a = Math.max(m.t0, tFrom);
+    const b = Math.min(m.t0 + m.d, tTo);
+    ctx.lineTo(xOf(a), yOf(pitchAt(score, v, a)));
+    const k = Math.max(4, Math.min(96, Math.ceil(Math.abs(xOf(b) - xOf(a)) / step)));
+    for (let j = 1; j <= k; j++) {
+      const t = a + ((b - a) * j) / k;
+      ctx.lineTo(xOf(t), yOf(pitchAt(score, v, t)));
+    }
+  }
+  ctx.lineTo(xOf(tTo), yOf(pitchAt(score, v, tTo)));
+}
+
+function traceMelody(
+  ctx: CanvasRenderingContext2D,
+  score: Score,
+  tFrom: number,
+  tTo: number,
+  xOf: (t: number) => number,
+  yOf: (p: number) => number,
+  step: number,
+) {
+  const notes = score.melody;
+  const glideDefault = score.config.melody.glide;
+  let pen = false;
+  for (let i = firstEndingAfter(notes, tFrom, (n) => n.t, (n) => n.d); i < notes.length && notes[i].t < tTo; i++) {
+    const n = notes[i];
+    if (n.p === null) {
+      pen = false;
+      continue;
+    }
+    const prev = notes[i - 1];
+    const legato = Boolean(prev && prev.p !== null && prev.t + prev.d >= n.t - 1e-6);
+    const a = Math.max(n.t, tFrom);
+    const b = Math.min(n.t + n.d, tTo) - 1e-6;
+    const glideEnd = n.t + Math.min(n.glide ?? glideDefault, n.d * (n.glide ? 1 : 0.5));
+    const pa = melodyAt(score, a)!.p;
+    if (pen && legato) ctx.lineTo(xOf(a), yOf(pa));
+    else ctx.moveTo(xOf(a), yOf(pa));
+    if (a < glideEnd) {
+      const g = Math.min(glideEnd, b);
+      const k = Math.max(3, Math.min(48, Math.ceil(Math.abs(xOf(g) - xOf(a)) / step)));
+      for (let j = 1; j <= k; j++) {
+        const t = a + ((g - a) * j) / k;
+        ctx.lineTo(xOf(t), yOf(melodyAt(score, t)!.p));
+      }
+    }
+    ctx.lineTo(xOf(b), yOf(melodyAt(score, b)!.p));
+    pen = true;
+  }
+}
+
 export interface RenderOptions {
   /** Override the frame number shown in the HUD (defaults to round(t × fps)). */
   frame?: number;
@@ -158,17 +235,11 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   if (tTo > tFrom) {
-    const steps = Math.max(2, Math.ceil(Math.abs(xOf(tTo) - xOf(tFrom)) / (1.5 * u)));
+    // Lines are drawn from the score's glides: flat stretches are single
+    // segments and only the curves are sampled, which keeps frames cheap on phones.
+    const curveStep = 2.5 * u;
     ctx.beginPath();
-    for (let v = 0; v < V; v++) {
-      for (let i = 0; i <= steps; i++) {
-        const time = tFrom + ((tTo - tFrom) * i) / steps;
-        const x = xOf(time);
-        const y = yOf(pitchAt(score, v, time));
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-    }
+    for (let v = 0; v < V; v++) traceVoice(ctx, score, v, tFrom, tTo, xOf, yOf, curveStep);
     ctx.stroke();
 
     // Melody: a separate line in the accent colour, broken during rests.
@@ -176,20 +247,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       ctx.strokeStyle = cfg.video.melodyColor;
       ctx.lineWidth = 3.6 * u;
       ctx.beginPath();
-      let pen = false;
-      for (let i = 0; i <= steps; i++) {
-        const time = tFrom + ((tTo - tFrom) * i) / steps;
-        const m = melodyAt(score, time);
-        if (!m || m.g < 0.05) {
-          pen = false;
-          continue;
-        }
-        const x = xOf(time);
-        const y = yOf(m.p);
-        if (pen) ctx.lineTo(x, y);
-        else ctx.moveTo(x, y);
-        pen = true;
-      }
+      traceMelody(ctx, score, tFrom, tTo, xOf, yOf, curveStep);
       ctx.stroke();
     }
   }
