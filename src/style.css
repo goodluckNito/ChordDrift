@@ -110,6 +110,7 @@ body {
 .zoom .icon { width: 22px; height: 22px; padding: 0; font-size: 15px; line-height: 1; border: 0; background: transparent; }
 .zoom-label { font-size: 11px; min-width: 40px; padding: 2px 4px; color: var(--muted); border: 0; background: transparent; }
 #loop-btn[aria-pressed='true'], #fill[aria-pressed='true'] { background: var(--accent); color: var(--accent-ink); }
+#loop-btn[data-mode='reroll'] { background: #2f6bff; color: #fff; border-color: #2f6bff; }
 .stage:fullscreen { padding: 12px; }
 
 button {

@@ -532,10 +532,11 @@ export class VoiceBank {
     }
   }
 
-  stop(): void {
+  /** Fade the bank out, now or at context time `at` (a seamless hand-over to another bank). */
+  stop(at?: number, fade = 0.04): void {
     if (this.stopped) return;
     this.stopped = true;
-    const now = this.ctx.currentTime;
+    const now = Math.max(this.ctx.currentTime, at ?? 0);
     // Fade the whole bank and then disconnect it. Cancelling per-voice automation
     // isn't reliable everywhere (Firefox can keep an in-progress curve going, and
     // may reject a second stop()), but a disconnected bus is always silent.
@@ -544,14 +545,14 @@ export class VoiceBank {
       try {
         g.gain.cancelScheduledValues(now);
         g.gain.setValueAtTime(g.gain.value, now);
-        g.gain.linearRampToValueAtTime(0, now + 0.04);
+        g.gain.linearRampToValueAtTime(0, now + fade);
       } catch {
         /* ignore */
       }
     }
     for (const o of this.oscs) {
       try {
-        o.stop(now + 0.06);
+        o.stop(now + fade + 0.02);
       } catch {
         /* already stopped or stop already scheduled */
       }
@@ -564,7 +565,7 @@ export class VoiceBank {
           /* ignore */
         }
       }
-    }, 90);
+    }, (now - this.ctx.currentTime + fade) * 1000 + 50);
   }
 }
 
@@ -705,8 +706,45 @@ export class LivePlayer {
     return this.ctx;
   }
 
+  /** Context time at which a hand-over to the next bank takes effect (see chain), or null. */
+  private pendingStart: number | null = null;
+  private switched = false;
+
+  /**
+   * Continue seamlessly into another score at the context time of `rawTime` (a loop boundary of the
+   * current playback): the new score starts from 0 there, through the same master chain, while the
+   * current bank fades out over 50 ms. time() keeps the old clock until then.
+   */
+  chain(score: Score, rawTime: number): boolean {
+    if (!this.ctx || !this.master || !this.playing) return false;
+    const at = this.startedAt + (rawTime - this.startOffset);
+    if (at < this.ctx.currentTime + 0.05) return false;
+    clearInterval(this.timer);
+    if (this.onVisibility) document.removeEventListener('visibilitychange', this.onVisibility);
+    this.bank?.stop(at, 0.05);
+    const ctx = this.ctx;
+    const bank = new VoiceBank(ctx, score, this.master, at, 0, score.timeline.musicEnd);
+    this.bank = bank;
+    this.pendingStart = at;
+    const pump = () => bank.scheduleUntil(Math.max(0, ctx.currentTime - at) + (document.hidden ? 12 : 3));
+    pump();
+    this.timer = window.setInterval(pump, 200);
+    this.onVisibility = pump;
+    document.addEventListener('visibilitychange', pump);
+    return true;
+  }
+
+  /** True once after a chained score has taken over. */
+  takeSwitch(): boolean {
+    this.time();
+    const s = this.switched;
+    this.switched = false;
+    return s;
+  }
+
   async play(score: Score, offset: number): Promise<void> {
     clearTimeout(this.suspendTimer);
+    this.pendingStart = null;
     const ctx = this.ensure(score);
     if (ctx.state === 'suspended') await ctx.resume();
     this.stopBank();
@@ -736,6 +774,7 @@ export class LivePlayer {
 
   pause(): number {
     const t = this.time();
+    this.pendingStart = null;
     this.stopBank();
     this.playing = false;
     this.startOffset = t;
@@ -772,6 +811,12 @@ export class LivePlayer {
   /** Current score time. */
   time(): number {
     if (!this.playing || !this.ctx) return this.startOffset;
+    if (this.pendingStart !== null && this.ctx.currentTime >= this.pendingStart) {
+      this.startedAt = this.pendingStart;
+      this.startOffset = 0;
+      this.pendingStart = null;
+      this.switched = true;
+    }
     return this.startOffset + Math.max(0, this.ctx.currentTime - this.startedAt);
   }
 

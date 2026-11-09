@@ -1,6 +1,7 @@
 import type { Easing } from './config';
 import type { Score } from './score';
 import { drumHitsBetween, type DrumHit, type DrumVoice } from './drums';
+import { chopSteps } from './chop';
 import { midiToHz } from './theory';
 
 /** Smootherstep, clamped: 6x^5 - 15x^4 + 10x^3. */
@@ -437,7 +438,7 @@ export function drumHits(score: Score, a: number, b: number): DrumHit[] {
     let k = Math.floor((lo - sp.a) / step + 1e-9);
     while (sp.a + k * step < hi) {
       const loop = Math.floor(k / c.length);
-      const st = c.steps[k - loop * c.length];
+      const st = chopSteps(c, score.seed, sp.index, loop)[k - loop * c.length];
       const r0 = loop * c.length + st.start;
       const r1 = loop * c.length + st.end;
       const rs = sp.a + r0 * step;
@@ -485,7 +486,8 @@ export function chopAt(score: Score, t: number, target: 'chords' | 'melody' = 'c
     const pos = (t - sp.a) / step;
     const loop = Math.floor(pos / c.length);
     const base = sp.a + loop * c.length * step;
-    const st = c.steps[Math.min(c.length - 1, Math.floor(pos - loop * c.length))];
+    const steps = chopSteps(c, score.seed, sp.index, loop);
+    const st = steps[Math.min(c.length - 1, Math.floor(pos - loop * c.length))];
     const rs = base + st.start * step;
     const re = Math.min(sp.b, base + st.end * step);
     let s = t;
@@ -503,8 +505,8 @@ export function chopAt(score: Score, t: number, target: 'chords' | 'melody' = 'c
       level = Math.min(1, rate * 3);
     }
     // Short fades wherever the sound jumps (run edges), so cuts and jumps don't click.
-    const prev = c.steps[(st.start - 1 + c.length) % c.length];
-    const next = c.steps[st.end % c.length];
+    const prev = steps[(st.start - 1 + c.length) % c.length];
+    const next = steps[st.end % c.length];
     const FADE = 0.006;
     if (!(st.kind === 'play' && (prev.kind === 'play' || t - rs > FADE))) level *= Math.min(1, (t - rs) / FADE);
     if (!(st.kind === 'play' && (next.kind === 'play' || re - t > FADE))) level *= Math.min(1, (re - t) / FADE);

@@ -8,7 +8,7 @@ describe('chop', () => {
     expect(errors).toEqual([]);
     expect(pattern!.steps.map((s) => `${s.kind}:${s.start}-${s.end}`)).toEqual(['play:0-2', 'play:0-2', 'rev:2-5', 'rev:2-5', 'rev:2-5', 'rep:5-6', 'cut:6-7', 'tape:7-8']);
     expect(parseChop('xxxx').pattern).toBeNull();
-    expect(parseChop('x?x').errors.length).toBe(1);
+    expect(parseChop('x!x').errors.length).toBe(1);
   });
 
   const score = (pattern: string, extra = {}) => generateScore(resolveConfig({ seed: 3, rhythm: { tempo: 120 }, chop: { enabled: true, pattern, chords: true }, ...extra }));
@@ -108,5 +108,20 @@ describe('drum chop', () => {
   it('leaves the drums alone when not targeted', () => {
     const s = make('................', { drums: false, chords: true });
     expect(bar(s).length).toBe(20);
+  });
+});
+
+describe('random chop steps', () => {
+  it('decides ? steps per bar, repeatably', async () => {
+    const { chopSteps } = await import('../src/engine');
+    const { pattern, errors } = parseChop('xxxx????????????');
+    expect(errors).toEqual([]);
+    expect(pattern!.random).toBe(true);
+    const bars = Array.from({ length: 24 }, (_, i) => chopSteps(pattern!, 7, 0, i).map((s) => s.kind[0]).join(''));
+    expect(new Set(bars).size).toBeGreaterThan(12);
+    expect(bars.every((b) => b.startsWith('pppp'))).toBe(true);
+    expect(chopSteps(pattern!, 7, 0, 5)).toEqual(chopSteps(pattern!, 7, 0, 5));
+    const kinds = new Set(bars.join('').split(''));
+    for (const k of ['p', 'c', 'r']) expect(kinds.has(k)).toBe(true);
   });
 });

@@ -129,7 +129,13 @@ function setPath(obj: unknown, path: string, value: unknown) {
   o[keys[keys.length - 1]] = value;
 }
 
+const LOOP_SVG = '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M17 3l3 3-3 3M4 11V9a3 3 0 0 1 3-3h13M7 21l-3-3 3-3M20 13v2a3 3 0 0 1-3 3H4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const DICE_SVG =
+  '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="15.5" cy="8.5" r="1.5" fill="currentColor"/><circle cx="8.5" cy="15.5" r="1.5" fill="currentColor"/></svg>';
+
 function startApp() {
+  let loopReroll = false;
+  let pendingPass: { next: Score; nextState: ChordDriftConfig } | null = null;
   const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
   const form = $<HTMLFormElement>('#controls');
   const canvas = $<HTMLCanvasElement>('#view');
@@ -451,7 +457,15 @@ function startApp() {
     for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-drums]')) el.hidden = !state.drums.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-song]')) el.hidden = !state.song.enabled;
-    $('#loop-btn').setAttribute('aria-pressed', String(state.loop));
+    if (!state.loop) loopReroll = false;
+    const loopEl = $('#loop-btn');
+    const mode = !state.loop ? 'off' : loopReroll ? 'reroll' : 'loop';
+    if (loopEl.dataset.mode !== mode) {
+      loopEl.dataset.mode = mode;
+      loopEl.setAttribute('aria-pressed', String(state.loop));
+      loopEl.innerHTML = mode === 'reroll' ? DICE_SVG : LOOP_SVG;
+      loopEl.title = mode === 'off' ? 'Loop' : mode === 'loop' ? 'Looping — click for a new seed every pass' : 'Looping with a new seed every pass — click to stop looping';
+    }
     $<HTMLInputElement>('#zoom').value = String(Math.log(state.video.zoom));
     $('#zoom-reset').textContent = `${Math.round(state.video.zoom * 100)}%`;
     for (const el of form.querySelectorAll<HTMLElement>('[data-chop]')) el.hidden = !state.chop.enabled;
@@ -487,6 +501,7 @@ function startApp() {
 
   // ---- Score ------------------------------------------------------------------
   function rebuild(keepTime: boolean) {
+    pendingPass = null;
     void ensureFont(displayTheme().font);
     canvas.style.background = themeBackground({ ...state, theme: displayTheme() });
     const wasPlaying = player.playing;
@@ -777,13 +792,34 @@ function startApp() {
     },
     { passive: false },
   );
+  // Loop button: off → loop → loop with a new seed every pass → off.
   const loopBtn = $<HTMLButtonElement>('#loop-btn');
   loopBtn.addEventListener('click', () => {
-    state.loop = !state.loop;
-    if (state.loop) state.endless = false;
-    writeForm();
-    rebuild(true);
-    setStatus(state.loop ? 'Looping: the piece returns to its opening unison and starts again.' : 'Loop off.');
+    if (!state.loop) {
+      state.loop = true;
+      state.endless = false;
+      loopReroll = false;
+      writeForm();
+      rebuild(true);
+      setStatus('Looping: the piece returns to its opening unison and starts again.');
+    } else if (!loopReroll) {
+      loopReroll = true;
+      // Pin the key, so every new seed starts and ends on the same unison and the join stays seamless.
+      if (state.key === 'auto') {
+        state.key = KEY_NAMES[score.keyPc];
+        writeForm();
+        saveHash();
+      }
+      syncVisibility();
+      setStatus(`Loop + new seed: each pass rolls a fresh progression in ${score.keyName}, joined at the unison.`);
+    } else {
+      loopReroll = false;
+      pendingPass = null;
+      state.loop = false;
+      writeForm();
+      rebuild(true);
+      setStatus('Loop off.');
+    }
   });
   const stageEl = $<HTMLElement>('.stage');
   const toggleFullscreen = () => {
@@ -1092,6 +1128,35 @@ function startApp() {
   let lastHighlight = -2;
   let lastDom = 0;
   function tick() {
+    // Loop + new seed: just before the loop wraps, build the next seed's piece and hand the audio over
+    // to it exactly on the boundary; once it has taken over, the picture and controls follow.
+    if (loopReroll && player.playing && score.loop && !pendingPass) {
+      const raw = player.time();
+      const L = score.timeline.end;
+      const boundary = (Math.floor(raw / L + 1e-9) + 1) * L;
+      if (boundary - raw < 1.2) {
+        const nextState = { ...state, seed: formatSeed(randomSeed()) };
+        try {
+          const next = generateScore(nextState);
+          if (next.loop && next.startNote === score.startNote && player.chain(next, boundary)) pendingPass = { next, nextState };
+        } catch {
+          /* keep looping the current seed */
+        }
+      }
+    }
+    if (pendingPass && player.takeSwitch()) {
+      state = pendingPass.nextState;
+      score = pendingPass.next;
+      pendingPass = null;
+      pausedAt = 0;
+      keySelect.options[0].textContent = state.key === 'auto' ? `Auto (${score.keyName})` : 'Auto (seeded)';
+      renderedRows = 0;
+      list.innerHTML = '';
+      renderList();
+      writeForm();
+      saveHash();
+      setStatus(`New seed ${score.seedLabel}: ${score.chords.map((c) => c.name).join(' → ')}`);
+    }
     let t = currentTime();
     const end = score.timeline.end;
     if (player.playing && Number.isFinite(end) && t >= end && !score.loop) {
