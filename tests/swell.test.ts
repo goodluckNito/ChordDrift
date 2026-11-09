@@ -205,3 +205,15 @@ describe('pluck rhythm start and timing', () => {
     for (const g of gaps) expect(g).toBeCloseTo(0.25, 6);
   });
 });
+
+describe('pluck changes on the strike grid', () => {
+  it('snaps free-timing chord changes onto the strike pattern', async () => {
+    const { generateScore, resolveConfig } = await import('../src/engine');
+    const s = generateScore(resolveConfig({ seed: 9, motion: { transition: 'pluck' }, rhythm: { pluck: 'e', chords: '' }, timing: { hold: 5, glide: 1.7 } }));
+    const step = s.beat / 2;
+    for (const c of s.chords.slice(1)) {
+      const n = (c.t - s.gridStart) / step;
+      expect(Math.abs(n - Math.round(n))).toBeLessThan(1e-6);
+    }
+  });
+});

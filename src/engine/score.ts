@@ -456,7 +456,10 @@ class ScoreBuilder {
       }
     }
 
-    const t = this.nextChange;
+    const pluckGrid = cfg.motion.transition === 'pluck' && score.strikes && !this.durations && !song && k > 0;
+    // Plucked over a strike pattern with free timing, a change waits for the next strike, so it
+    // lands on the pulse instead of cutting into a ringing note.
+    const t = pluckGrid ? this.nextStrikeAt(this.nextChange) : this.nextChange;
     const bloom = k === 0;
     // With a chord rhythm, each chord owns a fixed slot; glides must finish inside it.
     // A collapse takes whole bars (it doesn't use a slot of the chord rhythm), so the grid stays on the bar.
@@ -525,6 +528,20 @@ class ScoreBuilder {
       this.nextChange = t + span + Math.max(0.35, T.hold * jitter - (crossfade ? T.swellIn : T.glide));
     }
     this.current = notes;
+  }
+
+  /** The first strike of the pluck pattern at or after time t. */
+  private nextStrikeAt(t: number): number {
+    const { score } = this;
+    const pat = score.strikes!;
+    const pos = Math.max(0, (t - score.gridStart) / score.beat);
+    for (let loop = Math.floor(pos / pat.length); loop < Math.floor(pos / pat.length) + 3; loop++) {
+      for (const o of pat.onsets) {
+        const at = score.gridStart + (loop * pat.length + o) * score.beat;
+        if (at >= t - 1e-9) return at;
+      }
+    }
+    return t;
   }
 
   private addArrival() {
