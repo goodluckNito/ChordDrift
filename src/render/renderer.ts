@@ -529,7 +529,7 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
   const V = cfg.voices;
   const cx = W / 2;
   const cy = (lay.bandTop + lay.bandBottom) / 2;
-  const zoomIn = cfg.video.spiral === 'zoom';
+  const zoomIn = false; // the fly-through lives in drawTunnel
   // Zoom mode also pushes the camera in slowly over the piece (endless: a gentle, bounded drift).
   const tl = score.timeline;
   const progress = Number.isFinite(tl.arrivalEnd) ? Math.max(0, Math.min(1, t / tl.arrivalEnd)) : 1 - Math.exp(-t / 90);
@@ -693,6 +693,198 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
   ctx.restore(); // plot clip
 }
 
+/**
+ * Fly-through: depth is time. Every note sits in 3D at the moment it sounds, on
+ * a pitch spiral (angle = pitch class, radius = height), and the camera moves
+ * forward through time. Upcoming chords start small at the vanishing point and
+ * rush toward you; the present is at full size; passed notes fly out past the
+ * edges. Held notes become slowly twisting helices, glides swing a line into
+ * its new interval as it approaches, and rings at every second and at chord
+ * changes keep the forward motion palpable.
+ */
+function drawTunnel(ctx: CanvasRenderingContext2D, score: Score, t: number, st: Style, lay: FrameLayout) {
+  const { width: W } = ctx.canvas;
+  const cfg = score.config;
+  const th = cfg.theme;
+  const V = cfg.voices;
+  const u = lay.u;
+  const tu = lay.tu;
+  const cx = W / 2;
+  const cy = (lay.bandTop + lay.bandBottom) / 2;
+  const R = Math.min(W * 0.42, (lay.bandBottom - lay.bandTop) / 2 + 0.04 * ctx.canvas.height);
+
+  // Perspective: scale at time offset Δ = τ − t. 1 now, → 0 far ahead, large just behind.
+  const Z = 2.4; // seconds of "depth" per unit distance — lower is faster travel
+  const AHEAD = 12;
+  const BEHIND = -0.62 * Z;
+  const scaleAt = (d: number) => 1 / (1 + d / Z);
+  const roll = (2 * Math.PI) / 26; // the tunnel twists slowly as you travel
+
+  const cam = cameraExtent(score, t);
+  const mid = (cam.lo + cam.hi) / 2;
+  const span = Math.max(24, cam.hi - cam.lo + 4);
+  const lo = mid - span / 2;
+  const radial = (p: number) => R * (0.22 + 0.78 * Math.max(-0.15, Math.min(1.2, (p - lo) / span)));
+  const angleOf = (p: number, tau: number) => (p / 12) * Math.PI * 2 - Math.PI / 2 + roll * (tau - t) * 0.6;
+  const project = (p: number, tau: number) => {
+    const s = scaleAt(tau - t);
+    const r = radial(p) * s;
+    const a = angleOf(p, tau);
+    return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, s };
+  };
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, lay.clipTop, W, lay.clipBottom - lay.clipTop);
+  ctx.clip();
+
+  // Rails: the twelve pitch classes converging on the vanishing point.
+  ctx.strokeStyle = withAlpha(th.text, 0.07);
+  ctx.lineWidth = Math.max(1, 1.1 * u);
+  ctx.beginPath();
+  for (let pc = 0; pc < 12; pc++) {
+    for (let i = 0; i <= 24; i++) {
+      const d = BEHIND + ((AHEAD - BEHIND) * i) / 24;
+      const s = scaleAt(d);
+      const a = (pc / 12) * Math.PI * 2 - Math.PI / 2 + roll * d * 0.6;
+      const x = cx + Math.cos(a) * R * 1.05 * s;
+      const y = cy + Math.sin(a) * R * 1.05 * s;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+  }
+  ctx.stroke();
+
+  // Rings: every second (faint) and at each chord change (stronger), passing by.
+  const ring = (d: number, alpha: number) => {
+    const s = scaleAt(d);
+    if (s <= 0 || s > 4) return;
+    ctx.strokeStyle = withAlpha(th.text, alpha * Math.min(1, s * 1.4) * Math.min(1, (AHEAD - d) / 3));
+    ctx.beginPath();
+    ctx.arc(cx, cy, R * 1.05 * s, 0, Math.PI * 2);
+    ctx.stroke();
+  };
+  for (let n = Math.ceil(t + BEHIND); n < t + AHEAD; n++) ring(n - t, 0.06);
+  for (const c of score.chords) {
+    const d = c.t - t;
+    if (d > BEHIND && d < AHEAD) ring(d, 0.22);
+  }
+
+  // Voices: lines through time, thick when near, thin far away.
+  const painter = new Painter(ctx, st, V, cy - R, cy + R);
+  const half = 1.9 * u * st.lw;
+  const crossfade = cfg.motion.transition === 'swell';
+  // Sample uniformly in perspective scale, so points are dense where the screen moves fast.
+  const sMin = scaleAt(AHEAD);
+  const sMax = scaleAt(BEHIND);
+  const N = 170;
+  const offsets: number[] = [];
+  for (let i = 0; i <= N; i++) {
+    const s = sMin + ((sMax - sMin) * i) / N;
+    offsets.push(Z * (1 / s - 1));
+  }
+  const lineRuns = (sample: (tau: number) => { p: number; g: number }, width: number): RibbonPoint[][] => {
+    const runs: RibbonPoint[][] = [];
+    let run: RibbonPoint[] = [];
+    let lastP = NaN;
+    const push = (d: number) => {
+      const tau = t + d;
+      const { p, g } = sample(tau);
+      if (g < 0.02 || Math.abs(p - lastP) > 1) {
+        if (run.length > 1) runs.push(run);
+        run = [];
+      }
+      lastP = p;
+      if (g < 0.02) return;
+      const q = project(p, tau);
+      const fadeFar = Math.min(1, (AHEAD - d) / 4);
+      run.push({ x: q.x, y: q.y, h: width * Math.min(3, q.s) * g * fadeFar });
+    };
+    let prevD = offsets[0];
+    let prevP = sample(t + prevD).p;
+    push(prevD);
+    for (let i = 1; i < offsets.length; i++) {
+      const d = offsets[i];
+      const p = sample(t + d).p;
+      const extra = Math.min(40, Math.floor(Math.abs(p - prevP) / 0.35));
+      for (let j = 1; j <= extra; j++) push(prevD + ((d - prevD) * j) / (extra + 1));
+      push(d);
+      prevD = d;
+      prevP = p;
+    }
+    if (run.length > 1) runs.push(run);
+    return runs;
+  };
+  for (let v = 0; v < V; v++) {
+    if (crossfade) {
+      for (const L of [0, 1] as const) {
+        const runs = lineRuns((tau) => {
+          const sl = layerAt(score, L, v, tau);
+          return { p: sl.p, g: sl.g * (0.3 + 0.7 * levelAt(score, v, tau)) };
+        }, half);
+        for (const r of runs) ribbon(painter.fill(v, layerAt(score, L, v, t).p), r);
+      }
+    } else {
+      const runs = lineRuns((tau) => ({ p: pitchAt(score, v, tau), g: 0.3 + 0.7 * levelAt(score, v, tau) }), half);
+      for (const r of runs) ribbon(painter.fill(v, pitchAt(score, v, t)), r);
+    }
+  }
+  painter.paint(3.2 * u * st.lw);
+  if (score.melody.length) {
+    const runs = lineRuns((tau) => melodyAt(score, tau) ?? { p: 0, g: 0 }, half * 1.1);
+    for (const r of runs) ribbon(painter.fill(-1, 0, st.accent), r);
+    painter.paint(3.2 * u * st.lw);
+  }
+
+  // The present: the chord's shape and dots at full size.
+  const dotR = 7 * u * Math.max(0.7, Math.min(1.8, st.lw));
+  const layers: { pitches: number[]; g: number }[] = crossfade
+    ? ([0, 1] as const).map((L) => ({ pitches: Array.from({ length: V }, (_, v) => layerAt(score, L, v, t).p), g: layerAt(score, L, 0, t).g }))
+    : [{ pitches: soundingPitches(score, t), g: 1 }];
+  for (const layer of layers) {
+    if (layer.g < 0.01) continue;
+    const pos = layer.pitches.map((p) => project(p, t));
+    ctx.globalAlpha = layer.g;
+    ctx.strokeStyle = withAlpha(th.ink, 0.3);
+    ctx.lineWidth = Math.max(1, 1.4 * u);
+    ctx.beginPath();
+    pos.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    layer.pitches.forEach((p, v) => {
+      ctx.fillStyle = painter.dotColor(v, p, pos[v].y);
+      ctx.beginPath();
+      ctx.arc(pos[v].x, pos[v].y, dotR * layer.g * (0.55 + 0.45 * levelAt(score, v, t)), 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+  const lead = score.melody.length ? melodyAt(score, t) : null;
+  if (lead && lead.g > 0.05) {
+    const q = project(lead.p, t);
+    ctx.fillStyle = st.accent;
+    ctx.beginPath();
+    ctx.arc(q.x, q.y, dotR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Note names around the present ring, and the chord name at the vanishing point.
+  ctx.fillStyle = withAlpha(th.text, 0.5);
+  ctx.font = `500 ${17 * tu}px ${st.font}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const names = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+  for (let pc = 0; pc < 12; pc++) {
+    const a = angleOf(pc, t);
+    ctx.fillText(names[pc], cx + Math.cos(a) * (R * 1.05 + 24 * tu), cy + Math.sin(a) * (R * 1.05 + 24 * tu));
+  }
+  if (th.labels) {
+    ctx.fillStyle = st.text;
+    ctx.font = `700 ${34 * tu}px ${st.font}`;
+    ctx.fillText(chordLabelAt(score, t), cx, cy);
+  }
+  ctx.restore();
+}
+
 export interface RenderOptions {
   /** Override the frame number shown in the HUD (defaults to round(t × fps)). */
   frame?: number;
@@ -723,7 +915,10 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   ctx.fillRect(0, 0, W, H);
 
   const freqs = soundingPitches(score, t).map(midiToHz);
-  if (cfg.video.view === 'spiral') drawSpiral(ctx, score, t, st, lay);
+  if (cfg.video.view === 'spiral') {
+    if (cfg.video.spiral === 'fly') drawTunnel(ctx, score, t, st, lay);
+    else drawSpiral(ctx, score, t, st, lay);
+  }
   else {
     // ---- Camera ------------------------------------------------------------
     // z: 0 while playing, eases to 1 for the final whole-piece view.

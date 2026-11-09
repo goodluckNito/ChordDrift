@@ -153,8 +153,8 @@ export interface ChordDriftConfig {
     nowPosition: number;
     /** timeline = pitch over time (the classic view) · spiral = pitch wrapped around a spiral, history curling inward */
     view: 'timeline' | 'spiral';
-    /** Spiral motion: zoom = history flies outward as if travelling into the spiral · inward = history curls toward the centre */
-    spiral: 'zoom' | 'inward';
+    /** Spiral motion: fly = travel forward through time, upcoming notes rushing toward you · inward = history curls toward the centre */
+    spiral: 'fly' | 'inward';
   };
 }
 
@@ -197,7 +197,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
   audio: { wave: 'sine', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 7000, width: 0.6, gain: 0.9, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
   theme: { ...THEME_PRESETS.paper },
-  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'zoom' },
+  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'fly' },
 };
 
 export type DeepPartial<T> = {
@@ -232,7 +232,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.progression = String(c.progression ?? '');
   if (!STYLE_IDS.includes(c.style)) c.style = 'none';
   if (c.video.view !== 'spiral') c.video.view = 'timeline';
-  if (c.video.spiral !== 'inward') c.video.spiral = 'zoom';
+  if (c.video.spiral !== 'inward') c.video.spiral = 'fly'; // ('zoom' from older projects becomes 'fly')
   c.endless = Boolean(c.endless);
   c.rhythm.tempo = Math.max(20, Math.min(320, Number(c.rhythm.tempo) || 76));
   c.rhythm.chords = String(c.rhythm.chords ?? '');

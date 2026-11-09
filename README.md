@@ -107,7 +107,7 @@ Themes are saved in projects and share links and used in video exports. **Reset 
 **Formats.** Theme → Format sets the frame: Portrait 9:16, Landscape 16:9, Square, Portrait 4:5 or Landscape 4K. The layout adapts: text scales with the frame, and wide frames show more history. Exports and recordings use this size.
 
 **Spiral view.** Theme → View → Spiral wraps pitch around a spiral: one turn per octave with C at the top, so octaves line up and the current chord shows as a shape, named in the middle. **Spiral motion** has two settings:
-- *Zoom in* (default): the past flies outward and tapers away, as if you're travelling into the spiral, while the camera slowly pushes in over the piece.
+- *Fly through* (default): depth is time, and you travel forward through it. Upcoming chords start small at the vanishing point and rush toward you; passed notes fly out past the edges. Held notes become slowly twisting helices, glides swing into their new intervals as they approach, and rings at every second and every chord change make the motion felt.
 - *Curl inward*: the past shrinks and rotates toward the centre.
 
 With release-and-swell changes, chords grow in and fade out on the spiral too. The arrival collapses everything into one point.
