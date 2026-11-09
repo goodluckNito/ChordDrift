@@ -51,6 +51,8 @@ Pages on a private repo needs a paid GitHub plan; public repos are free.
 
 The score list marks every key change (e.g. `V7 (→ G major)`). Styles also run endlessly, closing a phrase with a cadence every four phrases and drifting home now and then.
 
+**Loop and ending.** *Ending* chooses where the piece resolves: up to the tonic (two octaves or one), down to the tonic, or **back to the starting unison**. *Loop* returns to the starting unison and starts again seamlessly, with no zoom-out or fade. WAV and video exports of a loop are exactly one pass, and the WAV carries the reverb tail around to its start, so it loops cleanly in a DAW.
+
 **Writing chords.** The Progression box accepts any mix of:
 
 ```
@@ -113,7 +115,7 @@ Themes are saved in projects and share links and used in video exports. **My the
 **Formats.** Theme → Format sets the frame. **Auto** (the default) picks landscape on wide screens and portrait on tall ones, and switches when you rotate or resize. You can also fix it to Portrait 9:16, Landscape 16:9, Square, Portrait 4:5 or Landscape 4K. The layout adapts: text scales with the frame, and wide frames show more history. Exports and recordings use this size.
 
 **Spiral view.** Theme → View → Spiral wraps pitch around a spiral: one turn per octave with C at the top, so octaves line up and the current chord shows as a shape, named in the middle. **Spiral motion** has three settings:
-- *Orbit* (default): one meaning per dimension. Rotation is time: one turn per bar with a chord rhythm, otherwise every 8 s. Distance from the centre is pitch, with octave rings like staff lines, and the past drifts inward. The present rides a rotating hand with the chord stacked along it. History becomes a spiral galaxy where each interval change is a step in an arm (smooth for a glide), so with a rhythm the changes line up into a mandala.
+- *Orbit* (default): circling **and zooming in**. It's a logarithmic spiral: the present sits on its pitch ring, upcoming notes spiral out of the centre toward it, the past expands past you, and rings are born in the centre on every beat and grow outward. *Orbit (drain)* is the same idea with the past sinking into the centre instead. One meaning per dimension: Rotation is time: one turn per bar with a chord rhythm, otherwise every 8 s. Distance from the centre is pitch, with octave rings like staff lines, and the past drifts inward. The present rides a rotating hand with the chord stacked along it. History becomes a spiral galaxy where each interval change is a step in an arm (smooth for a glide), so with a rhythm the changes line up into a mandala.
 - *Fly through* (default): depth is time, and you travel forward through it. Upcoming chords start small at the vanishing point and rush toward you; passed notes fly out past the edges. Held notes become slowly twisting helices, glides swing into their new intervals as they approach, and rings at every second and every chord change make the motion felt.
 - *Note clock*: the angle is the note (C at the top, octaves aligned), and the past shrinks and rotates toward the centre.
 

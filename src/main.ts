@@ -65,7 +65,8 @@ const api = {
     exportCanvas.width = width;
     exportCanvas.height = height;
     return {
-      frames: frameCount(exportScore, exportDuration),
+      // A loop exports exactly one pass (the last frame is just before the wrap) so it repeats cleanly.
+      frames: exportScore.loop ? Math.round(exportDuration * fps) : frameCount(exportScore, exportDuration),
       fps,
       width,
       height,
@@ -401,7 +402,7 @@ function startApp() {
     presetSelect.value = presetIdx >= 0 ? String(presetIdx) : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-hide]')) {
       const conds = el.dataset.hide!.split(' ');
-      el.hidden = (conds.includes('endless') && state.endless) || (conds.includes('written') && written);
+      el.hidden = (conds.includes('endless') && state.endless) || (conds.includes('written') && written) || (conds.includes('loopon') && state.loop);
     }
   }
 
@@ -636,16 +637,21 @@ function startApp() {
   const formatSeedLabel = () => score.seedLabel;
 
   // ---- Transport ------------------------------------------------------------
-  const currentTime = () => (player.playing ? player.time() : pausedAt);
+  /** Score time now (wraps around when the piece loops). */
+  const currentTime = () => {
+    const t = player.playing ? player.time() : pausedAt;
+    return score && score.loop && t >= score.timeline.end ? t % score.timeline.end : t;
+  };
 
   async function play() {
-    if (Number.isFinite(score.timeline.end) && pausedAt >= score.timeline.end - 0.01) pausedAt = 0;
+    if (Number.isFinite(score.timeline.end) && pausedAt >= score.timeline.end - 0.01) pausedAt = score.loop ? pausedAt % score.timeline.end : 0;
     await player.play(score, pausedAt);
     playBtn.textContent = '❚❚';
     playBtn.setAttribute('aria-label', 'Pause');
   }
   function pause() {
     pausedAt = player.pause();
+    if (score.loop) pausedAt %= score.timeline.end;
     playBtn.textContent = '▶';
     playBtn.setAttribute('aria-label', 'Play');
   }
@@ -913,7 +919,7 @@ function startApp() {
   function tick() {
     let t = currentTime();
     const end = score.timeline.end;
-    if (player.playing && Number.isFinite(end) && t >= end) {
+    if (player.playing && Number.isFinite(end) && t >= end && !score.loop) {
       if (recording) recording.recorder.stop();
       else pause();
       pausedAt = end;

@@ -132,6 +132,8 @@ export class VoiceBank {
   private art: GainNode | null = null;
   /** 1 voice set for glides; 2 alternating sets for release-&-swell transitions. */
   private layers: number;
+  /** Loop length (s) when the piece loops, else 0: score time wraps, sound continues. */
+  private loopLen: number;
   private nextChunk = 0;
   private stopped = false;
 
@@ -148,6 +150,7 @@ export class VoiceBank {
     private endAt: number,
   ) {
     const a = score.config.audio;
+    this.loopLen = score.loop ? score.timeline.end : 0;
     this.bus = ctx.createGain();
     this.bus.connect(master.input);
     if (score.config.motion.transition === 'pluck') {
@@ -227,13 +230,15 @@ export class VoiceBank {
       // curve still ends on the value due at the next chunk's start, so the
       // tiny gap just holds that value — no step in pitch.
       const dur = CHUNK - Math.max(256 / sr, 0.004);
+      const wrap = (t: number) => (this.loopLen ? ((t % this.loopLen) + this.loopLen) % this.loopLen : t);
       for (let idx = 0; idx < V * this.layers; idx++) {
         const v = idx % V;
         const L = (idx >= V ? 1 : 0) as 0 | 1;
         const freq = new Float32Array(n);
         const gain = new Float32Array(n);
         for (let i = 0; i < n; i++) {
-          const t = t0 + (i / (n - 1)) * CHUNK;
+          const raw = t0 + (i / (n - 1)) * CHUNK;
+          const t = wrap(raw);
           let f: number;
           let layerGain = 1;
           if (this.layers === 2) {
@@ -242,9 +247,9 @@ export class VoiceBank {
             layerGain = st.g;
           } else f = midiToHz(pitchAt(this.score, v, t));
           freq[i] = f;
-          let env = Math.min(1, t / 0.05); // 50 ms fade-in at the very start
-          if (this.offset > 0) env *= Math.min(1, (t - this.offset) / 0.03); // de-click when starting mid-piece
-          if (t > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (t - fadeOutStart) / fadeLen)));
+          let env = Math.min(1, raw / 0.05); // 50 ms fade-in at the very start
+          if (this.offset > 0) env *= Math.min(1, (raw - this.offset) / 0.03); // de-click when starting mid-piece
+          if (raw > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (raw - fadeOutStart) / fadeLen)));
           gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env) * swellAt(this.score, v, t) * layerGain;
         }
         setCurve(this.oscs[idx].frequency, freq, at, dur);
@@ -253,20 +258,21 @@ export class VoiceBank {
       if (this.art) {
         const m = Math.round(CHUNK * ARTIC_RATE) + 1;
         const curve = new Float32Array(m);
-        for (let i = 0; i < m; i++) curve[i] = articulationAt(this.score, t0 + (i / (m - 1)) * CHUNK);
+        for (let i = 0; i < m; i++) curve[i] = articulationAt(this.score, wrap(t0 + (i / (m - 1)) * CHUNK));
         setCurve(this.art.gain, curve, at, dur);
       }
       if (this.lead) {
         const freq = new Float32Array(n);
         const gain = new Float32Array(n);
         for (let i = 0; i < n; i++) {
-          const t = t0 + (i / (n - 1)) * CHUNK;
+          const raw = t0 + (i / (n - 1)) * CHUNK;
+          const t = wrap(raw);
           const m = melodyAt(this.score, t);
           const f = midiToHz(m?.p ?? this.score.startNote);
           freq[i] = f;
           let env = 1;
-          if (this.offset > 0) env *= Math.min(1, (t - this.offset) / 0.03);
-          if (t > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (t - fadeOutStart) / fadeLen)));
+          if (this.offset > 0) env *= Math.min(1, (raw - this.offset) / 0.03);
+          if (raw > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (raw - fadeOutStart) / fadeLen)));
           gain[i] = leadGain * (m?.g ?? 0) * Math.pow(f / 440, -cfg.audio.tilt) * Math.max(0, env) * swellAt(this.score, -1, t);
         }
         setCurve(this.lead.osc.frequency, freq, at, dur);
@@ -310,6 +316,20 @@ export class VoiceBank {
 /** Render the piece (or the first `duration` seconds of an endless one) to an AudioBuffer. */
 export async function renderOffline(score: Score, duration = score.timeline.end, sampleRate = 48000): Promise<AudioBuffer> {
   if (!Number.isFinite(duration)) throw new Error('Endless pieces need an explicit duration to render.');
+  if (score.loop) {
+    // A seamless loop: render two passes and keep the second, so the reverb
+    // tail from the end is already sounding at the start.
+    const L = score.timeline.end;
+    const frames = Math.round(L * sampleRate);
+    const ctx = new OfflineAudioContext(2, frames * 2, sampleRate);
+    const master = createMaster(ctx, score, ctx.destination);
+    const bank = new VoiceBank(ctx, score, master, 0, 0, Number.POSITIVE_INFINITY);
+    bank.scheduleUntil(2 * L + 1);
+    const both = await ctx.startRendering();
+    const out = new AudioBuffer({ numberOfChannels: 2, length: frames, sampleRate });
+    for (let ch = 0; ch < 2; ch++) out.copyToChannel(both.getChannelData(ch).subarray(frames, frames * 2), ch);
+    return out;
+  }
   const length = Math.ceil(duration * sampleRate);
   const ctx = new OfflineAudioContext(2, length, sampleRate);
   const master = createMaster(ctx, score, ctx.destination);

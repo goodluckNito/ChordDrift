@@ -763,7 +763,9 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
 
   // One revolution per bar (4 beats) when there's a chord rhythm, so changes on
   // the beat land at the same angles; otherwise a slow, steady 8 s per turn.
-  const period = cfg.rhythm.chords.trim() ? 4 * score.beat : 8;
+  const barTurn = cfg.rhythm.chords.trim() ? 4 * score.beat : 8;
+  // Zooming needs a looser spiral (fewer turns per e-fold) or the arms wind into a blur.
+  const period = cfg.video.spiral === 'orbit' ? Math.max(8, 2 * barTurn) : barTurn;
   const omega = (2 * Math.PI) / period;
   const angleAt = (tau: number) => -Math.PI / 2 + omega * tau;
 
@@ -773,10 +775,20 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
   const span = Math.max(18, cam.hi - cam.lo + 3);
   const lo = mid - span / 2;
   const radial = (p: number) => R * (0.2 + 0.8 * Math.max(-0.1, Math.min(1.1, (p - lo) / span)));
-  const sink = cfg.video.historySeconds * 1.1; // e-folding time of the inward drift
-  const memory = sink * 3.2; // how far back trails go
+  /**
+   * zoom: a logarithmic spiral — scale grows exponentially with age, so the
+   * future spirals out of the centre to meet its pitch ring at the present and
+   * the past keeps expanding past you (on a log spiral, zooming in and rotating
+   * are the same motion, so the two reinforce each other).
+   * drain: the past shrinks into the centre instead.
+   */
+  const zoom = cfg.video.spiral === 'orbit';
+  const sink = cfg.video.historySeconds * (zoom ? 0.68 : 1.1); // e-folding time
+  const memory = zoom ? sink * Math.log(3.2) : sink * 3.2; // how far back trails go
+  const ahead = zoom ? Math.min(11, sink * Math.log(22)) : 0; // how far ahead (zoom only)
+  const scaleAt = (age: number) => (zoom ? Math.exp(age / sink) : Math.exp(-age / sink));
   const at = (p: number, age: number) => {
-    const s = Math.exp(-age / sink);
+    const s = scaleAt(age);
     const r = radial(p) * s;
     const a = angleAt(t - age);
     return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, s };
@@ -803,6 +815,20 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
   ctx.moveTo(cx, cy);
   ctx.lineTo(cx + Math.cos(handA) * R * 1.15, cy + Math.sin(handA) * R * 1.15);
   ctx.stroke();
+  if (zoom) {
+    // Rings born in the centre on every beat (every second without a rhythm) that grow outward as you travel.
+    const step = cfg.rhythm.chords.trim() || score.strikes ? score.beat : 1;
+    for (let k = Math.floor((t - memory) / step); k * step < t + ahead; k++) {
+      const age = t - k * step;
+      const s = scaleAt(age);
+      if (s < 0.03 || s > 3.4) continue;
+      const fade = Math.min(1, s * 2.5) * Math.min(1, (3.4 - s) / 1.2);
+      ctx.strokeStyle = withAlpha(th.text, 0.08 * fade);
+      ctx.beginPath();
+      ctx.arc(cx, cy, R * 1.05 * s, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
 
   // Trails: sampled from oldest to newest; quick pitch moves get extra points so
   // interval steps stay crisp curves; silences and instant jumps break the line.
@@ -823,11 +849,15 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
       lastP = p;
       if (g < 0.02) return;
       const q = at(p, age);
-      run.push({ x: q.x, y: q.y, h: width * (0.25 + 0.75 * q.s) * g });
+      // Near = thick, far (centre) = thin; the past thins out as it leaves.
+      const fade = zoom ? (age > 0 ? Math.max(0, 1 - age / memory) : 1) : 1;
+      run.push({ x: q.x, y: q.y, h: width * (zoom ? Math.min(2.4, 0.15 + 0.85 * q.s) : 0.25 + 0.75 * q.s) * g * fade });
     };
     const ages: number[] = [];
     for (let i = 1; i <= samples; i++) ages.push(memory * Math.pow(1 - i / samples, 1.6)); // denser near the present
-    for (const ts of strikeSamples(score, t - memory, t)) if (ts <= t) ages.push(t - ts);
+    // Zoom also draws the future, spiralling out of the centre toward the present.
+    if (zoom) for (let i = 1; i <= samples * 0.6; i++) ages.push(-ahead * Math.pow(i / (samples * 0.6), 1.3));
+    for (const ts of strikeSamples(score, t - memory, t + ahead)) ages.push(t - ts);
     ages.sort((x, y) => y - x);
     let prevAge = memory;
     let prevP = sample(t - memory).p;
@@ -1130,7 +1160,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const freqs = soundingPitches(score, t).map(midiToHz);
   if (cfg.video.view === 'spiral') {
     if (cfg.video.spiral === 'fly') drawTunnel(ctx, score, t, st, lay);
-    else if (cfg.video.spiral === 'orbit') drawOrbit(ctx, score, t, st, lay);
+    else if (cfg.video.spiral === 'orbit' || cfg.video.spiral === 'drain') drawOrbit(ctx, score, t, st, lay);
     else drawSpiral(ctx, score, t, st, lay);
   }
   else {

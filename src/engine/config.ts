@@ -76,6 +76,8 @@ export interface ChordDriftConfig {
   progression: string;
   /** Never arrive: keep generating chords forever. */
   endless: boolean;
+  /** Loop the piece seamlessly: it returns to the starting unison and starts again (no zoom-out, no fade). */
+  loop: boolean;
   /** Drift mode: chance per change of borrowing a chord from outside the key. */
   driftProbability: number;
   chordCount: [number, number];
@@ -84,6 +86,7 @@ export interface ChordDriftConfig {
   range: { bass: [number, number]; upper: [number, number] };
   /** Degree relative to the key ("fifth", "tonic+1oct"), a note name ("G2") or MIDI number. */
   startNote: string | number;
+  /** Same forms as startNote, or "start" to resolve back to the starting unison. */
   endNote: string | number;
   timing: Timing;
   voicing: {
@@ -160,9 +163,9 @@ export interface ChordDriftConfig {
     view: 'timeline' | 'spiral';
     /**
      * Spiral motion. orbit = rotation is time, distance from the centre is pitch, the past spirals inward ·
-     * fly = travel forward through time, upcoming notes rushing toward you · inward = pitch-class clock, history curls inward
+     * drain = like orbit, but the past sinks into the centre · fly = travel forward through time · inward = pitch-class clock
      */
-    spiral: 'orbit' | 'fly' | 'inward';
+    spiral: 'orbit' | 'drain' | 'fly' | 'inward';
   };
 }
 
@@ -179,6 +182,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   style: 'none',
   progression: '',
   endless: false,
+  loop: false,
   driftProbability: 0.25,
   chordCount: [8, 12],
   smoothness: 1,
@@ -241,8 +245,9 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   if (!STYLE_IDS.includes(c.style)) c.style = 'none';
   if (c.video.view !== 'spiral') c.video.view = 'timeline';
   if ((c.video.spiral as string) === 'zoom') c.video.spiral = 'fly'; // older projects
-  if (!['orbit', 'fly', 'inward'].includes(c.video.spiral)) c.video.spiral = 'orbit';
+  if (!['orbit', 'drain', 'fly', 'inward'].includes(c.video.spiral)) c.video.spiral = 'orbit';
   c.endless = Boolean(c.endless);
+  c.loop = Boolean(c.loop) && !c.endless;
   c.rhythm.tempo = Math.max(20, Math.min(320, Number(c.rhythm.tempo) || 76));
   c.rhythm.chords = String(c.rhythm.chords ?? '');
   c.rhythm.pluck = String(c.rhythm.pluck ?? '');

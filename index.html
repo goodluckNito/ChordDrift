@@ -74,6 +74,18 @@
               <input data-path="endless" type="checkbox" />
               <span>Endless — keep generating, never arrive</span>
             </label>
+            <label class="check wide" data-hide="endless">
+              <input data-path="loop" type="checkbox" />
+              <span>Loop — end on the starting unison and start again seamlessly</span>
+            </label>
+            <label class="wide" data-hide="endless loopon">Ending
+              <select data-path="endNote">
+                <option value="tonic+2oct">Rise to the tonic, two octaves up</option>
+                <option value="start">Return to the starting unison</option>
+                <option value="tonic+1oct">Rise to the tonic, one octave up</option>
+                <option value="tonic">Settle on the tonic (low)</option>
+              </select>
+            </label>
             <label data-hide="endless written">Chords (min)
               <input data-path="chordCount.0" type="number" min="1" max="60" />
             </label>
@@ -330,7 +342,8 @@
             </label>
             <label data-spiral>Spiral motion
               <select data-path="video.spiral">
-                <option value="orbit">Orbit — circling; pitch is distance from the centre</option>
+                <option value="orbit">Orbit — circling and zooming in; pitch is distance from the centre</option>
+                <option value="drain">Orbit (drain) — circling; the past sinks into the centre</option>
                 <option value="fly">Fly through — time is depth</option>
                 <option value="inward">Note clock — angle is the note, the past curls inward</option>
               </select>

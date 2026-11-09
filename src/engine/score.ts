@@ -51,6 +51,8 @@ export interface Score {
   startNote: number;
   endNote: number;
   endless: boolean;
+  /** Plays as a seamless loop of length timeline.end (ends on the starting unison). */
+  loop: boolean;
   /** Grows over time when endless. */
   chords: ScoreChord[];
   /** Per voice, sorted, non-overlapping. Grows over time when endless. */
@@ -181,6 +183,7 @@ class ScoreBuilder {
       startNote,
       endNote: startNote,
       endless: cfg.endless,
+      loop: cfg.loop,
       chords: [],
       moves: Array.from({ length: V }, () => []),
       detune: Array.from({ length: V }, () => uniform(detuneRng, -1, 1) * cfg.audio.detuneCents),
@@ -336,7 +339,8 @@ class ScoreBuilder {
   private addArrival() {
     const { cfg, score } = this;
     const T = cfg.timing;
-    const endNote = resolveNote(cfg.endNote, this.walker.tonic, 'high');
+    // Looping (or "start") resolves back to the opening unison so the end meets the beginning.
+    const endNote = cfg.loop || cfg.endNote === 'start' ? score.startNote : resolveNote(cfg.endNote, this.walker.tonic, 'high');
     const arrivalStart = score.chords.length ? this.nextChange : T.intro;
     for (let v = 0; v < cfg.voices; v++) {
       // Slight stagger at the start, but everyone lands together.
@@ -358,15 +362,26 @@ class ScoreBuilder {
       if (n.p === null) continue;
       score.pitchRange = [Math.min(score.pitchRange[0], n.p), Math.max(score.pitchRange[1], n.p)];
     }
-    score.timeline = {
-      introEnd: T.intro,
-      arrivalStart,
-      arrivalEnd,
-      musicEnd,
-      zoomStart,
-      zoomEnd,
-      end: Math.max(musicEnd + 1.5, zoomEnd) + T.finalHold,
-    };
+    score.timeline = cfg.loop
+      ? {
+          // A loop: no zoom-out, no fade; it wraps straight back to the opening unison.
+          introEnd: T.intro,
+          arrivalStart,
+          arrivalEnd,
+          musicEnd: Number.POSITIVE_INFINITY,
+          zoomStart: Number.POSITIVE_INFINITY,
+          zoomEnd: Number.POSITIVE_INFINITY,
+          end: arrivalEnd + T.outro,
+        }
+      : {
+          introEnd: T.intro,
+          arrivalStart,
+          arrivalEnd,
+          musicEnd,
+          zoomStart,
+          zoomEnd,
+          end: Math.max(musicEnd + 1.5, zoomEnd) + T.finalHold,
+        };
   }
 }
 
