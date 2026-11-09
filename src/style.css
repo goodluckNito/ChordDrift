@@ -64,6 +64,7 @@ body {
   gap: 14px;
   padding: 20px;
   min-height: 0;
+  position: relative;
 }
 .frame {
   flex: 1;
@@ -88,10 +89,26 @@ body {
 }
 .transport input[type='range'] { flex: 1; }
 #clock { font-size: 12px; color: var(--muted); white-space: nowrap; }
-.zoom { width: min(100%, 560px); display: flex; align-items: center; gap: 8px; margin-top: -6px; }
-.zoom input[type='range'] { flex: 1; }
-.zoom .icon { width: 30px; height: 30px; padding: 0; font-size: 18px; line-height: 1; }
-.zoom-label { font-size: 12px; min-width: 56px; padding: 4px 8px; color: var(--muted); }
+/* Zoom: a small pill tucked in the stage's top-right corner, so it can't be mistaken for the playback bar. */
+.zoom {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+.zoom:hover, .zoom:focus-within { opacity: 1; }
+.zoom input[type='range'] { width: 72px; flex: none; }
+.zoom .icon { width: 22px; height: 22px; padding: 0; font-size: 15px; line-height: 1; border: 0; background: transparent; }
+.zoom-label { font-size: 11px; min-width: 40px; padding: 2px 4px; color: var(--muted); border: 0; background: transparent; }
 #loop-btn[aria-pressed='true'], #fill[aria-pressed='true'] { background: var(--accent); color: var(--accent-ink); }
 .stage:fullscreen { padding: 12px; }
 
@@ -307,3 +324,10 @@ input[type='color'] { width: 100%; height: 30px; padding: 2px; cursor: pointer; 
 .drum-row { display: grid; grid-template-columns: 52px minmax(0, 1fr) 80px; gap: 8px; align-items: center; }
 .drum-row .drum-name { font-size: 12px; color: var(--muted); }
 .drum-row input.mono { font-size: 12px; letter-spacing: 0.04em; }
+/* Narrow screens: the position bar and clock get their own row under the transport buttons. */
+@media (max-width: 560px) {
+  .transport { flex-wrap: wrap; row-gap: 8px; }
+  .transport::after { content: ''; order: 9; flex-basis: 100%; }
+  .transport #scrub { order: 10; flex: 1 1 auto; min-width: 0; }
+  .transport #clock { order: 11; }
+}
