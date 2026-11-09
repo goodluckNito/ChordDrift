@@ -164,13 +164,15 @@ With release-and-swell changes, chords grow in and fade out on the spiral too. T
 
 ## Video and audio export
 
-The player can download a WAV, save a PNG frame, or record a real-time video. For frame-exact 60 fps video, use the CLI. It renders each frame headlessly (t = frame / 60), renders the audio offline from the same score, and muxes both with ffmpeg:
+The player can download a WAV or MIDI, save a PNG frame, or record a real-time video. *Record video* always starts from the beginning and stops by itself: at the end of the piece, after exactly one pass of a loop, or after the length you set for endless pieces. Pick a quality (24 / 12 / 6 / 3 Mbps) or a target file size, which is turned into a bitrate for the length. Browsers can only record at a bitrate; for constant-quality (CRF) or frame-exact 60 fps video, use the CLI. It renders each frame headlessly (t = frame / 60), renders the audio offline from the same score, and muxes both with ffmpeg:
 
 ```bash
 npm run export -- --seed 0xF5E68707 --key C                  # → out/chord-drift-0xF5E68707.mp4
 npm run export -- --config my-piece.chorddrift.json          # a saved project or copied config
 npm run export -- --seed 42 --scale 0.5                      # quick 540×960 draft
 npm run export -- --seed 42 --frames out/frames              # PNG sequence + audio.wav
+npm run export -- --seed 42 --crf 22                         # constant quality (default 16; higher = smaller)
+npm run export -- --seed 42 --size 25                        # aim for a 25 MB file
 npm run export -- --help
 ```
 

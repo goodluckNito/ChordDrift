@@ -6,6 +6,8 @@
  *   npm run export -- --seed 42 --mode drift --out out/drift-42.mp4
  *   npm run export -- --config my-piece.json --scale 0.5      # quick 540×960 draft
  *   npm run export -- --seed 42 --frames out/frames           # PNG sequence only
+ *   npm run export -- --seed 42 --crf 22                       # smaller file (default CRF 16)
+ *   npm run export -- --seed 42 --size 25                      # aim for a 25 MB file
  *
  * Requires ffmpeg on PATH and Playwright's Chromium.
  */
@@ -32,6 +34,8 @@ interface Args {
   noAudio: boolean;
   build: boolean;
   crf: number;
+  /** Target file size in MB (overrides --crf with a matching bitrate). */
+  size?: number;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -48,6 +52,7 @@ function parseArgs(argv: string[]): Args {
     else if (k === '--scale') a.scale = Number(next());
     else if (k === '--fps') a.fps = Number(next());
     else if (k === '--crf') a.crf = Number(next());
+    else if (k === '--size') a.size = Number(next());
     else if (k === '--jpeg') a.jpeg = true;
     else if (k === '--no-audio') a.noAudio = true;
     else if (k === '--build') a.build = true;
@@ -161,7 +166,15 @@ async function main() {
         '-y', '-loglevel', 'error',
         '-f', 'image2pipe', '-framerate', String(info.fps), '-i', '-',
         ...(wavPath ? ['-i', wavPath] : []),
-        '-c:v', 'libx264', '-preset', 'medium', '-crf', String(args.crf), '-pix_fmt', 'yuv420p',
+        '-c:v', 'libx264', '-preset', 'medium',
+        ...(args.size
+          ? (() => {
+              // A target size: the bitrate that fills it (less the audio), capped so a short piece doesn't balloon.
+              const kbps = Math.max(300, Math.round((args.size! * 8000) / info.duration - (wavPath ? 192 : 0)));
+              return ['-b:v', `${kbps}k`, '-maxrate', `${Math.round(kbps * 1.5)}k`, '-bufsize', `${kbps * 2}k`];
+            })()
+          : ['-crf', String(args.crf)]),
+        '-pix_fmt', 'yuv420p',
         ...(wavPath ? ['-c:a', 'aac', '-b:a', '192k'] : []),
         '-movflags', '+faststart',
         '-t', info.duration.toFixed(3),

@@ -384,7 +384,7 @@ function startApp() {
   let state: ChordDriftConfig = resolveConfig();
   let score: Score;
   let pausedAt = 0;
-  let recording: { recorder: MediaRecorder; canvas: HTMLCanvasElement } | null = null;
+  let recording: { recorder: MediaRecorder; canvas: HTMLCanvasElement; until: number } | null = null;
 
   const setStatus = (msg: string) => (status.textContent = msg);
 
@@ -532,6 +532,7 @@ function startApp() {
     renderList();
     renderPalette();
     saveHash();
+    syncRecOpts();
     if (wasPlaying) void player.play(score, pausedAt);
   }
 
@@ -946,6 +947,16 @@ function startApp() {
   });
 
   const recordBtn = $<HTMLButtonElement>('#record');
+  const recQuality = $<HTMLSelectElement>('#rec-quality');
+  const recSize = $<HTMLInputElement>('#rec-size');
+  const recLength = $<HTMLInputElement>('#rec-length');
+  /** How long a recording runs: the whole piece, one pass of a loop, or the chosen length when endless. */
+  const recordLength = () => (score.endless ? Math.max(5, Number(recLength.value) || 60) : score.timeline.end);
+  function syncRecOpts() {
+    $('#rec-size-box').hidden = $<HTMLSelectElement>('#rec-quality').value !== 'size';
+    $('#rec-length-box').hidden = !score?.endless;
+  }
+  recQuality.addEventListener('change', syncRecOpts);
   recordBtn.addEventListener('click', async () => {
     if (recording) {
       recording.recorder.stop();
@@ -961,7 +972,13 @@ function startApp() {
     const stream = rc.captureStream(score.config.video.fps);
     for (const tr of player.recordStream(score).getAudioTracks()) stream.addTrack(tr);
     const mime = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/webm;codecs=vp9,opus', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m)) ?? '';
-    const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12_000_000 });
+    const length = recordLength();
+    // A target size becomes a bitrate (less 128 kbps of audio); otherwise the chosen preset.
+    const vbps =
+      recQuality.value === 'size'
+        ? Math.max(400_000, Math.round(((Number(recSize.value) || 25) * 8_000_000) / length - 128_000))
+        : Number(recQuality.value) * 1_000_000;
+    const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbps, audioBitsPerSecond: 128_000 });
     const chunks: Blob[] = [];
     recorder.ondataavailable = (ev) => ev.data.size && chunks.push(ev.data);
     recorder.onstop = () => {
@@ -972,9 +989,9 @@ function startApp() {
       setStatus('Recording saved. For frame-exact 60 fps video use npm run export.');
       pause();
     };
-    recording = { recorder, canvas: rc };
+    recording = { recorder, canvas: rc, until: length };
     recordBtn.textContent = 'Stop recording';
-    setStatus(score.endless ? 'Recording — press Stop recording when you have enough.' : 'Recording in real time…');
+    setStatus(`Recording ${length.toFixed(0)} s in real time at ${(vbps / 1e6).toFixed(1)} Mbps (about ${Math.round(((vbps + 128_000) * length) / 8e6)} MB); it stops by itself.`);
     pausedAt = 0;
     recorder.start(250);
     await play();
@@ -1128,9 +1145,11 @@ function startApp() {
   let lastHighlight = -2;
   let lastDom = 0;
   function tick() {
+    // Recordings stop themselves: at the end, after one pass of a loop, or at the chosen length.
+    if (recording && player.playing && player.time() >= recording.until && recording.recorder.state === 'recording') recording.recorder.stop();
     // Loop + new seed: just before the loop wraps, build the next seed's piece and hand the audio over
     // to it exactly on the boundary; once it has taken over, the picture and controls follow.
-    if (loopReroll && player.playing && score.loop && !pendingPass) {
+    if (loopReroll && player.playing && score.loop && !pendingPass && !recording) {
       const raw = player.time();
       const L = score.timeline.end;
       const boundary = (Math.floor(raw / L + 1e-9) + 1) * L;

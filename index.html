@@ -588,6 +588,24 @@
           <button type="button" id="png">Save frame</button>
           <button type="button" id="json">Copy config</button>
         </div>
+        <div class="rec-opts">
+          <label>Video quality
+            <select id="rec-quality">
+              <option value="24">Best (24 Mbps)</option>
+              <option value="12" selected>High (12 Mbps)</option>
+              <option value="6">Medium (6 Mbps)</option>
+              <option value="3">Small (3 Mbps)</option>
+              <option value="size">Target file size…</option>
+            </select>
+          </label>
+          <label id="rec-size-box" hidden>Size (MB)
+            <input id="rec-size" type="number" min="1" max="2000" step="1" value="25" />
+          </label>
+          <label id="rec-length-box" hidden>Length (s)
+            <input id="rec-length" type="number" min="5" max="1800" step="5" value="60" />
+          </label>
+        </div>
+        <p class="muted small rec-note">Recording plays the piece from the start in real time and stops by itself at the end (one pass of a loop; the length you set for endless pieces). Browsers record at a bitrate; for constant-quality (CRF) or frame-exact 60 fps video, use <span class="mono">npm run export -- --crf 18</span>.</p>
         <p id="status" class="status" role="status"></p>
 
         <details class="score" open>
