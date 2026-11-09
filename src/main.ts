@@ -89,6 +89,15 @@ const api = {
     renderFrame(ctx, exportScore, n / exportScore.config.video.fps, { frame: n });
     return exportCanvas.toDataURL(type, quality).split(',')[1];
   },
+  /** Average render time (ms) for frames spread over the piece, without encoding (for tuning). */
+  bench(frames = 60, from = 0, to = exportDuration): number {
+    if (!exportScore || !exportCanvas) throw new Error('call load() first');
+    const ctx = exportCanvas.getContext('2d')!;
+    const t0 = performance.now();
+    for (let i = 0; i < frames; i++) renderFrame(ctx, exportScore, from + ((to - from) * (i + 0.5)) / frames, { frame: i });
+    ctx.getImageData(0, 0, 1, 1); // wait for the GPU to finish
+    return (performance.now() - t0) / frames;
+  },
   async wav(): Promise<string> {
     if (!exportScore) throw new Error('call load() first');
     const bytes = new Uint8Array(encodeWav(await renderOffline(exportScore, exportDuration)));
@@ -961,8 +970,8 @@ function startApp() {
     if (lastFrameAt && player.playing) {
       frameEma = frameEma * 0.92 + Math.min(100, now - lastFrameAt) * 0.08;
       if (++framesSinceAdjust > 60) {
-        if (frameEma > 24 && quality > 0.5) {
-          quality = Math.max(0.5, quality - 0.15);
+        if (frameEma > 24 && quality > 0.3) {
+          quality = Math.max(0.3, quality - 0.15);
           framesSinceAdjust = 0;
         } else if (frameEma < 15 && quality < 1 && framesSinceAdjust > 240) {
           quality = Math.min(1, quality + 0.1);
@@ -995,7 +1004,8 @@ function startApp() {
     const wantH = `${Math.floor(cssH)}px`;
     if (canvas.style.width !== wantW) canvas.style.width = wantW;
     if (canvas.style.height !== wantH) canvas.style.height = wantH;
-    const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2) * quality);
+    // Slow browsers can drop below one canvas pixel per CSS pixel (down to half) to keep the frame rate.
+    const dpr = Math.max(0.5, Math.min(window.devicePixelRatio || 1, 2) * quality);
     const w = Math.round(Math.floor(cssW) * dpr);
     const h = Math.round(Math.floor(cssH) * dpr);
     if (canvas.width !== w || canvas.height !== h) {
@@ -1023,7 +1033,7 @@ function startApp() {
     adaptQuality(performance.now());
     updateMeter(performance.now());
     resizeCanvas();
-    renderFrame(ctx, viewScore(), t, { textScale });
+    renderFrame(ctx, viewScore(), t, { textScale, lite: quality < 0.85 });
     if (recording) renderFrame(recording.canvas.getContext('2d')!, viewScore(), t);
     // DOM updates are throttled; layout work every frame adds up on phones.
     const nowMs = performance.now();

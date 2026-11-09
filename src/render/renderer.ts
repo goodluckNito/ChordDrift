@@ -285,10 +285,29 @@ interface RibbonPoint {
   h: number;
 }
 
+/** Centre lines of ribbons, per fill path: the glow strokes these (far cheaper than stroking the outlines). */
+const ribbonLines = new WeakMap<object, Path2D>();
+
 /** Add a variable-width stroke to the current path (filled later, so overlaps merge). */
 function ribbon(ctx: CanvasPath, pts: RibbonPoint[]) {
   const n = pts.length;
   if (n < 2) return;
+  const line = ribbonLines.get(ctx);
+  if (line) {
+    // Glow only where the ribbon is thick (the recent, near part); faded tails don't need it
+    // and glowing them paints a lot of pixels.
+    let maxH = 0;
+    for (const p of pts) maxH = Math.max(maxH, p.h);
+    const min = maxH * 0.45;
+    let pen = false;
+    for (const p of pts) {
+      if (p.h < min) pen = false;
+      else if (!pen) {
+        line.moveTo(p.x, p.y);
+        pen = true;
+      } else line.lineTo(p.x, p.y);
+    }
+  }
   const top: [number, number][] = [];
   const bot: [number, number][] = [];
   for (let i = 0; i < n; i++) {
@@ -455,7 +474,10 @@ class Painter {
 
   fill(v: number, p: number, color = this.colorFor(v, p)): Path2D {
     let path = this.fills.get(color);
-    if (!path) this.fills.set(color, (path = new Path2D()));
+    if (!path) {
+      this.fills.set(color, (path = new Path2D()));
+      if (this.style.glow > 0) ribbonLines.set(path, new Path2D());
+    }
     return path;
   }
 
@@ -466,15 +488,20 @@ class Painter {
     ctx.lineJoin = 'round';
     if (glow > 0) {
       // Glow: wide, faint copies underneath.
-      for (const [width, alpha] of [
-        [lineWidth * 6, 0.07],
-        [lineWidth * 3, 0.16],
-      ] as const) {
+      // A struggling preview keeps only the narrow pass (the wide one paints the most pixels).
+      const passes: (readonly [number, number])[] = lite ? [[lineWidth * 3, 0.2]] : [[lineWidth * 6, 0.07], [lineWidth * 3, 0.16]];
+      for (const [width, alpha] of passes) {
         ctx.globalAlpha = alpha * glow;
         ctx.lineWidth = width;
-        for (const [color, path] of [...this.strokes, ...this.fills]) {
+        for (const [color, path] of this.strokes) {
           ctx.strokeStyle = color;
           ctx.stroke(path);
+        }
+        for (const [color, path] of this.fills) {
+          const line = ribbonLines.get(path);
+          if (!line) continue;
+          ctx.strokeStyle = color;
+          ctx.stroke(line);
         }
       }
       ctx.globalAlpha = 1;
@@ -636,9 +663,12 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
   const lo = mid - span / 2;
   const radiusOf = (p: number) => R * (0.16 + 0.84 * Math.max(0, Math.min(1.08, (p - lo) / span)));
   const angleOf = (p: number) => (p / 12) * Math.PI * 2 - Math.PI / 2 - (0 / 12) * Math.PI * 2;
-  const history = cfg.video.historySeconds * (zoomIn ? 1.1 : 1.6);
-  const shrinkT = cfg.video.historySeconds * 0.9;
-  const twist = Math.PI * 0.9; // radians of extra rotation per shrinkT of age
+  // Trails wind inward for several turns, each ring about half the size of the one outside it,
+  // so the past reads as concentric rings closing in on the centre.
+  const shrinkT = cfg.video.historySeconds * 1.8; // e-folding time of the shrink
+  const history = shrinkT * 3.4; // down to ~3% of full size
+  const turnT = cfg.rhythm.chords.trim() ? 8 * score.beat : 6; // one turn per two bars (or 6 s)
+  const twist = (Math.PI * 2 * shrinkT) / turnT; // radians of rotation per shrinkT of age
   /**
    * Where a note heard `age` seconds ago is drawn. Inward: it shrinks toward the
    * centre. Zoom: it grows outward (as if we were flying into the spiral) and
@@ -683,7 +713,7 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
   const half = 1.7 * u * st.lw;
   const crossfade = cfg.motion.transition === 'swell';
   const pitchFor = (v: number, time: number) => (crossfade ? soundingPitches(score, time)[v] : pitchAt(score, v, time));
-  const samples = 140;
+  const samples = 110; // points per turn at full size
   /**
    * Sample a trail from oldest to newest. Fast pitch changes are subdivided so
    * curves stay curves; silent stretches (melody rests) break the trail.
@@ -704,8 +734,10 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
       const q = at(p, age);
       run.push({ x: q.x, y: q.y, h: width * q.s * g });
     };
+    // Fewer points on the small inner rings, more on the big outer ones.
     const ages: number[] = [];
-    for (let i = 1; i <= samples; i++) ages.push(history * (1 - i / samples));
+    for (let age = history; age > 1e-6; age -= turnT / (24 + samples * Math.min(1, Math.exp(-age / shrinkT)))) ages.push(age);
+    ages.push(0);
     for (const ts of strikeSamples(score, t - history, t)) if (ts <= t) ages.push(t - ts);
     ages.sort((x, y) => y - x);
     let prevAge = history;
@@ -952,9 +984,11 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
    * drain: the past shrinks into the centre instead.
    */
   const zoom = cfg.video.spiral === 'orbit';
-  const sink = cfg.video.historySeconds * (zoom ? 0.68 : 1.1); // e-folding time
-  const memory = zoom ? sink * Math.log(3.2) : sink * 3.2; // how far back trails go
-  const ahead = zoom ? Math.min(11, sink * Math.log(22)) : 0; // how far ahead (zoom only)
+  // Sized by turns: each ring is a fixed ratio bigger than the next (1.5× zooming, 1.45× draining),
+  // so several turns stack up as concentric rings instead of one short arc.
+  const sink = period / Math.log(zoom ? 1.5 : 1.45); // e-folding time
+  const memory = zoom ? sink * Math.log(1.8) : sink * Math.log(1 / 0.05); // how far back trails go
+  const ahead = zoom ? Math.min(60, sink * Math.log(6)) : 0; // how far ahead (zoom only)
   const scaleAt = (age: number) => (zoom ? Math.exp(age / sink) : Math.exp(-age / sink));
   const at = (p: number, age: number) => {
     const s = scaleAt(age);
@@ -986,17 +1020,25 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
   ctx.stroke();
   if (zoom) {
     // Rings born in the centre on every beat (every second without a rhythm) that grow outward as you travel.
-    const step = cfg.rhythm.chords.trim() || score.strikes ? score.beat : 1;
+    // The trails already form concentric rings, so these mark bars (every 2 s without a rhythm).
+    const step = cfg.rhythm.chords.trim() || score.strikes ? 4 * score.beat : 2;
+    // Batched by brightness: a handful of strokes instead of one per ring.
+    const BUCKETS = 4;
+    const rings = Array.from({ length: BUCKETS }, () => new Path2D());
     for (let k = Math.floor((t - memory) / step); k * step < t + ahead; k++) {
       const age = t - k * step;
       const s = scaleAt(age);
-      if (s < 0.03 || s > 3.4) continue;
+      // Rings bigger than the frame are invisible but still cost a full trace on CPU canvases.
+      if (s < 0.12 || s > 3.4 || R * 1.05 * s > Math.hypot(W, H) / 2) continue;
       const fade = Math.min(1, s * 2.5) * Math.min(1, (3.4 - s) / 1.2);
-      ctx.strokeStyle = withAlpha(th.text, 0.08 * fade);
-      ctx.beginPath();
-      ctx.arc(cx, cy, R * 1.05 * s, 0, Math.PI * 2);
-      ctx.stroke();
+      const b = Math.min(BUCKETS - 1, Math.floor(fade * BUCKETS));
+      rings[b].moveTo(cx + R * 1.05 * s, cy);
+      rings[b].arc(cx, cy, R * 1.05 * s, 0, Math.PI * 2);
     }
+    rings.forEach((path, b) => {
+      ctx.strokeStyle = withAlpha(th.text, 0.08 * ((b + 0.5) / BUCKETS));
+      ctx.stroke(path);
+    });
   }
 
   // Trails: sampled from oldest to newest; quick pitch moves get extra points so
@@ -1004,7 +1046,7 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
   const painter = new Painter(ctx, st, V, cy - R, cy + R);
   const half = 1.8 * u * st.lw;
   const crossfade = cfg.motion.transition === 'swell';
-  const samples = 220;
+  const samples = 120; // points per turn at full size
   const trail = (sample: (tau: number) => { p: number; g: number }, width: number): RibbonPoint[][] => {
     const runs: RibbonPoint[][] = [];
     let run: RibbonPoint[] = [];
@@ -1020,12 +1062,15 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
       const q = at(p, age);
       // Near = thick, far (centre) = thin; the past thins out as it leaves.
       const fade = zoom ? (age > 0 ? Math.max(0, 1 - age / memory) : 1) : 1;
-      run.push({ x: q.x, y: q.y, h: width * (zoom ? Math.min(2.4, 0.15 + 0.85 * q.s) : 0.25 + 0.75 * q.s) * g * fade });
+      run.push({ x: q.x, y: q.y, h: width * (zoom ? Math.min(1.5, 0.15 + 0.85 * q.s) : 0.25 + 0.75 * q.s) * g * fade });
     };
+    // Points per turn follow the ring's size: dense out where it's big, sparse in the small inner rings.
     const ages: number[] = [];
-    for (let i = 1; i <= samples; i++) ages.push(memory * Math.pow(1 - i / samples, 1.6)); // denser near the present
+    const stepAt = (age: number) => period / (24 + samples * Math.min(1, scaleAt(age)));
+    for (let age = memory; age > 1e-6; age -= stepAt(age)) ages.push(age);
+    ages.push(0);
     // Zoom also draws the future, spiralling out of the centre toward the present.
-    if (zoom) for (let i = 1; i <= samples * 0.6; i++) ages.push(-ahead * Math.pow(i / (samples * 0.6), 1.3));
+    if (zoom) for (let age = -stepAt(0); age > -ahead; age -= stepAt(age)) ages.push(age);
     for (const ts of strikeSamples(score, t - memory, t + ahead)) ages.push(t - ts);
     ages.sort((x, y) => y - x);
     let prevAge = memory;
@@ -1302,9 +1347,15 @@ export interface RenderOptions {
   frame?: number;
   /** Enlarge text (labels, HUD, titles) — used so small previews stay readable. Exports use 1. */
   textScale?: number;
+  /** Cheaper drawing for a struggling live preview (lighter glow). Exports never set it. */
+  lite?: boolean;
 }
 
+/** Set per frame from RenderOptions.lite. */
+let lite = false;
+
 export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: number, opts: RenderOptions = {}): void {
+  lite = opts.lite ?? false;
   const { width: W, height: H } = ctx.canvas;
   const cfg = score.config;
   const V = cfg.voices;

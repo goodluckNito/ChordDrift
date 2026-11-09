@@ -483,15 +483,40 @@ export function energyAt(score: Score, t: number): number {
 export function duckAt(score: Score, t: number): number {
   const d = score.config.drums;
   if (!score.drums || !(d.duck.kick || d.duck.snare) || d.duck.depth <= 0) return 1;
-  const look = d.duck.release * 5;
+  return 1 - d.duck.depth * duckEnvelope(score, t, d.duck.kick, d.duck.snare, d.duck.release);
+}
+
+const DUCK_BLOCK = 4;
+const duckCache = new WeakMap<Score, { n: number; blocks: Map<string, { t: number; vel: number }[]> }>();
+
+/**
+ * Sidechain envelope (0..1) at t from the chosen drums: 5 ms attack, exponential
+ * release. Hits are cached in 4 s blocks, so sampling it thousands of times a
+ * frame (every trail point) stays cheap.
+ */
+export function duckEnvelope(score: Score, t: number, kick: boolean, snare: boolean, release: number): number {
+  if (!score.drums || !(kick || snare)) return 0;
+  let cache = duckCache.get(score);
+  if (!cache || cache.n !== score.chords.length) duckCache.set(score, (cache = { n: score.chords.length, blocks: new Map() }));
+  const look = release * 5;
   let env = 0;
-  for (const h of drumHits(score, t - look, t + 1e-9)) {
-    if (!((h.voice === 'kick' && d.duck.kick) || (h.voice === 'snare' && d.duck.snare))) continue;
-    const x = t - h.t;
-    const e = x < 0.005 ? x / 0.005 : Math.exp(-(x - 0.005) / d.duck.release);
-    env = Math.max(env, e * Math.min(1, h.vel + 0.2));
+  for (let blk = Math.floor((t - look) / DUCK_BLOCK); blk <= Math.floor(t / DUCK_BLOCK); blk++) {
+    const key = `${blk}:${kick ? 1 : 0}${snare ? 1 : 0}`;
+    let hits = cache.blocks.get(key);
+    if (!hits) {
+      hits = drumHits(score, blk * DUCK_BLOCK, (blk + 1) * DUCK_BLOCK)
+        .filter((h) => (h.voice === 'kick' && kick) || (h.voice === 'snare' && snare))
+        .map((h) => ({ t: h.t, vel: h.vel }));
+      cache.blocks.set(key, hits);
+    }
+    for (const h of hits) {
+      const x = t - h.t;
+      if (x < -1e-9 || x > look) continue;
+      const e = x < 0.005 ? x / 0.005 : Math.exp(-(x - 0.005) / release);
+      env = Math.max(env, e * Math.min(1, h.vel + 0.2));
+    }
   }
-  return 1 - d.duck.depth * env;
+  return env;
 }
 
 /**
