@@ -722,7 +722,7 @@ function startApp() {
   function makeSong(text: string) {
     const t = text.trim();
     if (!t) return;
-    const mood: SongMood = $<HTMLInputElement>('#mood').checked ? 'chill' : 'adventurous';
+    const mood = $<HTMLSelectElement>('#mood').value as SongMood;
     const patch = songFromText(t, mood);
     const keep = { width: state.video.width, height: state.video.height, fps: state.video.fps };
     state = resolveConfig({ ...patch, video: { ...(patch.video ?? {}), ...keep } } as DeepPartial<ChordDriftConfig>);
@@ -732,16 +732,16 @@ function startApp() {
     $<HTMLInputElement>('#words').value = t;
     setStatus(`"${t}": ${score.keyName} ${score.scaleName}${state.style !== 'none' ? `, ${STYLES[state.style].name}` : ''} — ${score.chords.slice(0, 6).map((c) => c.name).join(' → ')}${score.chords.length > 6 ? ' …' : ''}`);
   }
-  const moodBox = $<HTMLInputElement>('#mood');
+  const moodSelect = $<HTMLSelectElement>('#mood');
   try {
     const saved = localStorage.getItem('chord-drift.mood');
-    if (saved) moodBox.checked = saved === 'chill';
+    if (saved && ['pure', 'chill', 'adventurous'].includes(saved)) moodSelect.value = saved;
   } catch {
     /* storage unavailable */
   }
-  moodBox.addEventListener('change', () => {
+  moodSelect.addEventListener('change', () => {
     try {
-      localStorage.setItem('chord-drift.mood', moodBox.checked ? 'chill' : 'adventurous');
+      localStorage.setItem('chord-drift.mood', moodSelect.value);
     } catch {
       /* ignore */
     }
@@ -1321,7 +1321,7 @@ function startApp() {
   const sharedWords = shareText(location.hash.slice(1));
   if (sharedWords) {
     $<HTMLInputElement>('#words').value = sharedWords;
-    $<HTMLInputElement>('#mood').checked = shareMood(location.hash.slice(1)) === 'chill';
+    $<HTMLSelectElement>('#mood').value = shareMood(location.hash.slice(1)) ?? 'chill';
   }
   syncThemeUi();
   writeForm();

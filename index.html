@@ -27,7 +27,7 @@
             <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M3 3h6M3 3v6M21 3h-6M21 3v6M3 21h6M3 21v-6M21 21h-6M21 21v-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           </button>
           <button id="fill" type="button" aria-label="Fill window" aria-pressed="false" title="Fill the window (desktop mode) — exports keep the Format setting">
-            <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 12h10M7 12l2.5-2.5M7 12l2.5 2.5M17 12l-2.5-2.5M17 12l-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
           <input id="scrub" type="range" min="0" max="1" step="0.001" value="0" aria-label="Position" />
           <span id="clock" class="mono">0:00.00 / 0:00.00</span>
@@ -55,9 +55,12 @@
             <button type="submit" title="Make a song from these words (the same words always make the same song)">Make</button>
             <button type="button" id="surprise" title="Randomize everything: a song from a few random words">🎲</button>
           </form>
-          <label class="check words-mood" title="Chill keeps word songs on familiar ground: major and minor (now and then dorian or mixolydian), simpler chords, friendly styles, a firm pull home. Off = adventurous: every scale, style and generator.">
-            <input id="mood" type="checkbox" checked />
-            <span>Chill — familiar major &amp; minor progressions (off: adventurous)</span>
+          <label class="words-mood">Make
+            <select id="mood">
+              <option value="pure">Just chords — a nice progression, nothing else</option>
+              <option value="chill" selected>Chill — familiar major &amp; minor, full arrangement</option>
+              <option value="adventurous">Adventurous — any scale, style and sound</option>
+            </select>
           </label>
         </header>
 

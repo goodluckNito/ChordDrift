@@ -10,7 +10,7 @@ import { hashSeed, stream, type Rng } from './rng';
 import { RHYTHM_PRESETS, STRIKE_PRESETS } from './rhythm';
 import { SONG_PRESETS } from './song';
 import { STYLES, STYLE_IDS, type StyleId } from './styles';
-import { randomTheme } from './themes';
+import { THEME_PRESETS, randomTheme } from './themes';
 import { KEY_NAMES } from './theory';
 
 const pick = <T>(r: Rng, xs: readonly T[]): T => xs[Math.floor(r() * xs.length)];
@@ -26,7 +26,7 @@ const between = (r: Rng, lo: number, hi: number, step = 0.05) => Math.round((lo 
  * dorian or mixolydian), simpler chords, friendly styles, key-locked harmony and a firm pull home.
  * Adventurous opens up every scale, style and generator.
  */
-export type SongMood = 'chill' | 'adventurous';
+export type SongMood = 'pure' | 'chill' | 'adventurous';
 
 /** Friendly styles for chill songs (the others lean dark, jazzy or exotic). */
 const CHILL_STYLES: StyleId[] = ['pop', 'classical', 'cinematic', 'gospel'];
@@ -36,7 +36,8 @@ const CHILL_STYLES: StyleId[] = ['pop', 'classical', 'cinematic', 'gospel'];
  * moods make the same draws in the same order (so adding chill didn't change adventurous songs).
  */
 export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = 'adventurous'): DeepPartial<ChordDriftConfig> {
-  const chill = mood === 'chill';
+  // "Just chords" shares chill's harmony (same draws), then strips the arrangement back below.
+  const chill = mood === 'chill' || mood === 'pure';
   const styleRoll = r();
   const style = styleRoll < 0.5 ? 'none' : chill ? pick(r, CHILL_STYLES) : pick(r, STYLE_IDS.filter((s) => s !== 'none') as StyleId[]);
   const scale = chill
@@ -152,6 +153,23 @@ export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = '
   };
   // Drawn last, so adding them didn't change any earlier choice (word songs keep their music).
   out.drums = { ...out.drums, level: between(r, 0.5, 0.75), reverb: between(r, 0.1, 0.3) };
+  if (mood === 'pure') {
+    // Just chords: one piece, gliding freely on a clean, steady tone, in the classic timeline view.
+    const calm = pick(r, ['paper', 'midnight', 'sepia', 'hex', 'moth', 'ossuary'] as const);
+    Object.assign(out, {
+      song: { enabled: false },
+      loop: false,
+      motion: { transition: 'glide' },
+      rhythm: { ...out.rhythm, chords: '' },
+      melody: { enabled: false },
+      drums: { ...out.drums, enabled: false },
+      chop: { ...out.chop, enabled: false },
+      audio: { ...out.audio, swell: 'off', wave: pick(r, ['warm', 'triangle', 'sine'] as const), reverb: between(r, 0.3, 0.55) },
+      theme: { ...THEME_PRESETS[calm] },
+      video: { view: 'timeline' },
+      voicing: { inversion: 0 },
+    } as DeepPartial<ChordDriftConfig>);
+  }
   return out;
 }
 

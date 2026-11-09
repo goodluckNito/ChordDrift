@@ -142,7 +142,7 @@ export function encodeShare(config: ChordDriftConfig): string {
   const words = seedWords(config.seed);
   if (!words) return plain;
   let best = plain;
-  for (const mood of ['chill', 'adventurous'] as SongMood[]) {
+  for (const mood of ['pure', 'chill', 'adventurous'] as SongMood[]) {
     const d = configDiff(config, wordsBase(words, config.video, mood));
     const viaWords = encodeTextShare(words, mood) + (Object.keys(d).length ? '&d=' + compressToEncodedURIComponent(JSON.stringify(pack(d))) : '');
     if (!best || viaWords.length < best.length) best = viaWords;
@@ -152,7 +152,7 @@ export function encodeShare(config: ChordDriftConfig): string {
 
 /** The words of a word-song share code (w=… chill, t=… adventurous), or null. */
 export function shareText(hash: string): string | null {
-  if (!hash.startsWith('t=') && !hash.startsWith('w=')) return null;
+  if (!shareMood(hash)) return null;
   try {
     const end = hash.indexOf('&');
     return decodeURIComponent(hash.slice(2, end >= 0 ? end : undefined).replace(/\+/g, ' ')).trim() || null;
@@ -163,12 +163,12 @@ export function shareText(hash: string): string | null {
 
 /** The mood of a word-song share code. */
 export function shareMood(hash: string): SongMood | null {
-  return hash.startsWith('w=') ? 'chill' : hash.startsWith('t=') ? 'adventurous' : null;
+  return hash.startsWith('p=') ? 'pure' : hash.startsWith('w=') ? 'chill' : hash.startsWith('t=') ? 'adventurous' : null;
 }
 
-/** Share code for a song made from words: w= for chill, t= for adventurous. */
+/** Share code for a song made from words: p= just chords, w= chill, t= adventurous. */
 export function encodeTextShare(text: string, mood: SongMood = 'adventurous'): string {
-  return (mood === 'chill' ? 'w=' : 't=') + encodeURIComponent(text.trim()).replace(/%20/g, '+');
+  return (mood === 'pure' ? 'p=' : mood === 'chill' ? 'w=' : 't=') + encodeURIComponent(text.trim()).replace(/%20/g, '+');
 }
 
 export function decodeShare(hash: string): DeepPartial<ChordDriftConfig> | null {
@@ -191,7 +191,7 @@ export function decodeShare(hash: string): DeepPartial<ChordDriftConfig> | null 
     }
   }
   // A song from words (w=… chill, t=… adventurous), plus any changes to it (&d=…).
-  if (hash.startsWith('t=') || hash.startsWith('w=')) {
+  if (shareMood(hash)) {
     const text = shareText(hash);
     if (!text) return null;
     const amp = hash.indexOf('&d=');

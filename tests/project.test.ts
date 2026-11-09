@@ -117,3 +117,19 @@ describe('song moods', () => {
     expect(resolveConfig(decodeShare('w=quiet+harbor')!)).toEqual(c);
   });
 });
+
+describe('just chords', () => {
+  it('is a bare chord progression with chill harmony, linked as p=', async () => {
+    const { songFromText } = await import('../src/engine');
+    for (const words of ['quiet harbor', 'neon chapel', 'feral comet']) {
+      const p = resolveConfig(songFromText(words, 'pure'));
+      const c = resolveConfig(songFromText(words, 'chill'));
+      expect([p.drums.enabled, p.melody.enabled, p.chop.enabled, p.song.enabled, p.loop]).toEqual([false, false, false, false, false]);
+      expect(p.motion.transition).toBe('glide');
+      expect(p.video.view).toBe('timeline');
+      // Same harmony as the chill song from the same words.
+      expect([p.key, p.scale, p.style, p.mode, p.complexity, p.voices]).toEqual([c.key, c.scale, c.style, c.mode, c.complexity, c.voices]);
+    }
+    expect(encodeShare(resolveConfig(songFromText('quiet harbor', 'pure')))).toBe('p=quiet+harbor');
+  });
+});
