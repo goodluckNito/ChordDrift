@@ -439,19 +439,28 @@ class ScoreBuilder {
       spec = this.walker.next(k, this.total, cost);
       notes = voiceChord(spec, ref, rules, this.voicingRng);
     }
-    // Inversion: the lowest voice (or two) jumps up an octave over the others, so the trails cross
-    // and twist; the next chord untwists them. The bass note names the inversion (C/E).
+    // Inversion: now and then a chord puts its 3rd, 5th (or 7th) in the bass instead of its root
+    // (C/E, C/G), voiced from the current chord like any other change. It draws on its own random
+    // stream, so the setting changes nothing else about the piece.
     if (!unison && k > 0) {
       const roll = this.inversionRng();
-      const two = this.inversionRng() < 0.4;
+      const pick = this.inversionRng();
       if (roll < cfg.voicing.inversion) {
-        const inv = notes.slice();
-        const n = two ? 2 : 1;
-        for (let i = 0; i < n; i++) inv[i] += 12;
-        if (inv.slice(0, n).every((p) => p <= cfg.range.upper[1] + 7)) {
-          notes = inv;
-          const low = Math.min(...notes);
-          if (mod12(low) !== mod12(spec.root)) spec = { ...spec, name: `${spec.name}/${spellPc(mod12(low), spec.tonic, spec.scale)}` };
+        const has = (i: number[]) => spec.intervals.map(mod12).find((x) => i.includes(x));
+        const options: [number, number][] = [];
+        const third = has([3, 4]);
+        const fifth = has([7, 6, 8]);
+        const seventh = has([10, 11]);
+        if (third !== undefined) options.push([third, 3]);
+        if (fifth !== undefined) options.push([fifth, 2]);
+        if (seventh !== undefined) options.push([seventh, 1]);
+        if (options.length) {
+          const total = options.reduce((acc, [, w]) => acc + w, 0);
+          let x = pick * total;
+          const iv = options.find(([, w]) => (x -= w) < 0)?.[0] ?? options[0][0];
+          const bassPc = mod12(spec.root + iv);
+          notes = voiceChord(spec, ref, rules, this.inversionRng, bassPc);
+          spec = { ...spec, name: `${spec.name}/${spellPc(bassPc, spec.tonic, spec.scale)}` };
         }
       }
     }

@@ -199,14 +199,20 @@ describe('loop', () => {
 });
 
 describe('inversion chance', () => {
-  it('changes nothing at 0 and crosses voices with slash names at 1', async () => {
+  it('changes nothing at 0 and puts other chord tones in the bass at 1', async () => {
     const { generateScore, resolveConfig } = await import('../src/engine');
     const plain = generateScore(resolveConfig({ seed: 21 }));
     const zero = generateScore(resolveConfig({ seed: 21, voicing: { inversion: 0 } }));
     expect(zero.chords.map((c) => c.notes)).toEqual(plain.chords.map((c) => c.notes));
     const all = generateScore(resolveConfig({ seed: 21, voicing: { inversion: 1 } }));
-    const crossed = all.chords.filter((c) => c.notes[0] > c.notes[1]);
-    expect(crossed.length).toBeGreaterThan(all.chords.length / 2);
-    expect(all.chords.some((c) => c.name.includes('/'))).toBe(true);
+    const inverted = all.chords.slice(1).filter((c) => c.name.includes('/'));
+    expect(inverted.length).toBeGreaterThan(all.chords.length / 2);
+    for (const c of inverted) {
+      // A real inversion: the bass is still the lowest voice, and it's another tone of the same chord.
+      expect(Math.min(...c.notes)).toBe(c.notes[0]);
+      expect(c.notes[0] % 12).not.toBe(c.root);
+      expect(c.intervals.map((i) => (c.root + i) % 12)).toContain(c.notes[0] % 12);
+      expect(c.notes.some((n) => n % 12 === c.root)).toBe(true);
+    }
   });
 });

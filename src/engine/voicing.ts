@@ -215,15 +215,22 @@ function pcCountsOk(upper: number[], cap: number): boolean {
  * Deterministic for a given rng state. `rng` null = single noiseless search
  * (used for cheap cost estimates).
  */
-export function voiceChord(chord: Chord, current: number[], rules: VoicingRules, rng: Rng | null): number[] {
-  if (rules.strategy === 'parallel') {
+/**
+ * Voice a chord from the current voicing. `bassPc` puts another chord tone in the bass (an
+ * inversion: C/E); the root then has to appear among the upper voices.
+ */
+export function voiceChord(chord: Chord, current: number[], rules: VoicingRules, rng: Rng | null, bassPc?: number): number[] {
+  const inverted = bassPc !== undefined && mod12(bassPc) !== mod12(chord.root);
+  if (rules.strategy === 'parallel' && !inverted) {
     const planed = voiceParallel(chord, current, rules);
     if (planed) return planed;
   }
   const U = current.length - 1;
-  const bass = chooseBass(chord.root, current[0], rules.bass);
+  const bass = chooseBass(inverted ? bassPc : chord.root, current[0], rules.bass);
   const pcs = new Set(chord.intervals.map((i) => mod12(chord.root + i)));
-  const required = requiredTones(chord.intervals).map((i) => mod12(chord.root + i)).slice(0, Math.max(0, U));
+  let required = requiredTones(chord.intervals).map((i) => mod12(chord.root + i));
+  if (inverted) required = [mod12(chord.root), ...required.filter((p) => p !== mod12(bassPc))];
+  required = required.slice(0, Math.max(0, U));
   const top = current[U];
   const pedalOk = pcs.has(mod12(top));
 
