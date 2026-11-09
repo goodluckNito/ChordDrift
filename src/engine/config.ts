@@ -278,31 +278,21 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   return c;
 }
 
-/** Settings applied by the "Ambient" button: slow, wide, soft, swelling. */
+/**
+ * Sound presets change only the sound: envelope (ADSR-ish), swells, reverb and
+ * tone. Never rhythm, timing, chord changes, harmony or theme.
+ */
+/** "Ambient": soft swells into each chord, a dark triangle tone, wide detune, deep reverb. */
 export const AMBIENT_PRESET: DeepPartial<ChordDriftConfig> = {
-  timing: { hold: 5, glide: 1.7, stagger: 0.7, bloom: 5, swellIn: 2.4, release: 3.4 },
-  motion: { transition: 'swell' },
-  audio: { wave: 'triangle', reverb: 0.8, detuneCents: 7, lowpass: 3200, swell: 'breath', swellDepth: 0.3 },
-  melody: { density: 0.15, glide: 0.3, level: 0.4, wave: 'sine', register: 'top' },
-  rhythm: { chords: '' },
+  audio: { wave: 'triangle', reverb: 0.8, detuneCents: 7, lowpass: 3200, swell: 'chord', swellDepth: 0.6, envelope: 'sustain' },
 };
 
-/** "Pluck" button: re-struck chords with a quick decay, short glides, a rhythm that shows it off. */
+/** "Pluck": each chord change strikes and decays; brighter triangle, short room. */
 export const PLUCK_PRESET: DeepPartial<ChordDriftConfig> = {
-  timing: { glide: 0.14, stagger: 0.02 },
-  motion: { transition: 'glide' },
   audio: { envelope: 'pluck', attack: 0.006, decay: 0.38, sustain: 0.12, wave: 'triangle', reverb: 0.3, lowpass: 6500, swell: 'off' },
-  rhythm: { tempo: 104, chords: 'q. q. q' },
 };
 
-/** "Dark" button: witch house harmony, detuned saws through a dark filter, crossfades, deep reverb. (Leaves the theme alone.) */
+/** "Dark": detuned saws through a low filter, deep reverb, slow breathing. Pairs well with the Witch house style and Hex theme. */
 export const DARK_PRESET: DeepPartial<ChordDriftConfig> = {
-  style: 'witchhouse',
-  scale: 'minor',
-  complexity: 2,
-  progression: '',
-  rhythm: { chords: '' },
-  motion: { transition: 'swell' },
-  timing: { hold: 3.6, swellIn: 1.3, release: 2.8 },
   audio: { wave: 'sawtooth', lowpass: 1600, detuneCents: 11, reverb: 0.85, swell: 'breath', swellDepth: 0.35, envelope: 'sustain' },
 };

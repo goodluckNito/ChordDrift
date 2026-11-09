@@ -75,10 +75,7 @@ body {
 }
 #view {
   display: block;
-  height: 100%;
-  max-width: 100%;
-  aspect-ratio: 9 / 16;
-  object-fit: contain;
+  /* Size is set from JS: fitted to the format, or filling the stage in Fill mode. */
   border-radius: 6px;
   box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 12px 40px rgba(0,0,0,.18);
   background: #fafbf9;
@@ -113,7 +110,11 @@ button.primary {
   padding: 0;
   font-size: 15px;
 }
-.transport button:not(.primary) { width: 36px; height: 36px; padding: 0; border-radius: 50%; }
+.transport button:not(.primary) { width: 36px; height: 36px; padding: 0; border-radius: 50%; display: grid; place-items: center; }
+#fill[aria-pressed='true'] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.app.filled .stage { padding: 10px; }
+.app.filled .transport, .app.filled .levels { width: min(100%, 900px); }
+@media (min-width: 1400px) { .app { grid-template-columns: minmax(0, 1fr) 420px; } }
 
 .panel {
   background: var(--panel);

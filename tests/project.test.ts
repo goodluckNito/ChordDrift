@@ -34,8 +34,8 @@ describe('themes', () => {
 });
 
 describe('sound presets', () => {
-  it('never change the theme', async () => {
+  it('only change sound settings (envelope, swells, reverb, tone)', async () => {
     const { AMBIENT_PRESET, PLUCK_PRESET, DARK_PRESET } = await import('../src/engine');
-    for (const p of [AMBIENT_PRESET, PLUCK_PRESET, DARK_PRESET]) expect('theme' in p).toBe(false);
+    for (const p of [AMBIENT_PRESET, PLUCK_PRESET, DARK_PRESET]) expect(Object.keys(p)).toEqual(['audio']);
   });
 });

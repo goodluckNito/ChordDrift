@@ -90,6 +90,69 @@ const LAYOUT = {
   cameraLag: 1.4,
 };
 
+/**
+ * Pixel layout for a frame of any shape. Sizes scale with the frame's area
+ * (so a 16:9 frame gets the same type size as a 9:16 one), and `textScale`
+ * enlarges text for small on-screen previews. For 1080×1920 this reproduces
+ * the original portrait layout exactly.
+ */
+interface FrameLayout {
+  u: number;
+  tu: number;
+  titleY: number;
+  subtitleY: number;
+  clipTop: number;
+  clipBottom: number;
+  bandTop: number;
+  bandBottom: number;
+  finalTop: number;
+  finalBottom: number;
+  finalLeft: number;
+  finalRight: number;
+  hudRow: (i: number) => number;
+  hudLeft: number;
+  hudValue: number;
+  hudRight: number;
+  /** Seconds of history shown in the timeline (wider frames show more). */
+  history: number;
+}
+
+function layoutFor(W: number, H: number, cfg: ChordDriftConfig, textScale: number): FrameLayout {
+  const u = Math.sqrt((W * H) / (1080 * 1920));
+  const tu = u * textScale;
+  const hasTitle = Boolean(cfg.series.trim() || cfg.title.trim() || cfg.episode);
+  const titleY = Math.max(LAYOUT.titleY * H, 84 * tu);
+  const subtitleY = titleY + 46 * tu;
+  const hudLine = 36 * tu;
+  const hudBottom = Math.min(H - 50 * tu, (LAYOUT.hudTop + 3 * LAYOUT.hudLine) * H);
+  const hudRow = (i: number) => hudBottom - (3 - i) * hudLine;
+  const hudTop = hudRow(0) - 14 * tu;
+  const clipTop = hasTitle ? Math.max(LAYOUT.clipTop * H, subtitleY + 26 * tu) : 0.06 * H;
+  const clipBottom = cfg.theme.hud ? Math.min(LAYOUT.clipBottom * H, hudTop - 12 * tu) : 0.95 * H;
+  const bandTop = Math.max(LAYOUT.bandTop * H, clipTop + 0.07 * H);
+  const bandBottom = Math.max(bandTop + 0.2 * H, Math.min(LAYOUT.bandBottom * H, clipBottom - 0.06 * H));
+  const aspect = W / H / (1080 / 1920);
+  return {
+    u,
+    tu,
+    titleY,
+    subtitleY,
+    clipTop,
+    clipBottom,
+    bandTop,
+    bandBottom,
+    finalTop: Math.max(LAYOUT.finalTop * H, clipTop + 10 * u),
+    finalBottom: Math.min(LAYOUT.finalBottom * H, clipBottom - 10 * u),
+    finalLeft: LAYOUT.finalLeft * W,
+    finalRight: LAYOUT.finalRight * W,
+    hudRow,
+    hudLeft: LAYOUT.hudLeft * W,
+    hudValue: LAYOUT.hudLeft * W + 101 * tu,
+    hudRight: W - (1 - LAYOUT.hudRight) * W,
+    history: cfg.video.historySeconds * Math.min(2.2, Math.max(1, Math.pow(aspect, 0.7))),
+  };
+}
+
 interface Extent {
   lo: number;
   hi: number;
@@ -457,19 +520,21 @@ function traceMelody(
  * as it ages, so held notes curl inward as logarithmic spirals and glides sweep
  * along the pitch spiral. The arrival collapses everything into one point.
  */
-function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: Style, u: number) {
+function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: Style, lay: FrameLayout) {
+  const u = lay.u;
+  const tu = lay.tu;
   const { width: W, height: H } = ctx.canvas;
   const cfg = score.config;
   const th = cfg.theme;
   const V = cfg.voices;
   const cx = W / 2;
-  const cy = ((LAYOUT.bandTop + LAYOUT.bandBottom) / 2) * H;
+  const cy = (lay.bandTop + lay.bandBottom) / 2;
   const zoomIn = cfg.video.spiral === 'zoom';
   // Zoom mode also pushes the camera in slowly over the piece (endless: a gentle, bounded drift).
   const tl = score.timeline;
   const progress = Number.isFinite(tl.arrivalEnd) ? Math.max(0, Math.min(1, t / tl.arrivalEnd)) : 1 - Math.exp(-t / 90);
   const push = zoomIn ? 1 + 0.22 * smootherstep(progress) : 1;
-  const R = Math.min(W * 0.46, ((LAYOUT.bandBottom - LAYOUT.bandTop) / 2 + 0.06) * H) * push;
+  const R = Math.min(W * 0.46, (lay.bandBottom - lay.bandTop) / 2 + 0.06 * H) * push;
   const cam = cameraExtent(score, t);
   const mid = (cam.lo + cam.hi) / 2;
   const span = Math.max(24, cam.hi - cam.lo + 4);
@@ -494,7 +559,7 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, LAYOUT.clipTop * H, W, (LAYOUT.clipBottom - LAYOUT.clipTop) * H);
+  ctx.rect(0, lay.clipTop, W, lay.clipBottom - lay.clipTop);
   ctx.clip();
 
   // Guides: the pitch spiral itself and the twelve pitch-class spokes with names.
@@ -510,13 +575,13 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
   }
   ctx.stroke();
   ctx.fillStyle = withAlpha(th.text, 0.5);
-  ctx.font = `500 ${17 * u}px ${st.font}`;
+  ctx.font = `500 ${17 * tu}px ${st.font}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const names = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
   for (let pc = 0; pc < 12; pc++) {
     const a = angleOf(pc);
-    ctx.fillText(names[pc], cx + Math.cos(a) * (R + 26 * u), cy + Math.sin(a) * (R + 26 * u));
+    ctx.fillText(names[pc], cx + Math.cos(a) * (R + 26 * tu), cy + Math.sin(a) * (R + 26 * tu));
   }
   ctx.restore();
 
@@ -619,7 +684,7 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
   // Chord name in the middle.
   if (th.labels) {
     ctx.fillStyle = st.text;
-    ctx.font = `700 ${34 * u}px ${st.font}`;
+    ctx.font = `700 ${34 * tu}px ${st.font}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(chordLabelAt(score, t), cx, cy);
@@ -631,6 +696,8 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
 export interface RenderOptions {
   /** Override the frame number shown in the HUD (defaults to round(t × fps)). */
   frame?: number;
+  /** Enlarge text (labels, HUD, titles) — used so small previews stay readable. Exports use 1. */
+  textScale?: number;
 }
 
 export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: number, opts: RenderOptions = {}): void {
@@ -638,7 +705,9 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const cfg = score.config;
   const V = cfg.voices;
   const tl = score.timeline;
-  const u = H / 1920; // type scale unit
+  const lay = layoutFor(W, H, cfg, opts.textScale ?? 1);
+  const u = lay.u; // size unit (lines, dots)
+  const tu = lay.tu; // text unit
 
   const st = styleOf(cfg);
   const th = cfg.theme;
@@ -654,21 +723,21 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   ctx.fillRect(0, 0, W, H);
 
   const freqs = soundingPitches(score, t).map(midiToHz);
-  if (cfg.video.view === 'spiral') drawSpiral(ctx, score, t, st, u);
+  if (cfg.video.view === 'spiral') drawSpiral(ctx, score, t, st, lay);
   else {
     // ---- Camera ------------------------------------------------------------
     // z: 0 while playing, eases to 1 for the final whole-piece view.
     const z = Number.isFinite(tl.zoomStart) ? smootherstep((t - tl.zoomStart) / Math.max(1e-6, tl.zoomEnd - tl.zoomStart)) : 0;
     const nowX = cfg.video.nowPosition * W;
-    const H_s = cfg.video.historySeconds;
+    const H_s = lay.history;
     const viewEnd = tl.zoomEnd; // final view spans [0, viewEnd]
     const tNow = Math.min(t, viewEnd);
 
     // Time -> x is linear, defined by two anchors that interpolate with z.
     const tA = lerp(t - H_s, 0, z);
-    const xA = lerp(0, LAYOUT.finalLeft * W, z);
+    const xA = lerp(0, lay.finalLeft, z);
     const tB = lerp(t, viewEnd, z);
-    const xB = lerp(nowX, LAYOUT.finalRight * W, z);
+    const xB = lerp(nowX, lay.finalRight, z);
     const xOf = (time: number) => xA + ((time - tA) / (tB - tA)) * (xB - xA);
     const timeAtX = (x: number) => tA + ((x - xA) / (xB - xA)) * (tB - tA);
 
@@ -678,8 +747,8 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     const fullPad = Math.max(0.5, (pHi - pLo) * 0.02);
     const loP = lerp(cam.lo, pLo - fullPad, z);
     const hiP = lerp(cam.hi, pHi + fullPad, z);
-    const yLo = lerp(LAYOUT.bandBottom, LAYOUT.finalBottom, z) * H;
-    const yHi = lerp(LAYOUT.bandTop, LAYOUT.finalTop, z) * H;
+    const yLo = lerp(lay.bandBottom, lay.finalBottom, z);
+    const yHi = lerp(lay.bandTop, lay.finalTop, z);
     const yOf = (p: number) => yLo + ((p - loP) / (hiP - loP)) * (yHi - yLo);
 
     // ---- Lines -------------------------------------------------------------
@@ -687,7 +756,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     const tTo = tNow;
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, LAYOUT.clipTop * H, W, (LAYOUT.clipBottom - LAYOUT.clipTop) * H);
+    ctx.rect(0, lay.clipTop, W, lay.clipBottom - lay.clipTop);
     ctx.clip();
 
     if (th.grid) {
@@ -695,7 +764,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       ctx.strokeStyle = withAlpha(th.text, 0.14);
       ctx.fillStyle = withAlpha(th.text, 0.45);
       ctx.lineWidth = Math.max(1, 1.2 * u);
-      ctx.font = `400 ${15 * u}px ${st.font}`;
+      ctx.font = `400 ${15 * tu}px ${st.font}`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'bottom';
       const lo = Math.min(loP, hiP);
@@ -706,7 +775,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
         ctx.moveTo(0, y);
         ctx.lineTo(W, y);
         ctx.stroke();
-        ctx.fillText(`C${n / 12 - 1}`, 12 * u, y - 3 * u);
+        ctx.fillText(`C${n / 12 - 1}`, 12 * u, y - 3 * tu);
       }
     }
 
@@ -820,7 +889,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       }
       labels.sort((a, b) => a.y - b.y);
       // Min-gap pass: push labels apart vertically; dots stay where they are.
-      const gap = 25 * u;
+      const gap = 25 * tu;
       for (let i = 1; i < labels.length; i++) labels[i].ly = Math.max(labels[i].ly, labels[i - 1].ly + gap);
       // Re-centre the pushed group around the original positions.
       const drift = labels.reduce((s, l) => s + (l.ly - l.y), 0) / Math.max(1, labels.length);
@@ -828,12 +897,12 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       for (let i = labels.length - 2; i >= 0; i--) labels[i].ly = Math.min(labels[i].ly, labels[i + 1].ly - gap);
 
       ctx.globalAlpha = labelAlpha;
-      ctx.font = `400 ${19 * u}px ${st.font}`;
+      ctx.font = `400 ${19 * tu}px ${st.font}`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       for (const l of labels) {
         ctx.fillStyle = l.color;
-        ctx.fillText(l.text, dotX + 33 * u, l.ly);
+        ctx.fillText(l.text, dotX + 14 * u + 19 * tu, l.ly);
       }
       ctx.globalAlpha = 1;
     }
@@ -851,7 +920,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const small = header ? subtitle : '';
   if (big) {
     ctx.fillStyle = st.text;
-    let titleSize = 64 * u;
+    let titleSize = 64 * tu;
     ctx.font = `700 ${titleSize}px ${st.font}`;
     const maxTitle = W * 0.86;
     const tw = ctx.measureText(big).width;
@@ -859,18 +928,18 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       titleSize *= maxTitle / tw;
       ctx.font = `700 ${titleSize}px ${st.font}`;
     }
-    ctx.fillText(big, W / 2, LAYOUT.titleY * H);
+    ctx.fillText(big, W / 2, lay.titleY);
   }
   if (small) {
     ctx.fillStyle = st.muted;
-    ctx.font = `500 ${29 * u}px ${st.font}`;
-    ctx.fillText(small, W / 2, LAYOUT.subtitleY * H);
+    ctx.font = `500 ${29 * tu}px ${st.font}`;
+    ctx.fillText(small, W / 2, lay.subtitleY);
   }
 
   // ---- HUD ---------------------------------------------------------------
   const frame = opts.frame ?? Math.round(t * cfg.video.fps);
   const { sum, spread } = frequencyStats(freqs);
-  const hudSize = 19 * u;
+  const hudSize = 19 * tu;
   if (!th.hud) {
     ctx.restore();
     return;
@@ -878,7 +947,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   ctx.font = `400 ${hudSize}px ${st.font}`;
   ctx.fillStyle = st.text;
   ctx.textBaseline = 'middle';
-  const rowY = (i: number) => (LAYOUT.hudTop + LAYOUT.hudLine * i) * H;
+  const rowY = lay.hudRow;
   const left: [string, string][] = [
     ['f(n) = 440·2^((n−69)/12)', ''],
     ['voices', String(V)],
@@ -887,8 +956,8 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   ];
   left.forEach(([k, val], i) => {
     ctx.textAlign = 'left';
-    ctx.fillText(k, LAYOUT.hudLeft * W, rowY(i));
-    if (val) ctx.fillText(val, LAYOUT.hudValue * W, rowY(i));
+    ctx.fillText(k, lay.hudLeft, rowY(i));
+    if (val) ctx.fillText(val, lay.hudValue, rowY(i));
   });
   const right: [string, string][] = [
     ['chord', chordLabelAt(score, t)],
@@ -896,12 +965,12 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     ['f↑/f↓', spread.toFixed(4)],
     ['seed', score.seedLabel],
   ];
-  const rx = LAYOUT.hudRight * W;
+  const rx = lay.hudRight;
   right.forEach(([k, val], i) => {
     ctx.textAlign = 'right';
     ctx.fillText(val, rx, rowY(i));
     const vw = ctx.measureText(val).width;
-    ctx.fillText(k, rx - vw - 12 * u, rowY(i));
+    ctx.fillText(k, rx - vw - 12 * tu, rowY(i));
   });
 
   ctx.restore();

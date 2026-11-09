@@ -155,6 +155,48 @@ function startApp() {
     rebuild(true);
   });
 
+  // Output format (the exported frame size).
+  const FORMATS: Record<string, [number, number]> = {
+    portrait: [1080, 1920],
+    landscape: [1920, 1080],
+    square: [1080, 1080],
+    portrait45: [1080, 1350],
+    landscape4k: [3840, 2160],
+  };
+  const formatSelect = $<HTMLSelectElement>('#format');
+  formatSelect.addEventListener('change', () => {
+    const f = FORMATS[formatSelect.value];
+    if (!f) return;
+    [state.video.width, state.video.height] = f;
+    // Wide frames read best with history further left.
+    writeForm();
+    rebuild(true);
+  });
+
+  // Fill window ("desktop mode"): the preview uses the whole stage. A per-device preference.
+  let fill = false;
+  try {
+    fill = localStorage.getItem('chord-drift.fill') === '1';
+  } catch {
+    /* ignore */
+  }
+  const fillBtn = $<HTMLButtonElement>('#fill');
+  const applyFill = () => {
+    fillBtn.setAttribute('aria-pressed', String(fill));
+    document.querySelector('.app')!.classList.toggle('filled', fill);
+  };
+  fillBtn.addEventListener('click', () => {
+    fill = !fill;
+    applyFill();
+    try {
+      localStorage.setItem('chord-drift.fill', fill ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+    setStatus(fill ? 'Filling the window. Exports and recordings still use the Format setting.' : 'Showing the export format.');
+  });
+  applyFill();
+
   const player = new LivePlayer();
   let state: ChordDriftConfig = resolveConfig();
   let score: Score;
@@ -205,6 +247,8 @@ function startApp() {
     for (const el of form.querySelectorAll<HTMLElement>('[data-gradient]')) el.hidden = !state.theme.gradient;
     for (const el of form.querySelectorAll<HTMLElement>('[data-spiral]')) el.hidden = state.video.view !== 'spiral';
     themeSelect.value = state.theme.preset in THEME_PRESETS ? state.theme.preset : 'custom';
+    const fmt = Object.entries(FORMATS).find(([, [w, h]]) => w === state.video.width && h === state.video.height);
+    formatSelect.value = fmt ? fmt[0] : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-free]')) el.hidden = state.rhythm.chords.trim().length > 0;
     const presetIdx = RHYTHM_PRESETS.findIndex((p) => p.chords === state.rhythm.chords.trim());
     presetSelect.value = presetIdx >= 0 ? String(presetIdx) : 'custom';
@@ -338,10 +382,10 @@ function startApp() {
     setStatus(message);
   };
   $('#pluck').addEventListener('click', () =>
-    applyPatch(PLUCK_PRESET, 'Pluck preset: each chord change strikes and decays, short glides, a tresillo rhythm. Try faster tempos or other rhythms.'),
+    applyPatch(PLUCK_PRESET, 'Pluck: each chord change strikes and decays. Pairs well with a chord rhythm (Rhythm section).'),
   );
   $('#dark').addEventListener('click', () =>
-    applyPatch(DARK_PRESET, 'Dark preset: witch house harmony in a minor key, detuned saws, crossfades, deep reverb. (The Hex theme matches it.)'),
+    applyPatch(DARK_PRESET, 'Dark: detuned saws through a low filter, deep reverb, slow breathing. Try it with the Witch house style and Hex theme.'),
   );
   $('#reset-all').addEventListener('click', () => {
     if (!confirm('Reset every setting to its default? (The seed is kept.)')) return;
@@ -349,19 +393,14 @@ function startApp() {
     loadConfig({ seed });
     setStatus('All settings back to defaults (same seed).');
   });
-  $('#ambient').addEventListener('click', () => {
-    const p = AMBIENT_PRESET;
-    state = resolveConfig({ ...state, timing: { ...state.timing, ...p.timing }, motion: { ...state.motion, ...p.motion }, audio: { ...state.audio, ...p.audio }, melody: { ...state.melody, ...p.melody }, rhythm: { ...state.rhythm, ...p.rhythm } } as DeepPartial<ChordDriftConfig>);
-    writeForm();
-    rebuild(true);
-    setStatus('Ambient preset: each chord releases as the next swells in, long holds, soft tone, deep reverb. Tweak anything from here.');
-  });
+  $('#ambient').addEventListener('click', () =>
+    applyPatch(AMBIENT_PRESET, 'Ambient: soft swells into each chord, a dark triangle tone, deep reverb. For crossfading chords, set Timing → Chord changes → Release & swell in.'),
+  );
   $('#sound-reset').addEventListener('click', () => {
-    const d = DEFAULT_CONFIG;
-    state = resolveConfig({ ...state, timing: structuredClone(d.timing), motion: structuredClone(d.motion), audio: structuredClone(d.audio), rhythm: structuredClone(d.rhythm), melody: { ...structuredClone(d.melody), enabled: state.melody.enabled } } as DeepPartial<ChordDriftConfig>);
+    state = resolveConfig({ ...state, audio: structuredClone(DEFAULT_CONFIG.audio) } as DeepPartial<ChordDriftConfig>);
     writeForm();
     rebuild(true);
-    setStatus('Timing and sound back to defaults.');
+    setStatus('Sound back to defaults (nothing else changed).');
   });
   $('#clear-prog').addEventListener('click', () => {
     state.progression = '';
@@ -686,16 +725,38 @@ function startApp() {
     lastFrameAt = now;
   }
 
+  const frameEl = $<HTMLDivElement>('.frame');
+  let textScale = 1;
   function resizeCanvas() {
     const { width: vw, height: vh } = score.config.video;
-    const rect = canvas.getBoundingClientRect();
+    const box = frameEl.getBoundingClientRect();
+    const availW = Math.max(120, box.width);
+    const availH = Math.max(160, box.height);
+    // Fit the export format into the stage, or (Fill mode) take the whole stage.
+    let cssW: number;
+    let cssH: number;
+    if (fill) {
+      cssW = availW;
+      cssH = availH;
+    } else {
+      const k = Math.min(availW / vw, availH / vh);
+      cssW = vw * k;
+      cssH = vh * k;
+    }
+    const wantW = `${Math.floor(cssW)}px`;
+    const wantH = `${Math.floor(cssH)}px`;
+    if (canvas.style.width !== wantW) canvas.style.width = wantW;
+    if (canvas.style.height !== wantH) canvas.style.height = wantH;
     const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2) * quality);
-    const h = Math.round(Math.min(rect.height || 640, (rect.width || 360) * (vh / vw)) * dpr);
-    const w = Math.round((h * vw) / vh);
+    const w = Math.round(Math.floor(cssW) * dpr);
+    const h = Math.round(Math.floor(cssH) * dpr);
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;
       canvas.height = h;
     }
+    // Keep preview text at least ~12.5 CSS px (the HUD is 19 units at full size).
+    const u = Math.sqrt((w * h) / (1080 * 1920));
+    textScale = Math.max(1, Math.min(2.6, (12.5 * dpr) / (19 * u)));
   }
 
   let lastHighlight = -2;
@@ -714,7 +775,7 @@ function startApp() {
     adaptQuality(performance.now());
     updateMeter(performance.now());
     resizeCanvas();
-    renderFrame(ctx, score, t);
+    renderFrame(ctx, score, t, { textScale });
     if (recording) renderFrame(recording.canvas.getContext('2d')!, score, t);
     // DOM updates are throttled; layout work every frame adds up on phones.
     const nowMs = performance.now();

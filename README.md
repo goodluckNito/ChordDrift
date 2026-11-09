@@ -11,7 +11,7 @@ npm install
 npm run dev          # open the player at http://localhost:5173
 ```
 
-Space plays/pauses, ← → seek, R rolls a new seed, M mutes. Under the transport there's a volume slider, remembered per device and never saved into projects or exports, and a stereo level meter: RMS bars, peak-hold ticks and a clip light.
+Space plays/pauses, ← → seek, R rolls a new seed, M mutes. The ⛶ button fills the window, which suits desktops: the preview uses the whole stage, and text stays readable at any size. Under the transport there's a volume slider, remembered per device and never saved into projects or exports, and a stereo level meter: RMS bars, peak-hold ticks and a clip light.
 
 **On your phone (same Wi-Fi):** run `npm run dev:lan` and open the `Network:` address it prints, e.g. `http://192.168.1.20:5173`. (`npm run dev --host` doesn't work because npm swallows the flag; the long form is `npm run dev -- --host`.) On Windows, allow Node.js through the firewall for **Private** networks the first time. If you dismissed that prompt, go to *Windows Security → Firewall → Allow an app* and tick Node.js under Private. Make sure your PC's network profile is Private, not Public. On iPhone, turn off the silent switch, because it mutes web audio.
 
@@ -92,9 +92,9 @@ For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half
 - *Moving voices re-swell:* only the voices that move fade and come back, like re-bowed strings.
 - *Slow breathing:* slow overlapping waves, independent of the chords.
 
-Line thickness and dot size follow the level over time, in the video as well. **Ambient preset** sets release-and-swell-in changes, long holds, a soft triangle tone, deep reverb with a longer tail, and gentle breathing. **Default sound** puts timing and sound back.
+Line thickness and dot size follow the level over time, in the video as well. **Ambient** sets soft swells into each chord, a dark triangle tone and deep reverb. Pair it with Release & swell in for crossfading chords.
 
-**Articulation.** *Sustained* (default) holds each chord. *Pluck* re-strikes every chord change: a fast attack, then a decay to a low sustain level, so quick rhythms read as distinct hits. Glides happen *into* each strike: voices slide during the previous chord's quiet tail and land together on the change, so the hit is on the new chord and on the beat. Attack, decay and sustain are adjustable, and the lines show each strike. **Pluck** sets it up with short glides and a tresillo rhythm. **Dark** sets witch house harmony in a minor key, detuned saws through a dark filter, crossfaded chords and deep reverb (pair it with the Hex theme if you like). Sound presets never change the theme.
+**Articulation.** *Sustained* (default) holds each chord. *Pluck* re-strikes every chord change: a fast attack, then a decay to a low sustain level, so quick rhythms read as distinct hits. Glides happen *into* each strike: voices slide during the previous chord's quiet tail and land together on the change, so the hit is on the new chord and on the beat. Attack, decay and sustain are adjustable, and the lines show each strike. The sound presets (**Ambient**, **Pluck**, **Dark**) change only the sound: envelope, swells, reverb and tone. They never touch rhythm, timing, harmony or theme. **Default sound** resets just the sound.
 
 **Themes.** Presets: Paper, Sepia, Midnight, Neon, Blueprint, Terminal, Chromatic, Sunset and Hex. You can also choose your own:
 - **Colours:** background (optionally a gradient), lines, melody and text.
@@ -103,6 +103,8 @@ Line thickness and dot size follow the level over time, in the video as well. **
 - **Extras:** line width, glow, an octave grid with note names, and switches for the Hz labels and HUD.
 
 Themes are saved in projects and share links and used in video exports. **Reset all settings** returns everything to defaults but keeps the seed.
+
+**Formats.** Theme → Format sets the frame: Portrait 9:16, Landscape 16:9, Square, Portrait 4:5 or Landscape 4K. The layout adapts: text scales with the frame, and wide frames show more history. Exports and recordings use this size.
 
 **Spiral view.** Theme → View → Spiral wraps pitch around a spiral: one turn per octave with C at the top, so octaves line up and the current chord shows as a shape, named in the middle. **Spiral motion** has two settings:
 - *Zoom in* (default): the past flies outward and tapers away, as if you're travelling into the spiral, while the camera slowly pushes in over the piece.

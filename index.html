@@ -14,6 +14,9 @@
         <div class="transport">
           <button id="play" class="primary" type="button" aria-label="Play">▶</button>
           <button id="restart" type="button" aria-label="Restart" title="Restart">⟲</button>
+          <button id="fill" type="button" aria-label="Fill window" aria-pressed="false" title="Fill the window (desktop mode) — exports keep the Format setting">
+            <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <input id="scrub" type="range" min="0" max="1" step="0.001" value="0" aria-label="Position" />
           <span id="clock" class="mono">0:00.00 / 0:00.00</span>
         </div>
@@ -266,10 +269,10 @@
               <input data-path="audio.sustain" type="range" min="0" max="1" step="0.05" />
             </label>
             <div class="row wide">
-              <button type="button" id="ambient" title="Chords release as the next swells in, long holds, soft tone, deep reverb">Ambient</button>
-              <button type="button" id="pluck" title="Re-struck chords with a quick decay, short glides and a rhythm">Pluck</button>
-              <button type="button" id="dark" title="Witch house style in a minor key, detuned saws through a dark filter, crossfades, deep reverb">Dark</button>
-              <button type="button" id="sound-reset" title="Put timing and sound back to the defaults">Default sound</button>
+              <button type="button" id="ambient" title="Soft swells into each chord, dark triangle tone, deep reverb">Ambient</button>
+              <button type="button" id="pluck" title="Each chord change strikes and decays">Pluck</button>
+              <button type="button" id="dark" title="Detuned saws through a low filter, deep reverb, slow breathing">Dark</button>
+              <button type="button" id="sound-reset" title="Put the sound settings back to the defaults">Default sound</button>
             </div>
             <label>Reverb <output></output>
               <input data-path="audio.reverb" type="range" min="0" max="1" step="0.05" />
@@ -295,6 +298,16 @@
             <legend>Theme</legend>
             <label>Preset
               <select id="theme-preset"></select>
+            </label>
+            <label>Format
+              <select id="format">
+                <option value="portrait">Portrait 9:16 (1080×1920)</option>
+                <option value="landscape">Landscape 16:9 (1920×1080)</option>
+                <option value="square">Square 1:1 (1080×1080)</option>
+                <option value="portrait45">Portrait 4:5 (1080×1350)</option>
+                <option value="landscape4k">Landscape 4K (3840×2160)</option>
+                <option value="custom" disabled>Custom</option>
+              </select>
             </label>
             <label>View
               <select data-path="video.view">

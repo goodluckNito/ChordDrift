@@ -58,9 +58,8 @@ describe('swells', () => {
 
   it('ambient preset is a valid config', () => {
     const c = resolveConfig(AMBIENT_PRESET);
-    expect(c.motion.transition).toBe('swell');
-    expect(c.timing.swellIn).toBeGreaterThan(1);
-    expect(c.timing.release).toBeGreaterThan(c.timing.swellIn);
+    expect(c.audio.swell).toBe('chord');
+    expect(c.audio.reverb).toBeGreaterThan(0.5);
   });
 });
 
