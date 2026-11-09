@@ -144,6 +144,14 @@
               <input data-path="rhythm.chords" class="mono" spellcheck="false" placeholder="e.g.  q. e+h   or   h ht ht ht   or   (q. q. q)*2 w" />
             </label>
             <p id="rhythm-errors" class="errors wide" role="alert"></p>
+            <label data-transition="pluck">Strike pattern
+              <select id="strike-preset"></select>
+            </label>
+            <label data-transition="pluck">Custom pattern
+              <input data-path="rhythm.pluck" class="mono" spellcheck="false" placeholder="e.g. e  ·  s  ·  re e  ·  e. e. e" />
+            </label>
+            <p class="wide muted small" data-transition="pluck">Strikes re-attack the current chord at the tempo; chords still change on their own timing (Chord rhythm, or free timing). Rests skip a strike.</p>
+            <p id="strike-errors" class="errors wide" role="alert"></p>
             <details class="help wide">
               <summary>Rhythm notation</summary>
               <dl>
@@ -207,6 +215,7 @@
               <select data-path="motion.transition">
                 <option value="glide">Glide — voices slide to the next chord</option>
                 <option value="swell">Release &amp; swell in — the next chord fades in under the last</option>
+                <option value="pluck">Pluck — strike, ring out, re-strike on a pattern</option>
               </select>
             </label>
             <label data-transition="swell">Swell in (s) <output></output>
@@ -218,7 +227,7 @@
             <label data-free>Chord hold (s) <output></output>
               <input data-path="timing.hold" type="range" min="0.8" max="6" step="0.1" />
             </label>
-            <label data-transition="glide">Glide (s) <output></output>
+            <label data-transition="glide pluck">Glide (s) <output></output>
               <input data-path="timing.glide" type="range" min="0.2" max="2" step="0.05" />
             </label>
             <label data-transition="glide">Stagger (s) <output></output>
@@ -253,12 +262,6 @@
             <label data-swell>Swell depth <output></output>
               <input data-path="audio.swellDepth" type="range" min="0.1" max="0.95" step="0.05" />
             </label>
-            <label>Articulation
-              <select data-path="audio.envelope">
-                <option value="sustain">Sustained</option>
-                <option value="pluck">Pluck — strike &amp; decay</option>
-              </select>
-            </label>
             <label data-env>Attack (s) <output></output>
               <input data-path="audio.attack" type="range" min="0.002" max="0.3" step="0.002" />
             </label>
@@ -270,7 +273,7 @@
             </label>
             <div class="row wide">
               <button type="button" id="ambient" title="Soft swells into each chord, dark triangle tone, deep reverb">Ambient</button>
-              <button type="button" id="pluck" title="Each chord change strikes and decays">Pluck</button>
+              <button type="button" id="pluck" title="Fast strike, quick decay to a low level, bright tone (pairs with Pluck chord changes)">Pluck</button>
               <button type="button" id="dark" title="Detuned saws through a low filter, deep reverb, slow breathing">Dark</button>
               <button type="button" id="sound-reset" title="Put the sound settings back to the defaults">Default sound</button>
             </div>

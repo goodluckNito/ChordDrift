@@ -11,8 +11,11 @@ import { FONT_NAMES, THEME_PRESETS, type Theme } from './themes';
 export type Mode = 'scale' | 'drift' | 'voiceled' | 'free';
 const MODE_ALIASES: Record<string, Mode> = { diatonic: 'scale', chromatic: 'voiceled' };
 export type Easing = 'smootherstep' | 'cosine';
-/** How one chord becomes the next: voices glide, or the old chord releases while the new one swells in. */
-export type Transition = 'glide' | 'swell';
+/**
+ * How one chord becomes the next: voices glide · the old chord releases while the new one swells in ·
+ * pluck: voices glide into a strike and ring out, re-struck on the strike pattern.
+ */
+export type Transition = 'glide' | 'swell' | 'pluck';
 export type Wave = 'sine' | 'triangle' | 'sawtooth' | 'square';
 export type Register = 'low' | 'mid' | 'high' | 'top';
 /** off · chord: dip at each change, swell into the chord · voice: moving voices fade and re-swell · breath: slow waves */
@@ -104,6 +107,8 @@ export interface ChordDriftConfig {
     tempo: number;
     /** Chord-change rhythm in rhythm notation (see rhythm.ts); empty = free timing in seconds. Loops. */
     chords: string;
+    /** Pluck chord changes: strike pattern that re-strikes the current chord (rests = no strike); empty = strike only on changes. */
+    pluck: string;
   };
   melody: {
     enabled: boolean;
@@ -196,7 +201,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   },
   voicing: { pedalBonus: 1.5, bassWeight: 0.3, movePenalty: 2, mudFloor: 48, minGap: 3, maxCopies: 3, candidates: 24 },
   motion: { easing: 'smootherstep', transition: 'glide' },
-  rhythm: { tempo: 76, chords: '' },
+  rhythm: { tempo: 76, chords: '', pluck: 'e' },
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
   audio: { wave: 'sine', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 7000, width: 0.6, gain: 0.9, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
   theme: { ...THEME_PRESETS.paper },
@@ -240,6 +245,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.endless = Boolean(c.endless);
   c.rhythm.tempo = Math.max(20, Math.min(320, Number(c.rhythm.tempo) || 76));
   c.rhythm.chords = String(c.rhythm.chords ?? '');
+  c.rhythm.pluck = String(c.rhythm.pluck ?? '');
   c.melody.enabled = Boolean(c.melody.enabled);
   c.melody.rhythm = String(c.melody.rhythm ?? '');
   c.melody.density = Math.max(0, Math.min(1, Number(c.melody.density)));
@@ -278,7 +284,10 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.timing.holdJitter = Math.min(0.9, c.timing.holdJitter);
   c.timing.swellIn = Math.max(0.05, c.timing.swellIn);
   c.timing.release = Math.max(0.05, c.timing.release);
-  if (c.motion.transition !== 'swell') c.motion.transition = 'glide';
+  // Older projects had pluck as an envelope setting; it is now a chord-change mode.
+  const legacyPluck = (partial as { audio?: { envelope?: string } }).audio?.envelope === 'pluck';
+  if (legacyPluck && !(partial as { motion?: { transition?: string } }).motion?.transition) c.motion.transition = 'pluck';
+  if (!['glide', 'swell', 'pluck'].includes(c.motion.transition)) c.motion.transition = 'glide';
   c.voicing.candidates = Math.max(1, Math.round(c.voicing.candidates));
   return c;
 }
@@ -292,9 +301,9 @@ export const AMBIENT_PRESET: DeepPartial<ChordDriftConfig> = {
   audio: { wave: 'triangle', reverb: 0.8, detuneCents: 7, lowpass: 3200, swell: 'chord', swellDepth: 0.6, envelope: 'sustain' },
 };
 
-/** "Pluck": each chord change strikes and decays; brighter triangle, short room. */
+/** "Pluck": a fast strike that decays to a low level, a brighter triangle and a short room (strikes happen with Pluck chord changes). */
 export const PLUCK_PRESET: DeepPartial<ChordDriftConfig> = {
-  audio: { envelope: 'pluck', attack: 0.006, decay: 0.38, sustain: 0.12, wave: 'triangle', reverb: 0.3, lowpass: 6500, swell: 'off' },
+  audio: { attack: 0.006, decay: 0.32, sustain: 0.1, wave: 'triangle', reverb: 0.3, lowpass: 6500, swell: 'off' },
 };
 
 /** "Dark": detuned saws through a low filter, deep reverb, slow breathing. Pairs well with the Witch house style and Hex theme. */

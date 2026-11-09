@@ -128,3 +128,30 @@ export const RHYTHM_PRESETS: { name: string; chords: string }[] = [
   { name: 'Long–short', chords: 'w+h h' },
   { name: 'Push', chords: 'h+q. e' },
 ];
+
+/** Strike patterns for Pluck chord changes. */
+export const STRIKE_PRESETS: { name: string; pattern: string }[] = [
+  { name: 'Only on chord changes', pattern: '' },
+  { name: 'Quarter notes', pattern: 'q' },
+  { name: 'Eighths', pattern: 'e' },
+  { name: 'Sixteenths', pattern: 's' },
+  { name: 'Dotted eighths', pattern: 'e.' },
+  { name: 'Tresillo', pattern: 'e. e. e' },
+  { name: 'Triplets', pattern: 'et' },
+  { name: 'Offbeats', pattern: 're e' },
+  { name: 'Gallop', pattern: 'e s s' },
+  { name: 'Push', pattern: 'q e e' },
+];
+
+/** Strike onsets of a looping pattern, in beats, plus the loop length. */
+export function strikeOnsets(text: string): { onsets: number[]; length: number } | null {
+  const steps = parseRhythm(text).steps;
+  if (!steps.length) return null;
+  const onsets: number[] = [];
+  let pos = 0;
+  for (const s of steps) {
+    if (!s.rest) onsets.push(pos);
+    pos += s.beats;
+  }
+  return onsets.length ? { onsets, length: pos } : null;
+}

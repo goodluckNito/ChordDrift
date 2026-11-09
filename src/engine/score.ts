@@ -2,7 +2,7 @@ import { resolveConfig, type ChordDriftConfig, type DeepPartial } from './config
 import { ProgressionWalker, type ChordSpec } from './progression';
 import { MelodyGenerator, type MelodyNote } from './melody';
 import { parseProgression, type ProgressionToken } from './progression-text';
-import { chordDurations, parseRhythm } from './rhythm';
+import { chordDurations, parseRhythm, strikeOnsets } from './rhythm';
 import { formatSeed, parseSeed, randInt, stream, uniform, type Rng } from './rng';
 import { DEGREE_OFFSETS, SCALES, mod12, parseNote, parsePc, spellNote, tonicName } from './theory';
 import { STYLES } from './styles';
@@ -64,6 +64,8 @@ export interface Score {
   timeline: Timeline;
   /** Lowest and highest MIDI pitch anywhere in the (generated part of the) piece. */
   pitchRange: [number, number];
+  /** Pluck strike pattern (onsets in beats within a loop), or null for strikes only on chord changes. */
+  strikes: { onsets: number[]; length: number } | null;
   /** Melody line (empty when the melody is off). Grows over time when endless. */
   melody: MelodyNote[];
   /** Where the beat grid starts (end of the bloom), and seconds per beat. */
@@ -184,12 +186,14 @@ class ScoreBuilder {
       labels: [{ t: 0, text: `unison ${spellNote(startNote, keyPc, cfg.scale)}` }],
       timeline: { introEnd: cfg.timing.intro, arrivalStart: inf, arrivalEnd: inf, musicEnd: inf, zoomStart: inf, zoomEnd: inf, end: inf },
       pitchRange: [startNote, startNote],
+      strikes: cfg.motion.transition === 'pluck' ? strikeOnsets(cfg.rhythm.pluck) : null,
       melody: [],
       gridStart,
       beat,
       errors: [
         ...parsed.errors,
         ...chordRhythm.errors.map((e) => `chord rhythm: ${e}`),
+        ...(cfg.motion.transition === 'pluck' ? parseRhythm(cfg.rhythm.pluck).errors.map((e) => `strike pattern: ${e}`) : []),
         ...(cfg.melody.enabled ? melodyRhythm.errors.map((e) => `melody rhythm: ${e}`) : []),
       ],
       extend: (t: number) => this.extendTo(t),
@@ -273,7 +277,7 @@ class ScoreBuilder {
     // Plucked chords glide *into* the strike: the slide happens in the quiet tail
     // of the previous chord and every voice lands together on the change, so the
     // attack hits the new chord (on the beat, with a rhythm) instead of the old one.
-    const pluck = cfg.audio.envelope === 'pluck' && !bloom && !crossfade;
+    const pluck = cfg.motion.transition === 'pluck' && !bloom;
     let span = 0;
     for (let v = 0; v < V; v++) {
       // Release-&-swell transitions don't glide: the new chord fades in on its own voices (see layerAt).

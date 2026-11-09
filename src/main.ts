@@ -12,6 +12,7 @@ import {
   DEFAULT_CONFIG,
   KEY_NAMES,
   RHYTHM_PRESETS,
+  STRIKE_PRESETS,
   SCALES,
   STYLES,
   chordIndexAt,
@@ -298,6 +299,17 @@ function startApp() {
   });
   applyFill();
 
+  const strikeSelect = $<HTMLSelectElement>('#strike-preset');
+  strikeSelect.innerHTML = STRIKE_PRESETS.map((_, i) => `<option value="${i}"></option>`).join('') + '<option value="custom">Custom</option>';
+  STRIKE_PRESETS.forEach((p, i) => (strikeSelect.options[i].textContent = p.name + (p.pattern ? `  (${p.pattern})` : '')));
+  strikeSelect.addEventListener('change', () => {
+    const preset = STRIKE_PRESETS[Number(strikeSelect.value)];
+    if (!preset) return;
+    state.rhythm.pluck = preset.pattern;
+    writeForm();
+    rebuild(true);
+  });
+
   const player = new LivePlayer();
   let state: ChordDriftConfig = resolveConfig();
   let score: Score;
@@ -374,8 +386,10 @@ function startApp() {
       : 'Pick a style for planned phrases, cadences and key changes, or leave it on None for free generation.';
     for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-swell]')) el.hidden = state.audio.swell === 'off';
-    for (const el of form.querySelectorAll<HTMLElement>('[data-transition]')) el.hidden = state.motion.transition !== el.dataset.transition;
-    for (const el of form.querySelectorAll<HTMLElement>('[data-env]')) el.hidden = state.audio.envelope !== 'pluck';
+    for (const el of form.querySelectorAll<HTMLElement>('[data-transition]')) el.hidden = !el.dataset.transition!.split(' ').includes(state.motion.transition);
+    for (const el of form.querySelectorAll<HTMLElement>('[data-env]')) el.hidden = state.motion.transition !== 'pluck';
+    const strikeIdx = STRIKE_PRESETS.findIndex((p) => p.pattern === state.rhythm.pluck.trim());
+    strikeSelect.value = strikeIdx >= 0 ? String(strikeIdx) : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-gradient]')) el.hidden = !displayTheme().gradient;
     for (const el of form.querySelectorAll<HTMLElement>('[data-spiral]')) el.hidden = state.video.view !== 'spiral';
     const dt = displayTheme();
@@ -406,12 +420,13 @@ function startApp() {
     }
     const errs = (prefix: string | null) =>
       score.errors
-        .filter((e) => (prefix ? e.startsWith(prefix) : !/^(chord|melody) rhythm: /.test(e)))
+        .filter((e) => (prefix ? e.startsWith(prefix) : !/^((chord|melody) rhythm|strike pattern): /.test(e)))
         .map((e) => (prefix ? e.slice(prefix.length) : e))
         .join(' · ');
     $('#prog-errors').textContent = errs(null);
     $('#rhythm-errors').textContent = errs('chord rhythm: ');
     $('#melody-errors').textContent = errs('melody rhythm: ');
+    $('#strike-errors').textContent = errs('strike pattern: ');
     pausedAt = Number.isFinite(score.timeline.end) ? Math.min(t, score.timeline.end) : t;
     score.extend(pausedAt);
     keySelect.options[0].textContent = state.key === 'auto' ? `Auto (${score.keyName})` : 'Auto (seeded)';
@@ -515,7 +530,7 @@ function startApp() {
     setStatus(message);
   };
   $('#pluck').addEventListener('click', () =>
-    applyPatch(PLUCK_PRESET, 'Pluck: each chord change strikes and decays. Pairs well with a chord rhythm (Rhythm section).'),
+    applyPatch(PLUCK_PRESET, 'Pluck tone: fast strike, quick decay. For strikes, set Timing → Chord changes → Pluck and pick a strike pattern.'),
   );
   $('#dark').addEventListener('click', () =>
     applyPatch(DARK_PRESET, 'Dark: detuned saws through a low filter, deep reverb, slow breathing. Try it with the Witch house style and Hex theme.'),

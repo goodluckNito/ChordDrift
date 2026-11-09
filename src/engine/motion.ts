@@ -273,14 +273,25 @@ export function soundingPitches(score: Score, t: number): number[] {
  */
 export function articulationAt(score: Score, t: number): number {
   const a = score.config.audio;
-  if (a.envelope !== 'pluck') return 1;
+  if (score.config.motion.transition !== 'pluck') return 1;
   const s = a.sustain;
   const tl = score.timeline;
   if (t >= tl.arrivalStart) return s + (1 - s) * Math.min(1, (t - tl.arrivalStart) / 0.3);
   // Before the piece starts nothing has been struck: draw/sound it plainly.
   if (t < 0) return 1;
   const k = chordIndexAt(score, t);
-  const strike = k >= 0 ? score.chords[k].t : 0;
+  let strike = k >= 0 ? score.chords[k].t : 0;
+  // The strike pattern re-strikes the current chord on the beat grid (after the bloom).
+  const pat = score.strikes;
+  if (pat && t >= score.gridStart) {
+    const pos = (t - score.gridStart) / score.beat;
+    const loop = Math.floor(pos / pat.length);
+    const within = pos - loop * pat.length;
+    let onset = -Infinity;
+    for (const o of pat.onsets) if (o <= within + 1e-9) onset = o;
+    const beats = onset === -Infinity ? (loop - 1) * pat.length + pat.onsets[pat.onsets.length - 1] : loop * pat.length + onset;
+    strike = Math.max(strike, score.gridStart + beats * score.beat);
+  }
   const x = Math.max(0, t - strike);
   const env = x < a.attack ? x / a.attack : Math.exp(-(x - a.attack) / a.decay);
   return Math.max(0, Math.min(1, s + (1 - s) * env));
@@ -293,5 +304,5 @@ export function levelAt(score: Score, v: number, t: number): number {
 
 /** True when lines should be drawn with varying thickness. */
 export function hasDynamics(score: Score): boolean {
-  return score.config.audio.swell !== 'off' || score.config.audio.envelope === 'pluck';
+  return score.config.audio.swell !== 'off' || score.config.motion.transition === 'pluck';
 }

@@ -117,7 +117,7 @@ describe('release & swell-in transitions', () => {
 describe('pluck articulation', () => {
   it('re-strikes at each chord change and decays toward the sustain level', async () => {
     const { articulationAt, PLUCK_PRESET } = await import('../src/engine');
-    const s = generateScore({ ...PLUCK_PRESET, seed: 2 });
+    const s = generateScore({ ...PLUCK_PRESET, seed: 2, motion: { transition: 'pluck' }, rhythm: { pluck: '' } });
     const sus = s.config.audio.sustain;
     for (const c of s.chords.slice(1, -1)) {
       expect(articulationAt(s, c.t)).toBeCloseTo(sus, 5); // starts from sustain: no click
@@ -125,6 +125,32 @@ describe('pluck articulation', () => {
       expect(articulationAt(s, c.t + 0.3)).toBeLessThan(0.7); // decaying
     }
     expect(articulationAt(s, s.timeline.arrivalEnd)).toBe(1); // the arrival rings
+  });
+  it('re-strikes the current chord on the strike pattern, at the tempo', async () => {
+    const { articulationAt } = await import('../src/engine');
+    const s = generateScore({ seed: 2, motion: { transition: 'pluck' }, rhythm: { tempo: 120, pluck: 'e' } });
+    // Eighths at 120 BPM: a strike every 0.25 s after the bloom, even while the chord holds.
+    const c = s.chords[2];
+    const start = s.gridStart + Math.ceil((c.t - s.gridStart) / 0.25 + 1) * 0.25;
+    for (let i = 0; i < 4; i++) {
+      const strike = start + i * 0.25;
+      if (s.chords.some((x) => Math.abs(x.t - strike) < 0.3)) continue;
+      expect(articulationAt(s, strike + s.config.audio.attack)).toBeCloseTo(1, 5);
+      expect(articulationAt(s, strike + 0.2)).toBeLessThan(articulationAt(s, strike + s.config.audio.attack));
+    }
+  });
+  it('treats rests in the pattern as no strike', async () => {
+    const { articulationAt } = await import('../src/engine');
+    const s = generateScore({ seed: 2, motion: { transition: 'pluck' }, rhythm: { tempo: 120, pluck: 're e' } });
+    const onBeat = s.gridStart + 8 * 0.5; // a downbeat = rest
+    if (!s.chords.some((x) => Math.abs(x.t - onBeat) < 0.6)) {
+      expect(articulationAt(s, onBeat + 0.01)).toBeLessThan(0.9);
+      expect(articulationAt(s, onBeat + 0.25 + s.config.audio.attack)).toBeCloseTo(1, 5);
+    }
+  });
+  it('maps old pluck-envelope links to Pluck chord changes', () => {
+    expect(resolveConfig({ audio: { envelope: 'pluck' } }).motion.transition).toBe('pluck');
+    expect(resolveConfig({ audio: { envelope: 'pluck' }, motion: { transition: 'swell' } }).motion.transition).toBe('swell');
   });
   it('is off (level 1) for sustained chords', async () => {
     const { articulationAt } = await import('../src/engine');
@@ -136,7 +162,7 @@ describe('pluck articulation', () => {
 describe('pluck glides into the strike', () => {
   it('lands every glide exactly on the chord change, without overlaps', async () => {
     const { PLUCK_PRESET } = await import('../src/engine');
-    for (const cfg of [{ audio: { envelope: 'pluck' as const } }, { ...PLUCK_PRESET }, { audio: { envelope: 'pluck' as const }, style: 'gospel' as const }]) {
+    for (const cfg of [{ audio: { envelope: 'pluck' as const } }, { ...PLUCK_PRESET, motion: { transition: 'pluck' as const } }, { motion: { transition: 'pluck' as const }, style: 'gospel' as const }]) {
       const s = generateScore({ seed: '0x23487296', key: 'F', ...cfg });
       for (const c of s.chords.slice(1)) {
         for (let v = 0; v < 13; v++) {

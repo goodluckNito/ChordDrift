@@ -94,7 +94,10 @@ For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half
 
 Line thickness and dot size follow the level over time, in the video as well. **Ambient** sets soft swells into each chord, a dark triangle tone and deep reverb. Pair it with Release & swell in for crossfading chords.
 
-**Articulation.** *Sustained* (default) holds each chord. *Pluck* re-strikes every chord change: a fast attack, then a decay to a low sustain level, so quick rhythms read as distinct hits. Glides happen *into* each strike: voices slide during the previous chord's quiet tail and land together on the change, so the hit is on the new chord and on the beat. Attack, decay and sustain are adjustable, and the lines show each strike. The sound presets (**Ambient**, **Pluck**, **Dark**) change only the sound: envelope, swells, reverb and tone. They never touch rhythm, timing, harmony or theme. **Default sound** resets just the sound.
+**Pluck.** Timing → Chord changes → **Pluck** makes chords strike and ring out:
+- **Glide into the hit:** voices slide during the previous chord's quiet tail and land together on the change, so the hit is on the new chord.
+- **Strike pattern:** Rhythm → Strike pattern re-strikes the *current* chord at the tempo, with presets (quarters, eighths, sixteenths, tresillo, triplets, offbeats, gallop) or your own pattern in the rhythm notation, where rests skip a strike. Chords still change on their own, slower timing, so you get a fast pulse over an unhurried progression.
+- **Envelope:** attack, decay and sustain (Sound) shape each strike, and the lines show every hit. The sound presets (**Ambient**, **Pluck**, **Dark**) change only the sound: envelope, swells, reverb and tone. They never touch rhythm, timing, harmony or theme. **Default sound** resets just the sound.
 
 **Themes.** Presets: Paper, Sepia, Midnight, Neon, Blueprint, Terminal, Chromatic, Sunset and Hex. You can also choose your own:
 - **Colours:** background (optionally a gradient), lines, melody and text.
