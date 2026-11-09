@@ -346,7 +346,7 @@ export function widthFactor(score: Score, v: number, t: number): number {
   // Sidechain ducking shows as the lines dipping under the drums.
   if (score.drums) base *= 0.45 + 0.55 * duckAt(score, t);
   // Chopped-out steps thin the lines.
-  if (score.chop) base *= 0.2 + 0.8 * chopAt(score, t).level;
+  if (score.chop && score.config.chop.chords) base *= 0.2 + 0.8 * chopAt(score, t).level;
   if (score.config.motion.transition !== 'pluck') return base;
   return base * (0.35 + 1.25 * articulationAt(score, t));
 }
@@ -359,7 +359,7 @@ export function levelAt(score: Score, v: number, t: number): number {
 /** True when lines should be drawn with varying thickness. */
 export function hasDynamics(score: Score): boolean {
   const d = score.config.drums;
-  return score.chop !== null || score.config.audio.swell !== 'off' || score.config.motion.transition === 'pluck' || (d.enabled && (d.duck.kick || d.duck.snare) && d.duck.depth > 0);
+  return (score.chop !== null && score.config.chop.chords) || score.config.audio.swell !== 'off' || score.config.motion.transition === 'pluck' || (d.enabled && (d.duck.kick || d.duck.snare) && d.duck.depth > 0);
 }
 
 /** When drums play: from the moment the bloom lands to the arrival (forever when endless; the whole loop when looping). */
@@ -404,8 +404,8 @@ export function partSpans(score: Score): PartSpan[] {
   return spans;
 }
 
-/** Drum hits in [a, b). Patterns restart with each song part, which also picks its drums. */
-export function drumHits(score: Score, a: number, b: number): DrumHit[] {
+/** Drum hits in [a, b) as written (no chop). Patterns restart with each song part, which also picks its drums. */
+function rawDrumHits(score: Score, a: number, b: number): DrumHit[] {
   if (!score.drums) return [];
   const out: DrumHit[] = [];
   for (const sp of partSpans(score)) {
@@ -417,6 +417,58 @@ export function drumHits(score: Score, a: number, b: number): DrumHit[] {
   return out;
 }
 
+/**
+ * Drum hits in [a, b), through the chop when it targets the drums: cut and half
+ * steps mute or soften hits, repeats replay the steps before, reverses play the
+ * stretch backwards (each hit reversed, landing on its attack), and tape stops
+ * push hits later, lower and longer as the tape slows.
+ */
+export function drumHits(score: Score, a: number, b: number): DrumHit[] {
+  if (!score.drums) return [];
+  const c = score.chop;
+  if (!c || !score.config.chop.drums) return rawDrumHits(score, a, b);
+  const spans = partSpans(score).filter((sp) => sp.full && sp.b > a && sp.a < b);
+  const inChop = (t: number) => spans.some((sp) => t >= sp.a && t < sp.b);
+  const out = rawDrumHits(score, a, b).filter((h) => !inChop(h.t));
+  const step = score.beat / 4;
+  for (const sp of spans) {
+    const lo = Math.max(a, sp.a);
+    const hi = Math.min(b, sp.b);
+    let k = Math.floor((lo - sp.a) / step + 1e-9);
+    while (sp.a + k * step < hi) {
+      const loop = Math.floor(k / c.length);
+      const st = c.steps[k - loop * c.length];
+      const r0 = loop * c.length + st.start;
+      const r1 = loop * c.length + st.end;
+      const rs = sp.a + r0 * step;
+      const re = Math.min(sp.b, sp.a + r1 * step);
+      const keep = (h: DrumHit) => h.t >= lo && h.t < hi && h.t >= rs && h.t < re;
+      if (st.kind === 'play') out.push(...rawDrumHits(score, rs, re).filter(keep));
+      else if (st.kind === 'half') out.push(...rawDrumHits(score, rs, re).filter(keep).map((h) => ({ ...h, vel: h.vel * 0.4 })));
+      else if (st.kind === 'rep') {
+        const L = (st.end - st.start) * step;
+        out.push(...rawDrumHits(score, rs - L, re - L).map((h) => ({ ...h, t: h.t + L })).filter(keep));
+      } else if (st.kind === 'rev') {
+        // Each reversed hit ends on its attack; one from the start of the stretch swells into the next downbeat.
+        out.push(...rawDrumHits(score, rs, re).map((h) => ({ ...h, t: rs + re - h.t - 0.0005, rev: true })).filter(keep));
+      } else if (st.kind === 'tape') {
+        const L = Math.max(1e-3, re - rs);
+        // Source time σ = rs + u − u²/2L reaches only rs + L/2; invert it for each hit's output time.
+        for (const h of rawDrumHits(score, rs, rs + L / 2)) {
+          const sig = h.t - rs;
+          const u = L - Math.sqrt(Math.max(0, L * L - 2 * L * sig));
+          const rate = Math.max(0.03, 1 - u / L);
+          const t = rs + u;
+          const hit = { ...h, t, rate, vel: h.vel * Math.min(1, rate * 3) };
+          if (keep(hit)) out.push(hit);
+        }
+      }
+      k = r1;
+    }
+  }
+  return out.sort((x, y) => x.t - y.t);
+}
+
 const NO_CHOP = { s: 0, level: 1, rate: 1 };
 
 /**
@@ -424,9 +476,9 @@ const NO_CHOP = { s: 0, level: 1, rate: 1 };
  * and playback rate (pitch factor). Active in full parts (the whole piece
  * outside song mode), restarting with each part.
  */
-export function chopAt(score: Score, t: number): { s: number; level: number; rate: number } {
+export function chopAt(score: Score, t: number, target: 'chords' | 'melody' = 'chords'): { s: number; level: number; rate: number } {
   const c = score.chop;
-  if (!c) return { ...NO_CHOP, s: t };
+  if (!c || !score.config.chop[target]) return { ...NO_CHOP, s: t };
   for (const sp of partSpans(score)) {
     if (t < sp.a || t >= sp.b || !sp.full) continue;
     const step = score.beat / 4;

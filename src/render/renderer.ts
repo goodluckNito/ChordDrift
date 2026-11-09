@@ -852,8 +852,9 @@ function drawWaterfall(ctx: CanvasRenderingContext2D, score: Score, t: number, s
   const POINTS = 180;
   const sigma = 0.8; // rolling humps (semitones)
 
-  // Orthographic, fixed elevation (about 32°), one full turn every 48 s.
-  const yaw = (t / 48) * Math.PI * 2 + Math.PI / 4;
+  // Orthographic, fixed elevation (about 32°). The slab rocks ±54° around the front view (newest
+  // line nearest) over a minute, rather than spinning: seen end-on the lines would hide their height.
+  const yaw = Math.PI + 0.95 * Math.sin((t / 60) * Math.PI * 2);
   const elev = 0.56;
   const cosY = Math.cos(yaw);
   const sinY = Math.sin(yaw);
@@ -898,12 +899,34 @@ function drawWaterfall(ctx: CanvasRenderingContext2D, score: Score, t: number, s
   };
 
   // Draw back to front: each line is filled down to the floor with the background, then stroked.
+  // (Larger depth is nearer the viewer: lower on screen.)
   const slices = Array.from({ length: SLICES + 1 }, (_, i) => {
     const z = (i / SLICES) * 2 - 1;
     return { i, z, depth: project(0, 0, z).depth };
-  }).sort((p, q) => q.depth - p.depth);
+  }).sort((p, q) => p.depth - q.depth);
   ctx.save();
   ctx.lineJoin = 'round';
+  // The slab's base: the two far edges go under the surface, the two near edges over it,
+  // so wave heights read against a floor line.
+  const corners = [
+    [-1, -1],
+    [1, -1],
+    [1, 1],
+    [-1, 1],
+  ].map(([x, z]) => project(x, 0, z));
+  const edges = [0, 1, 2, 3].map((e) => ({ a: corners[e], b: corners[(e + 1) % 4], depth: (corners[e].depth + corners[(e + 1) % 4].depth) / 2 }));
+  edges.sort((p, q) => p.depth - q.depth);
+  const baseLine = (list: typeof edges) => {
+    ctx.strokeStyle = withAlpha(st.ink, 0.55);
+    ctx.lineWidth = Math.max(1, 1.2 * u * st.lw);
+    ctx.beginPath();
+    for (const e of list) {
+      ctx.moveTo(e.a.x, e.a.y);
+      ctx.lineTo(e.b.x, e.b.y);
+    }
+    ctx.stroke();
+  };
+  baseLine(edges.slice(0, 2));
   const heightScale = 0.3;
   const bg = cfg.theme.background;
   const style = st.colorBy === 'none' ? st.ink : null;
@@ -940,6 +963,7 @@ function drawWaterfall(ctx: CanvasRenderingContext2D, score: Score, t: number, s
     }
     ctx.stroke(line);
   }
+  baseLine(edges.slice(2));
   ctx.restore();
 }
 

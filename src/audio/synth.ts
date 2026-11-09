@@ -195,6 +195,7 @@ export class VoiceBank {
   private oscs: OscillatorNode[] = [];
   private gains: GainNode[] = [];
   private lead: { osc: OscillatorNode; gain: GainNode } | null = null;
+  private leadChop: GainNode | null = null;
   /** Sub-bass: a sine an octave under the bass voice (one per layer). */
   private subs: { osc: OscillatorNode; gain: GainNode; layer: 0 | 1 }[] = [];
   /** The sub runs dry to the limiter, so it gets its own copies of the pluck and chop gates. */
@@ -247,7 +248,7 @@ export class VoiceBank {
       this.duck.connect(chordOut);
       chordOut = this.duck;
     }
-    if (score.chop) {
+    if (score.chop && score.config.chop.chords) {
       this.chop = ctx.createGain();
       this.chop.gain.value = chopAt(score, offset).level;
       this.chop.connect(chordOut);
@@ -302,7 +303,7 @@ export class VoiceBank {
       subBus.connect(master.direct);
       this.drySubs.push(subBus);
       let subOut: AudioNode = subBus;
-      if (score.chop) {
+      if (score.chop && score.config.chop.chords) {
         this.subChop = ctx.createGain();
         this.subChop.gain.value = chopAt(score, offset).level;
         this.subChop.connect(subOut);
@@ -333,7 +334,14 @@ export class VoiceBank {
       osc.frequency.value = midiToHz(melodyAt(score, offset)?.p ?? score.startNote);
       const g = ctx.createGain();
       g.gain.value = 0;
-      osc.connect(g).connect(this.bus);
+      let leadOut: AudioNode = this.bus;
+      if (score.chop && score.config.chop.melody) {
+        this.leadChop = ctx.createGain();
+        this.leadChop.gain.value = chopAt(score, offset, 'melody').level;
+        this.leadChop.connect(this.bus);
+        leadOut = this.leadChop;
+      }
+      osc.connect(g).connect(leadOut);
       osc.start(when);
       this.oscs.push(osc);
       this.lead = { osc, gain: g };
@@ -496,14 +504,21 @@ export class VoiceBank {
         setCurve(this.chop.gain, curve, at, dur);
         if (this.subChop) setCurve(this.subChop.gain, curve, at, dur);
       }
+      if (this.leadChop) {
+        const m = Math.round(CHUNK * ARTIC_RATE) + 1;
+        const curve = new Float32Array(m);
+        for (let i = 0; i < m; i++) curve[i] = chopAt(this.score, wrap(t0 + (i / (m - 1)) * CHUNK), 'melody').level;
+        setCurve(this.leadChop.gain, curve, at, dur);
+      }
       if (this.lead) {
         const freq = new Float32Array(n);
         const gain = new Float32Array(n);
         for (let i = 0; i < n; i++) {
           const raw = t0 + (i / (n - 1)) * CHUNK;
-          const t = wrap(raw);
+          const ch = chopAt(this.score, wrap(raw), 'melody');
+          const t = ch.s;
           const m = melodyAt(this.score, t);
-          const f = midiToHz(m?.p ?? this.score.startNote);
+          const f = midiToHz(m?.p ?? this.score.startNote) * ch.rate;
           freq[i] = f;
           let env = 1;
           if (this.offset > 0) env *= Math.min(1, (raw - this.offset) / 0.03);

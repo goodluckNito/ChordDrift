@@ -319,8 +319,14 @@
             </label>
             <label class="check wide">
               <input data-path="chop.enabled" type="checkbox" />
-              <span>Chop — cut, reverse, repeat or tape-stop the chords in time</span>
+              <span>Chop — cut, reverse, repeat or tape-stop in time</span>
             </label>
+            <div class="checks wide" data-chop>
+              <span class="muted small">Chop:</span>
+              <label class="check"><input data-path="chop.drums" type="checkbox" /><span>Drums</span></label>
+              <label class="check"><input data-path="chop.chords" type="checkbox" /><span>Chords + sub</span></label>
+              <label class="check"><input data-path="chop.melody" type="checkbox" /><span>Melody</span></label>
+            </div>
             <label class="wide" data-chop>Chop pattern
               <select id="chop-preset"></select>
             </label>
@@ -328,7 +334,7 @@
               <input data-path="chop.pattern" class="mono" spellcheck="false" aria-label="Chop pattern" />
             </label>
             <p id="chop-errors" class="errors wide" role="alert"></p>
-            <p class="wide muted small" data-chop>One character per 16th note, looping: <span class="mono">x</span> play, <span class="mono">.</span> cut, <span class="mono">-</span> half volume, <span class="mono">&lt;</span> reverse (a run plays that stretch backwards), <span class="mono">=</span> repeat (a run of n replays the n steps before it), <span class="mono">~</span> tape stop (slows to a stop). It works on the chords and sub, not the drums or melody. In song mode it plays in full parts and restarts with each part.</p>
+            <p class="wide muted small" data-chop>One character per 16th note, looping: <span class="mono">x</span> play, <span class="mono">.</span> cut, <span class="mono">-</span> half volume, <span class="mono">&lt;</span> reverse (a run plays that stretch backwards), <span class="mono">=</span> repeat (a run of n replays the n steps before it), <span class="mono">~</span> tape stop (slows to a stop). Pick what it chops: drums (hits are muted, replayed, reversed or slowed), chords + sub, and/or the melody. In song mode it plays in full parts and restarts with each part.</p>
           </fieldset>
 
           <fieldset>

@@ -79,7 +79,7 @@ export interface ChordDriftConfig {
   /** Never arrive: keep generating chords forever. */
   endless: boolean;
   /** Chop: a 16th-step time/volume controller over the chords (see chop.ts). */
-  chop: { enabled: boolean; pattern: string };
+  chop: { enabled: boolean; pattern: string; drums: boolean; chords: boolean; melody: boolean };
   /** Song mode: a piece in parts (see song.ts). Overrides endless. */
   song: { enabled: boolean; form: string };
   /** Loop the piece seamlessly: it returns to the starting unison and starts again (no zoom-out, no fade). */
@@ -217,7 +217,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   endless: false,
   loop: false,
   song: { enabled: false, form: DEFAULT_SONG_FORM },
-  chop: { enabled: false, pattern: 'xxxxxxxxxxxx<<<<' },
+  chop: { enabled: false, pattern: 'xxxxxxxxxxxx<<<<', drums: true, chords: false, melody: false },
   driftProbability: 0.25,
   chordCount: [8, 12],
   smoothness: 1,
@@ -301,6 +301,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.song.form = String(c.song.form ?? '');
   c.chop.enabled = Boolean(c.chop.enabled);
   c.chop.pattern = String(c.chop.pattern ?? '');
+  for (const k of ['drums', 'chords', 'melody'] as const) c.chop[k] = Boolean(c.chop[k]);
   c.endless = Boolean(c.endless) && !c.song.enabled;
   c.loop = Boolean(c.loop) && !c.endless;
   c.rhythm.tempo = Math.max(20, Math.min(320, Number(c.rhythm.tempo) || 76));

@@ -83,8 +83,15 @@ function shaper(ctx: BaseAudioContext, amount: number): WaveShaperNode {
   return ws;
 }
 
-function env(ctx: BaseAudioContext, when: number, peak: number, decay: number, attack = 0.001): GainNode {
+function env(ctx: BaseAudioContext, when: number, peak: number, decay: number, attack = 0.001, rev = false): GainNode {
   const g = ctx.createGain();
+  if (rev) {
+    // Played backwards: the tail swells up into the attack, which lands on `when`.
+    g.gain.setValueAtTime(Math.max(1e-4, peak * 1e-3), when - decay);
+    g.gain.exponentialRampToValueAtTime(Math.max(1e-4, peak), when);
+    g.gain.linearRampToValueAtTime(0, when + 0.004);
+    return g;
+  }
   g.gain.setValueAtTime(0, when);
   g.gain.linearRampToValueAtTime(peak, when + attack);
   g.gain.exponentialRampToValueAtTime(Math.max(1e-4, peak * 1e-3), when + attack + decay);
@@ -114,104 +121,129 @@ function metal(ctx: BaseAudioContext, when: number, dur: number, base: number): 
   return sum;
 }
 
-/** Play one hit into `out` (and `send`, for reverb) at context time `when`. */
+/**
+ * Play one hit into `out` (and `send`, for reverb) at context time `when`.
+ * hit.rate < 1 plays it slowed (lower, longer: tape stop); hit.rev plays it backwards,
+ * ending on its attack at `when`.
+ */
 export function playHit(ctx: BaseAudioContext, kitId: KitId, hit: DrumHit, level: number, out: AudioNode, send: AudioNode | null, when: number) {
   const kit = KITS[kitId];
   const vel = hit.vel * level;
   if (vel <= 0) return;
+  const r = Math.max(0.15, Math.min(1, hit.rate ?? 1));
+  const rev = Boolean(hit.rev);
+  const slow = (d: number) => d / Math.max(0.35, r);
+  // A source that sounds for `dur`: starts at `when`, or `dur` earlier when reversed.
+  const startOf = (dur: number) => (rev ? when - dur : when);
+  const E = (at: number, peak: number, decay: number, attack = 0.001) => env(ctx, rev ? when : at, peak, decay, attack, rev);
   const dest = ctx.createGain();
   dest.connect(out);
   if (send) dest.connect(send);
 
   if (hit.voice === 'kick') {
     const k = kit.kick;
+    const decay = slow(k.decay);
     const o = ctx.createOscillator();
     o.type = 'sine';
-    o.frequency.setValueAtTime(k.f0, when);
-    o.frequency.exponentialRampToValueAtTime(k.f1, when + k.pitchDecay);
-    const g = env(ctx, when, vel, k.decay, 0.002);
+    const t0 = startOf(decay);
+    if (rev) {
+      o.frequency.setValueAtTime(k.f1 * r, t0);
+      o.frequency.setValueAtTime(k.f1 * r, when - slow(k.pitchDecay));
+      o.frequency.exponentialRampToValueAtTime(k.f0 * r, when);
+    } else {
+      o.frequency.setValueAtTime(k.f0 * r, when);
+      o.frequency.exponentialRampToValueAtTime(k.f1 * r, when + slow(k.pitchDecay));
+    }
+    const g = E(when, vel, decay, 0.002);
     let node: AudioNode = o.connect(g);
     if (k.drive > 0) node = node.connect(shaper(ctx, k.drive));
     node.connect(dest);
-    o.start(when);
-    o.stop(when + k.decay + 0.05);
+    o.start(t0);
+    o.stop(rev ? when + 0.01 : when + decay + 0.05);
     if (k.click > 0) {
-      const n = noise(ctx, when, 0.02);
+      const n = noise(ctx, startOf(0.02), 0.03);
       const hp = ctx.createBiquadFilter();
       hp.type = 'highpass';
-      hp.frequency.value = 2500;
-      n.connect(hp).connect(env(ctx, when, vel * k.click, 0.012)).connect(dest);
+      hp.frequency.value = 2500 * r;
+      n.connect(hp).connect(E(when, vel * k.click, 0.012)).connect(dest);
     }
   } else if (hit.voice === 'snare') {
     const s = kit.snare;
+    const toneDecay = slow(s.toneDecay);
+    const noiseDecay = slow(s.noiseDecay);
     const body = ctx.createOscillator();
     body.type = 'triangle';
-    body.frequency.setValueAtTime(s.tone * 1.4, when);
-    body.frequency.exponentialRampToValueAtTime(s.tone, when + 0.03);
-    body.connect(env(ctx, when, vel * s.toneMix, s.toneDecay)).connect(dest);
-    body.start(when);
-    body.stop(when + s.toneDecay + 0.05);
-    const bursts = s.clap ? [0, 0.011, 0.023] : [0];
+    const b0 = startOf(toneDecay);
+    body.frequency.setValueAtTime(s.tone * (rev ? 1 : 1.4) * r, b0);
+    body.frequency.exponentialRampToValueAtTime(s.tone * (rev ? 1.4 : 1) * r, rev ? when : when + 0.03);
+    body.connect(E(when, vel * s.toneMix, toneDecay)).connect(dest);
+    body.start(b0);
+    body.stop(rev ? when + 0.01 : when + toneDecay + 0.05);
+    const bursts = s.clap && !rev ? [0, 0.011, 0.023] : [0];
     for (const off of bursts) {
       const last = off === bursts[bursts.length - 1];
-      const n = noise(ctx, when + off, s.noiseDecay + 0.1);
+      const n = noise(ctx, startOf(noiseDecay) + off, noiseDecay + 0.1);
       const bp = ctx.createBiquadFilter();
       bp.type = 'bandpass';
-      bp.frequency.value = s.noiseFreq;
+      bp.frequency.value = s.noiseFreq * r;
       bp.Q.value = s.noiseQ;
-      let node: AudioNode = n.connect(bp).connect(env(ctx, when + off, vel * (1 - s.toneMix * 0.5), last ? s.noiseDecay : 0.012));
+      let node: AudioNode = n.connect(bp).connect(E(when + off, vel * (1 - s.toneMix * 0.5), last ? noiseDecay : 0.012));
       if (s.drive > 0) node = node.connect(shaper(ctx, s.drive));
       node.connect(dest);
     }
   } else if (hit.voice === 'hat') {
     const h = kit.hat;
-    const decay = hit.open ? h.openDecay : h.decay;
-    const src: AudioNode = h.metal ? metal(ctx, when, decay + 0.05, 320) : noise(ctx, when, decay + 0.05);
+    const decay = slow(hit.open ? h.openDecay : h.decay);
+    const t0 = startOf(decay);
+    const src: AudioNode = h.metal ? metal(ctx, t0, decay + 0.05, 320 * r) : noise(ctx, t0, decay + 0.05);
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
-    hp.frequency.value = h.freq;
-    src.connect(hp).connect(env(ctx, when, vel * 0.7, decay)).connect(dest);
+    hp.frequency.value = Math.max(2000, h.freq * r);
+    src.connect(hp).connect(E(when, vel * 0.7, decay)).connect(dest);
   } else if (hit.voice === 'crash') {
     const c = kit.crash;
-    const n = noise(ctx, when, c.decay + 0.1);
+    const decay = slow(c.decay);
+    const n = noise(ctx, startOf(decay), decay + 0.1);
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
-    hp.frequency.value = c.freq;
-    n.connect(hp).connect(env(ctx, when, vel * 0.55, c.decay, 0.003)).connect(dest);
-    const m = metal(ctx, when, c.decay * 0.6, 410);
+    hp.frequency.value = c.freq * r;
+    n.connect(hp).connect(E(when, vel * 0.55, decay, 0.003)).connect(dest);
+    const m = metal(ctx, startOf(decay * 0.6), decay * 0.6, 410 * r);
     const hp2 = ctx.createBiquadFilter();
     hp2.type = 'highpass';
-    hp2.frequency.value = c.freq * 0.8;
-    m.connect(hp2).connect(env(ctx, when, vel * 0.25, c.decay * 0.5)).connect(dest);
+    hp2.frequency.value = c.freq * 0.8 * r;
+    m.connect(hp2).connect(E(when, vel * 0.25, decay * 0.5)).connect(dest);
   } else if (hit.voice === 'ride') {
     // Shimmer (metallic partials, high-passed so they read as cymbal, not buzz), a noise wash,
     // a short stick ping, and an optional bell made of inharmonic partials rather than one sine.
-    const r = kit.ride;
-    const m = metal(ctx, when, r.decay + 0.05, r.freq / 7);
+    const rd = kit.ride;
+    const decay = slow(rd.decay);
+    const m = metal(ctx, startOf(decay), decay + 0.05, (rd.freq / 7) * r);
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
-    hp.frequency.value = r.freq;
+    hp.frequency.value = rd.freq * r;
     hp.Q.value = 0.5;
-    m.connect(hp).connect(env(ctx, when, vel * 0.32, r.decay, 0.002)).connect(dest);
-    const wash = noise(ctx, when, r.decay + 0.05);
+    m.connect(hp).connect(E(when, vel * 0.32, decay, 0.002)).connect(dest);
+    const wash = noise(ctx, startOf(decay), decay + 0.05);
     const hp2 = ctx.createBiquadFilter();
     hp2.type = 'highpass';
-    hp2.frequency.value = Math.max(5500, r.freq * 1.6);
-    wash.connect(hp2).connect(env(ctx, when, vel * 0.2, r.decay * 0.8, 0.002)).connect(dest);
-    const ping = noise(ctx, when, 0.03);
+    hp2.frequency.value = Math.max(5500, rd.freq * 1.6) * r;
+    wash.connect(hp2).connect(E(when, vel * 0.2, decay * 0.8, 0.002)).connect(dest);
+    const ping = noise(ctx, startOf(0.03), 0.04);
     const bp = ctx.createBiquadFilter();
     bp.type = 'bandpass';
-    bp.frequency.value = r.freq * 1.5;
+    bp.frequency.value = rd.freq * 1.5 * r;
     bp.Q.value = 1.2;
-    ping.connect(bp).connect(env(ctx, when, vel * 0.35, 0.018)).connect(dest);
-    if (r.bell > 0) {
+    ping.connect(bp).connect(E(when, vel * 0.35, 0.018)).connect(dest);
+    if (rd.bell > 0) {
       for (const [ratio, amp] of [[1, 1], [2.76, 0.5], [5.4, 0.25]] as const) {
         const o = ctx.createOscillator();
         o.type = 'sine';
-        o.frequency.value = r.freq * 0.22 * ratio;
-        o.connect(env(ctx, when, vel * 0.06 * r.bell * amp, r.decay * 0.35)).connect(dest);
-        o.start(when);
-        o.stop(when + r.decay * 0.4);
+        o.frequency.value = rd.freq * 0.22 * ratio * r;
+        o.connect(E(when, vel * 0.06 * rd.bell * amp, decay * 0.35)).connect(dest);
+        const t0 = startOf(decay * 0.35);
+        o.start(t0);
+        o.stop(rev ? when + 0.01 : when + decay * 0.4);
       }
     }
   }

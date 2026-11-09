@@ -18,6 +18,9 @@ export interface DrumHit {
   vel: number;
   /** open hat / roll sub-hit */
   open?: boolean;
+  /** Chop: played backwards (ending on its attack at t), or slowed (rate < 1: lower and longer). */
+  rev?: boolean;
+  rate?: number;
 }
 
 export interface DrumStep {

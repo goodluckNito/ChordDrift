@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { chopAt, drumHits, generateScore, parseChop, parseSongForm, resolveConfig } from '../src/engine';
 
+
 describe('chop', () => {
   it('parses runs and rejects unknown steps', () => {
     const { pattern, errors } = parseChop('xx<<<=.~');
@@ -10,7 +11,7 @@ describe('chop', () => {
     expect(parseChop('x?x').errors.length).toBe(1);
   });
 
-  const score = (pattern: string, extra = {}) => generateScore(resolveConfig({ seed: 3, rhythm: { tempo: 120 }, chop: { enabled: true, pattern }, ...extra }));
+  const score = (pattern: string, extra = {}) => generateScore(resolveConfig({ seed: 3, rhythm: { tempo: 120 }, chop: { enabled: true, pattern, chords: true }, ...extra }));
 
   it('reverses, repeats, cuts and tape-stops in time', () => {
     const step = 0.125;
@@ -68,5 +69,44 @@ describe('song drums', () => {
     expect(voices(c.t, c.t + 3.9)).toEqual(new Set(['kick', 'snare', 'hat', 'crash']));
     // The 4-bar crash restarts on C's downbeat even though C starts mid-cycle from the piece start.
     expect(drumHits(s, c.t - 0.01, c.t + 0.01).some((h) => h.voice === 'crash')).toBe(true);
+  });
+});
+
+describe('drum chop', () => {
+  const make = (pattern: string, targets = {}) =>
+    generateScore(
+      resolveConfig({
+        seed: 2,
+        rhythm: { tempo: 120 },
+        drums: { enabled: true, kick: 'x...x...x...x...', snare: '', hat: 'xxxxxxxxxxxxxxxx', crash: '', ride: '' },
+        chop: { enabled: true, pattern, ...targets },
+      }),
+    );
+  const bar = (s: ReturnType<typeof make>) => drumHits(s, s.gridStart, s.gridStart + 2);
+
+  it('chops the drums by default, not the chords', () => {
+    const s = make('xxxxxxxx........');
+    expect(bar(s).every((h) => h.t < s.gridStart + 1 - 1e-9)).toBe(true);
+    expect(chopAt(s, s.gridStart + 1.5).level).toBe(1);
+  });
+
+  it('repeats, reverses and tape-stops hits', () => {
+    const rep = bar(make('xxxx====xxxxxxxx'));
+    const s = make('xxxx====xxxxxxxx');
+    // Steps 4-7 replay steps 0-3: a kick on step 4 (from step 0) and hats on each step.
+    const g = s.gridStart;
+    expect(rep.filter((h) => h.voice === 'kick' && Math.abs(h.t - (g + 0.5)) < 1e-6).length).toBe(1);
+    const rev = bar(make('xxxx<<<<xxxxxxxx'));
+    expect(rev.filter((h) => h.rev).length).toBe(5); // 4 hats + 1 kick in the reversed stretch
+    const tape = bar(make('xxxxxxxxxxxx~~~~'));
+    const slowed = tape.filter((h) => h.rate !== undefined);
+    expect(slowed.length).toBeGreaterThan(0);
+    expect(slowed.every((h) => h.rate! <= 1)).toBe(true);
+    expect(slowed.some((h) => h.rate! < 0.8)).toBe(true);
+  });
+
+  it('leaves the drums alone when not targeted', () => {
+    const s = make('................', { drums: false, chords: true });
+    expect(bar(s).length).toBe(20);
   });
 });
