@@ -464,22 +464,38 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
   const V = cfg.voices;
   const cx = W / 2;
   const cy = ((LAYOUT.bandTop + LAYOUT.bandBottom) / 2) * H;
-  const R = Math.min(W * 0.46, ((LAYOUT.bandBottom - LAYOUT.bandTop) / 2 + 0.06) * H);
+  const zoomIn = cfg.video.spiral === 'zoom';
+  // Zoom mode also pushes the camera in slowly over the piece (endless: a gentle, bounded drift).
+  const tl = score.timeline;
+  const progress = Number.isFinite(tl.arrivalEnd) ? Math.max(0, Math.min(1, t / tl.arrivalEnd)) : 1 - Math.exp(-t / 90);
+  const push = zoomIn ? 1 + 0.22 * smootherstep(progress) : 1;
+  const R = Math.min(W * 0.46, ((LAYOUT.bandBottom - LAYOUT.bandTop) / 2 + 0.06) * H) * push;
   const cam = cameraExtent(score, t);
   const mid = (cam.lo + cam.hi) / 2;
   const span = Math.max(24, cam.hi - cam.lo + 4);
   const lo = mid - span / 2;
   const radiusOf = (p: number) => R * (0.16 + 0.84 * Math.max(0, Math.min(1.08, (p - lo) / span)));
   const angleOf = (p: number) => (p / 12) * Math.PI * 2 - Math.PI / 2 - (0 / 12) * Math.PI * 2;
-  const history = cfg.video.historySeconds * 1.6;
+  const history = cfg.video.historySeconds * (zoomIn ? 1.1 : 1.6);
   const shrinkT = cfg.video.historySeconds * 0.9;
   const twist = Math.PI * 0.9; // radians of extra rotation per shrinkT of age
+  /**
+   * Where a note heard `age` seconds ago is drawn. Inward: it shrinks toward the
+   * centre. Zoom: it grows outward (as if we were flying into the spiral) and
+   * tapers away, so the newest notes sit on the spiral and the past rushes past.
+   */
   const at = (p: number, age: number) => {
-    const s = Math.exp(-age / shrinkT);
-    const r = radiusOf(p) * s;
-    const a = angleOf(p) + (age / shrinkT) * twist;
-    return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, s };
+    const grow = zoomIn ? Math.exp(age / (shrinkT * 0.75)) : Math.exp(-age / shrinkT);
+    const fade = zoomIn ? Math.max(0, 1 - age / history) : grow;
+    const r = radiusOf(p) * grow;
+    const a = angleOf(p) + (age / shrinkT) * twist * (zoomIn ? -0.7 : 1);
+    return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, s: zoomIn ? fade * Math.min(2.2, grow) : grow };
   };
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, LAYOUT.clipTop * H, W, (LAYOUT.clipBottom - LAYOUT.clipTop) * H);
+  ctx.clip();
 
   // Guides: the pitch spiral itself and the twelve pitch-class spokes with names.
   ctx.save();
@@ -546,8 +562,19 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
     return runs;
   };
   for (let v = 0; v < V; v++) {
-    const runs = trail((time) => ({ p: pitchFor(v, time), g: 0.25 + 0.75 * levelAt(score, v, time) }), half);
-    for (const r of runs) ribbon(painter.fill(v, pitchFor(v, t)), r);
+    if (crossfade) {
+      // Each crossfading layer separately, at its own level: chords grow in and fade out.
+      for (const L of [0, 1] as const) {
+        const runs = trail((time) => {
+          const st2 = layerAt(score, L, v, time);
+          return { p: st2.p, g: st2.g * (0.25 + 0.75 * levelAt(score, v, time)) };
+        }, half);
+        for (const r of runs) ribbon(painter.fill(v, layerAt(score, L, v, t).p), r);
+      }
+    } else {
+      const runs = trail((time) => ({ p: pitchFor(v, time), g: 0.25 + 0.75 * levelAt(score, v, time) }), half);
+      for (const r of runs) ribbon(painter.fill(v, pitchFor(v, t)), r);
+    }
   }
   painter.paint(3.2 * u * st.lw);
 
@@ -557,22 +584,30 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
     painter.paint(3.2 * u * st.lw);
   }
 
-  // The current chord as a shape: its notes joined in pitch order, and dots.
-  const now = soundingPitches(score, t);
-  const pos = now.map((p) => at(p, 0));
+  // The current chord as a shape (its notes joined in pitch order) and dots.
+  // With crossfades, both layers are drawn at their levels, so nothing pops in.
   ctx.save();
-  ctx.strokeStyle = withAlpha(th.ink, 0.28);
-  ctx.lineWidth = Math.max(1, 1.4 * u);
-  ctx.beginPath();
-  pos.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
-  ctx.stroke();
   const dotR = 7 * u * Math.max(0.7, Math.min(1.8, st.lw));
-  now.forEach((p, v) => {
-    ctx.fillStyle = painter.dotColor(v, p, pos[v].y);
+  const layers: { pitches: number[]; g: number }[] = crossfade
+    ? ([0, 1] as const).map((L) => ({ pitches: Array.from({ length: V }, (_, v) => layerAt(score, L, v, t).p), g: layerAt(score, L, 0, t).g }))
+    : [{ pitches: soundingPitches(score, t), g: 1 }];
+  for (const layer of layers) {
+    if (layer.g < 0.01) continue;
+    const pos = layer.pitches.map((p) => at(p, 0));
+    ctx.globalAlpha = layer.g;
+    ctx.strokeStyle = withAlpha(th.ink, 0.28);
+    ctx.lineWidth = Math.max(1, 1.4 * u);
     ctx.beginPath();
-    ctx.arc(pos[v].x, pos[v].y, dotR * (0.55 + 0.45 * levelAt(score, v, t)), 0, Math.PI * 2);
-    ctx.fill();
-  });
+    pos.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    layer.pitches.forEach((p, v) => {
+      ctx.fillStyle = painter.dotColor(v, p, pos[v].y);
+      ctx.beginPath();
+      ctx.arc(pos[v].x, pos[v].y, dotR * layer.g * (0.55 + 0.45 * levelAt(score, v, t)), 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
   const lead = score.melody.length ? melodyAt(score, t) : null;
   if (lead && lead.g > 0.05) {
     const q = at(lead.p, 0);
@@ -590,6 +625,7 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
     ctx.fillText(chordLabelAt(score, t), cx, cy);
   }
   ctx.restore();
+  ctx.restore(); // plot clip
 }
 
 export interface RenderOptions {

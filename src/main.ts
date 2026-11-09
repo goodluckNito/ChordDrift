@@ -202,6 +202,7 @@ function startApp() {
     for (const el of form.querySelectorAll<HTMLElement>('[data-transition]')) el.hidden = state.motion.transition !== el.dataset.transition;
     for (const el of form.querySelectorAll<HTMLElement>('[data-env]')) el.hidden = state.audio.envelope !== 'pluck';
     for (const el of form.querySelectorAll<HTMLElement>('[data-gradient]')) el.hidden = !state.theme.gradient;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-spiral]')) el.hidden = state.video.view !== 'spiral';
     themeSelect.value = state.theme.preset in THEME_PRESETS ? state.theme.preset : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-free]')) el.hidden = state.rhythm.chords.trim().length > 0;
     const presetIdx = RHYTHM_PRESETS.findIndex((p) => p.chords === state.rhythm.chords.trim());

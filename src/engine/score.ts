@@ -126,6 +126,8 @@ class ScoreBuilder {
   /** Chord durations in seconds from the chord rhythm, or null for free timing. */
   private durations: number[] | null;
   private melody: MelodyGenerator | null = null;
+  /** When the previous chord's glides had all landed. */
+  private lastSettled = 0;
 
   constructor(input: DeepPartial<ChordDriftConfig> | ChordDriftConfig) {
     const cfg = (this.cfg = resolveConfig(input as DeepPartial<ChordDriftConfig>));
@@ -268,6 +270,10 @@ class ScoreBuilder {
     // With a chord rhythm, each chord owns a fixed slot; glides must finish inside it.
     const slot = this.durations ? this.durations[k % this.durations.length] : Infinity;
     const crossfade = cfg.motion.transition === 'swell' && !bloom;
+    // Plucked chords glide *into* the strike: the slide happens in the quiet tail
+    // of the previous chord and every voice lands together on the change, so the
+    // attack hits the new chord (on the beat, with a rhythm) instead of the old one.
+    const pluck = cfg.audio.envelope === 'pluck' && !bloom && !crossfade;
     let span = 0;
     for (let v = 0; v < V; v++) {
       // Release-&-swell transitions don't glide: the new chord fades in on its own voices (see layerAt).
@@ -278,6 +284,12 @@ class ScoreBuilder {
       const p1 = notes[v];
       if (p0 === p1) continue;
       const leap = Math.abs(p1 - p0);
+      if (pluck) {
+        const room = Math.max(0.02, (t - this.lastSettled) * 0.9);
+        const d = Math.max(0.02, Math.min(T.glide * (1 + leap / 12), room));
+        score.moves[v].push({ t0: t - d, d, p0, p1 });
+        continue;
+      }
       // The bloom fans out with a slight stagger but every voice lands together.
       let d = bloom ? T.bloom - delay : T.glide * (1 + leap / 12);
       if (!bloom) d = Math.max(0.02, Math.min(d, slot * 0.85 - delay));
@@ -298,9 +310,13 @@ class ScoreBuilder {
     if (this.durations) {
       // The bloom is a pickup: the beat grid starts when it lands.
       this.nextChange = (bloom ? score.gridStart : t) + slot;
+    } else if (pluck) {
+      // The glide happens before the next strike, so the whole hold is ring time.
+      this.nextChange = t + Math.max(0.35 + T.glide * 0.5, T.hold * jitter);
     } else {
       this.nextChange = t + span + Math.max(0.35, T.hold * jitter - (crossfade ? T.swellIn : T.glide));
     }
+    this.lastSettled = t + span;
     this.current = notes;
   }
 

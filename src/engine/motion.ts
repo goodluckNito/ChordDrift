@@ -203,7 +203,7 @@ export function swellAt(score: Score, v: number, t: number): number {
   const ph = ((s >>> 16) % 628) / 100 + (v + 1) * 0.35;
   const e = 0.5 + 0.3 * Math.sin((2 * Math.PI * t) / p1 + ph) + 0.2 * Math.sin((2 * Math.PI * t) / p2 + ph * 1.7);
   // Ease in from full level during the intro so the opening unison isn't swallowed.
-  const ramp = Math.min(1, t / Math.max(0.1, tl.introEnd + score.config.timing.bloom));
+  const ramp = Math.max(0, Math.min(1, t / Math.max(0.1, tl.introEnd + score.config.timing.bloom)));
   return 1 - depth * ramp * (1 - e);
 }
 
@@ -277,16 +277,18 @@ export function articulationAt(score: Score, t: number): number {
   const s = a.sustain;
   const tl = score.timeline;
   if (t >= tl.arrivalStart) return s + (1 - s) * Math.min(1, (t - tl.arrivalStart) / 0.3);
+  // Before the piece starts nothing has been struck: draw/sound it plainly.
+  if (t < 0) return 1;
   const k = chordIndexAt(score, t);
   const strike = k >= 0 ? score.chords[k].t : 0;
-  const x = t - strike;
+  const x = Math.max(0, t - strike);
   const env = x < a.attack ? x / a.attack : Math.exp(-(x - a.attack) / a.decay);
-  return s + (1 - s) * env;
+  return Math.max(0, Math.min(1, s + (1 - s) * env));
 }
 
 /** Combined dynamic level of a voice: swells × articulation (1 when both are off). */
 export function levelAt(score: Score, v: number, t: number): number {
-  return swellAt(score, v, t) * articulationAt(score, t);
+  return Math.max(0, Math.min(1, swellAt(score, v, t) * articulationAt(score, t)));
 }
 
 /** True when lines should be drawn with varying thickness. */

@@ -93,7 +93,7 @@ For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half
 
 Line thickness and dot size follow the level over time, in the video as well. **Ambient preset** sets release-and-swell-in changes, long holds, a soft triangle tone, deep reverb with a longer tail, and gentle breathing. **Default sound** puts timing and sound back.
 
-**Articulation.** *Sustained* (default) holds each chord. *Pluck* re-strikes every chord change: a fast attack, then a decay to a low sustain level, so quick rhythms read as distinct hits. Attack, decay and sustain are adjustable, and the lines show each strike. **Pluck** sets it up with short glides and a tresillo rhythm.
+**Articulation.** *Sustained* (default) holds each chord. *Pluck* re-strikes every chord change: a fast attack, then a decay to a low sustain level, so quick rhythms read as distinct hits. Glides happen *into* each strike: voices slide during the previous chord's quiet tail and land together on the change, so the hit is on the new chord and on the beat. Attack, decay and sustain are adjustable, and the lines show each strike. **Pluck** sets it up with short glides and a tresillo rhythm.
 
 **Themes.** Presets: Paper, Sepia, Midnight, Neon, Blueprint, Terminal, Chromatic and Sunset. You can also choose your own:
 - **Colours:** background (optionally a gradient), lines, melody and text.
@@ -103,7 +103,11 @@ Line thickness and dot size follow the level over time, in the video as well. **
 
 Themes are saved in projects and share links and used in video exports. **Reset all settings** returns everything to defaults but keeps the seed.
 
-**Spiral view.** Theme → View → Spiral wraps pitch around a spiral: one turn per octave with C at the top, so octaves line up and the current chord shows as a shape, named in the middle. Each voice's trail shrinks and rotates as it ages, so held notes curl inward and glides sweep along the spiral. The arrival collapses everything into one point.
+**Spiral view.** Theme → View → Spiral wraps pitch around a spiral: one turn per octave with C at the top, so octaves line up and the current chord shows as a shape, named in the middle. **Spiral motion** has two settings:
+- *Zoom in* (default): the past flies outward and tapers away, as if you're travelling into the spiral, while the camera slowly pushes in over the piece.
+- *Curl inward*: the past shrinks and rotates toward the centre.
+
+With release-and-swell changes, chords grow in and fade out on the spiral too. The arrival collapses everything into one point.
 
 **Titles.** The header, episode number and name are empty by default, and only what you fill in is drawn. If you set only a name, it takes the header's place.
 

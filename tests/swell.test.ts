@@ -133,3 +133,29 @@ describe('pluck articulation', () => {
     expect(articulationAt(s, s.chords[2].t + 0.3)).toBe(1);
   });
 });
+
+describe('pluck glides into the strike', () => {
+  it('lands every glide exactly on the chord change, without overlaps', async () => {
+    const { PLUCK_PRESET } = await import('../src/engine');
+    for (const cfg of [{ audio: { envelope: 'pluck' as const } }, { ...PLUCK_PRESET }, { audio: { envelope: 'pluck' as const }, style: 'gospel' as const }]) {
+      const s = generateScore({ seed: '0x23487296', key: 'F', ...cfg });
+      for (const c of s.chords.slice(1)) {
+        for (let v = 0; v < 13; v++) {
+          const m = s.moves[v].find((x) => Math.abs(x.t0 + x.d - c.t) < 1e-9);
+          const prev = s.chords[c.index - 1].notes[v];
+          if (prev !== c.notes[v]) expect(m, `voice ${v} at chord ${c.index}`).toBeTruthy();
+        }
+      }
+      for (const m of s.moves) for (let i = 1; i < m.length; i++) expect(m[i].t0).toBeGreaterThanOrEqual(m[i - 1].t0 + m[i - 1].d - 1e-9);
+    }
+  });
+  it('keeps levels within 0..1 everywhere, including before the start', async () => {
+    const { levelAt } = await import('../src/engine');
+    const s = generateScore({ seed: 1, audio: { envelope: 'pluck', swell: 'breath' } });
+    for (let t = -6; t < s.timeline.end; t += 0.05) {
+      const g = levelAt(s, 0, t);
+      expect(g).toBeGreaterThanOrEqual(0);
+      expect(g).toBeLessThanOrEqual(1);
+    }
+  });
+});
