@@ -80,17 +80,78 @@ export function configDiff(config: ChordDriftConfig, base: unknown = DEFAULT_CON
 /** Older links (c=…) are plain base64url JSON. */
 const fromBase64Url = (s: string) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0)));
 
-/** Share code for the URL hash: the settings that differ from the defaults, compressed (z=…). */
+/**
+ * Short names for config keys in links (fixed, so old links keep working; unknown keys pass
+ * through unchanged). Numbers are rounded to 4 decimals.
+ */
+const SHORT: Record<string, string> = {
+  seed: 's', key: 'k', scale: 'sc', mode: 'm', complexity: 'cx', style: 'st', progression: 'p', endless: 'e', loop: 'l',
+  driftProbability: 'dp', chordCount: 'cc', smoothness: 'sm', resolution: 'rs', startNote: 'sn', endNote: 'en', voices: 'v',
+  timing: 'ti', voicing: 'vo', motion: 'mo', rhythm: 'r', melody: 'me', audio: 'a', theme: 'th', drums: 'd', video: 'vi', song: 'so', chop: 'ch',
+  enabled: 'on', pattern: 'pa', form: 'f', tempo: 't', chords: 'c', pluck: 'pl', density: 'de', level: 'lv', register: 'rg', glide: 'gl',
+  wave: 'w', detuneCents: 'dt', reverb: 'rv', lowpass: 'lp', width: 'wd', height: 'ht', swell: 'sw', swellDepth: 'sd', attack: 'at', decay: 'dc',
+  sustain: 'su', warmth: 'wm', bass: 'bs', sub: 'sb', tilt: 'tl', gain: 'gn', envelope: 'ev', transition: 'tr', easing: 'ez', inversion: 'iv',
+  background: 'bg', background2: 'bg2', gradient: 'gr', ink: 'i', accent: 'ac', text: 'tx', font: 'fo', lineWidth: 'lw', colorBy: 'cb',
+  palette: 'pt', colorSeed: 'cs', preset: 'pr', glow: 'gw', grid: 'gd', ripples: 'rp', hud: 'hu', labels: 'lb', kit: 'kt', kick: 'kk',
+  snare: 'sr', hat: 'h', crash: 'cr', ride: 'rd', levels: 'lvs', double: 'db', duck: 'dk', depth: 'dh', release: 'rl', view: 'vw', spiral: 'sp',
+  zoom: 'z', centerLabel: 'cl', fps: 'fp', hold: 'ho', bloom: 'bl', intro: 'in', arrival: 'ar', outro: 'ou', stagger: 'sg',
+  swellIn: 'si', holdJitter: 'hj', finalHold: 'fh', zoomTime: 'zt', historySeconds: 'hs', nowPosition: 'np',
+};
+const LONG = Object.fromEntries(Object.entries(SHORT).map(([k, v]) => [v, k]));
+
+function pack(x: unknown): unknown {
+  if (typeof x === 'number') return Math.round(x * 1e4) / 1e4;
+  if (Array.isArray(x)) return x.map(pack);
+  if (x && typeof x === 'object') return Object.fromEntries(Object.entries(x).map(([k, v]) => [SHORT[k] ?? k, pack(v)]));
+  return x;
+}
+function unpack(x: unknown): unknown {
+  if (Array.isArray(x)) return x.map(unpack);
+  if (x && typeof x === 'object') return Object.fromEntries(Object.entries(x).map(([k, v]) => [LONG[k] ?? k, unpack(v)]));
+  return x;
+}
+
+function merge(base: unknown, over: unknown): unknown {
+  if (!over || typeof over !== 'object' || Array.isArray(over)) return over === undefined ? base : over;
+  const out: Record<string, unknown> = { ...((base && typeof base === 'object' ? base : {}) as Record<string, unknown>) };
+  for (const [k, v] of Object.entries(over)) out[k] = merge(out[k], v);
+  return out;
+}
+
+/** The words of a seed made from words (not a hex or decimal number), or null. */
+function seedWords(seed: string | number): string | null {
+  if (typeof seed !== 'string') return null;
+  const s = seed.trim();
+  return s && !/^0x[0-9a-f]{1,8}$/i.test(s) && !/^\d{1,10}$/.test(s) ? s : null;
+}
+
+/** The song those words make, in the given output format (what "Make" produces). */
+function wordsBase(words: string, video: { width: number; height: number; fps: number }): ChordDriftConfig {
+  const patch = songFromText(words);
+  return resolveConfig({ ...patch, video: { ...(patch.video ?? {}), width: video.width, height: video.height, fps: video.fps } } as DeepPartial<ChordDriftConfig>);
+}
+
+/**
+ * Share code for the URL hash, whichever is shorter: the settings that differ from the defaults
+ * (y=…, short keys, compressed), or — when the seed is words — the words plus whatever differs
+ * from the song those words make (t=words&d=…, or just t=words).
+ */
 export function encodeShare(config: ChordDriftConfig): string {
   const diff = configDiff(config);
-  return Object.keys(diff).length ? 'z=' + compressToEncodedURIComponent(JSON.stringify(diff)) : '';
+  const plain = Object.keys(diff).length ? 'y=' + compressToEncodedURIComponent(JSON.stringify(pack(diff))) : '';
+  const words = seedWords(config.seed);
+  if (!words) return plain;
+  const d = configDiff(config, wordsBase(words, config.video));
+  const viaWords = encodeTextShare(words) + (Object.keys(d).length ? '&d=' + compressToEncodedURIComponent(JSON.stringify(pack(d))) : '');
+  return plain && plain.length <= viaWords.length ? plain : viaWords;
 }
 
 /** The words of a t=… share code, or null. */
 export function shareText(hash: string): string | null {
   if (!hash.startsWith('t=')) return null;
   try {
-    return decodeURIComponent(hash.slice(2).replace(/\+/g, ' ')).trim() || null;
+    const end = hash.indexOf('&');
+    return decodeURIComponent(hash.slice(2, end >= 0 ? end : undefined).replace(/\+/g, ' ')).trim() || null;
   } catch {
     return null;
   }
@@ -111,10 +172,29 @@ export function decodeShare(hash: string): DeepPartial<ChordDriftConfig> | null 
       return null;
     }
   }
-  // A song from words (t=…).
+  // Short keys, compressed (y=…).
+  if (hash.startsWith('y=')) {
+    try {
+      const json = decompressFromEncodedURIComponent(hash.slice(2));
+      return json ? (unpack(JSON.parse(json)) as DeepPartial<ChordDriftConfig>) : null;
+    } catch {
+      return null;
+    }
+  }
+  // A song from words (t=…), plus any changes to it (&d=…).
   if (hash.startsWith('t=')) {
     const text = shareText(hash);
-    return text ? songFromText(text) : null;
+    if (!text) return null;
+    const amp = hash.indexOf('&d=');
+    let changes: unknown = {};
+    if (amp >= 0) {
+      try {
+        changes = unpack(JSON.parse(decompressFromEncodedURIComponent(hash.slice(amp + 3)) ?? '{}'));
+      } catch {
+        changes = {};
+      }
+    }
+    return merge(songFromText(text), changes) as DeepPartial<ChordDriftConfig>;
   }
   const params = new URLSearchParams(hash);
   const c = params.get('c');

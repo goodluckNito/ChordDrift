@@ -654,13 +654,52 @@ export class LivePlayer {
   playing = false;
 
   /** Output stage that outlives individual master chains: volume → speakers, with level taps. */
+  /** Small-speaker voicing (phones): cut the low end they can't play, tame the top, keep headroom. */
+  private smallSpeaker = false;
+  private speakerNodes: { hp: BiquadFilterNode; low: BiquadFilterNode; high: BiquadFilterNode; comp: DynamicsCompressorNode; trim: GainNode } | null = null;
+
+  setSmallSpeaker(on: boolean) {
+    this.smallSpeaker = on;
+    this.applySpeaker();
+  }
+
+  private applySpeaker() {
+    const n = this.speakerNodes;
+    if (!n) return;
+    const on = this.smallSpeaker;
+    // A phone speaker can't reproduce much below ~150 Hz; asking it to just makes it crackle.
+    n.hp.frequency.value = on ? 140 : 10;
+    n.low.gain.value = on ? -3 : 0; // the boxy 200–300 Hz region
+    n.high.gain.value = on ? -2.5 : 0; // harshness up top
+    n.comp.threshold.value = on ? -14 : 0;
+    n.comp.ratio.value = on ? 3 : 1;
+    n.trim.gain.value = on ? 0.85 : 1;
+  }
+
   private outputStage(ctx: AudioContext): GainNode {
     if (!this.volumeNode) {
       this.volumeNode = ctx.createGain();
       this.volumeNode.gain.value = this.volume;
-      this.volumeNode.connect(ctx.destination);
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.Q.value = 0.7;
+      const low = ctx.createBiquadFilter();
+      low.type = 'peaking';
+      low.frequency.value = 250;
+      low.Q.value = 1;
+      const high = ctx.createBiquadFilter();
+      high.type = 'highshelf';
+      high.frequency.value = 7000;
+      const comp = ctx.createDynamicsCompressor();
+      comp.knee.value = 8;
+      comp.attack.value = 0.005;
+      comp.release.value = 0.2;
+      const trim = ctx.createGain();
+      this.volumeNode.connect(hp).connect(low).connect(high).connect(comp).connect(trim).connect(ctx.destination);
+      this.speakerNodes = { hp, low, high, comp, trim };
+      this.applySpeaker();
       const split = ctx.createChannelSplitter(2);
-      this.volumeNode.connect(split);
+      trim.connect(split);
       this.analysers = [0, 1].map((ch) => {
         const an = ctx.createAnalyser();
         an.fftSize = 1024;

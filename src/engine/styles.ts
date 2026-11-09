@@ -340,6 +340,8 @@ export class StylePlanner {
     private homeTonic: number,
     private homeScale: string,
     private rng: Rng,
+    /** Resolution pull (0..1): leans generated phrases toward falling fifths and resolving dominants. */
+    private pull = 0,
   ) {
     this.tonic = homeTonic;
     this.scale = homeScale;
@@ -374,6 +376,17 @@ export class StylePlanner {
     return text;
   }
 
+  /** A dominant-function numeral: V or ♭VII-ish major with a 7th, a sus dominant, or a plain V. */
+  private isDominant(numeral: string): boolean {
+    const t = tokens(numeral)[0];
+    if (!t || t.kind !== 'chord') return false;
+    if (t.intervals) {
+      const pcs = new Set(t.intervals.map(mod12));
+      return pcs.has(10) && (pcs.has(4) || pcs.has(5)) && !pcs.has(3);
+    }
+    return t.root.kind === 'roman' && t.root.semitones === 7 && !t.root.minor;
+  }
+
   private rootOf(numeral: string): number {
     const t = tokens(numeral)[0];
     if (!t || t.kind !== 'chord') return 0;
@@ -388,8 +401,14 @@ export class StylePlanner {
     const weights = names.map((n, i) => {
       let w = vocab[n] * (i === 0 ? tonicBoost : 1);
       if (prev !== null) {
-        w *= g.motion[mod12(this.rootOf(n) - this.rootOf(prev))] ?? 0.3;
+        const step = mod12(this.rootOf(n) - this.rootOf(prev));
+        w *= g.motion[step] ?? 0.3;
         if (n === prev) w *= 0.03;
+        if (this.pull > 0) {
+          // Resolution pull: dominants want to fall a fifth (most of all home); any falling fifth pulls a little.
+          const bonus = step === 5 ? (this.isDominant(prev) ? (this.rootOf(n) === 0 ? 4 : 3) : 1.5) : this.isDominant(prev) ? -0.5 : 0;
+          w *= Math.exp(this.pull * bonus);
+        }
       }
       if (used.includes(n)) w *= 0.45;
       return w;

@@ -65,7 +65,7 @@ export class ProgressionWalker {
     if (cfg.style !== 'none' && !tokens.length && styleRng) {
       const def = STYLES[cfg.style];
       this.complexity = Math.max(def.complexity[0], Math.min(def.complexity[1], cfg.complexity));
-      this.planner = new StylePlanner(def, tonic, this.scale, styleRng);
+      this.planner = new StylePlanner(def, tonic, this.scale, styleRng, cfg.resolution);
     }
   }
 

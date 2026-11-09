@@ -58,10 +58,38 @@ describe('short links and songs from words', () => {
     const { songFromText } = await import('../src/engine');
     expect(resolveConfig(decodeShare(code)!)).toEqual(resolveConfig(songFromText('rain on a tin roof')));
     const cfg = resolveConfig(songFromText('velvet harbor'));
-    const z = encodeShare(cfg);
-    expect(z.startsWith('z=')).toBe(true);
-    expect(resolveConfig(decodeShare(z)!)).toEqual(cfg);
-    const plain = btoa(JSON.stringify(configDiff(cfg))).length;
-    expect(z.length).toBeLessThan(plain * 0.75);
+    expect(encodeShare(cfg)).toBe('t=velvet+harbor');
+    const other = resolveConfig({ ...cfg, seed: 1234 });
+    const y = encodeShare(other);
+    expect(y.startsWith('y=')).toBe(true);
+    // Numbers are rounded to 4 decimals in links, so compare re-encoded links.
+    expect(encodeShare(resolveConfig(decodeShare(y)!))).toBe(y);
+    expect(resolveConfig(decodeShare(y)!).scale).toBe(other.scale);
+    const plain = btoa(JSON.stringify(configDiff(other))).length;
+    expect(y.length).toBeLessThan(plain * 0.6);
+  });
+});
+
+describe('compact links', () => {
+  it('encodes an edited word song as the words plus the change, and round-trips', async () => {
+    const { songFromText } = await import('../src/engine');
+    const base = resolveConfig(songFromText('midnight motel'));
+    expect(encodeShare(base)).toBe('t=midnight+motel');
+    const edited = resolveConfig({ ...base, voices: 5, audio: { ...base.audio, reverb: 0.2 } });
+    const code = encodeShare(edited);
+    expect(code.startsWith('t=midnight+motel&d=')).toBe(true);
+    expect(code.length).toBeLessThan(70);
+    expect(resolveConfig(decodeShare(code)!)).toEqual(edited);
+  });
+
+  it('uses short keys for other links and still opens old z= links', async () => {
+    const cfg = resolveConfig({ seed: 99, scale: 'dorian', resolution: 0.7, theme: { preset: 'hex' }, drums: { enabled: true } });
+    const code = encodeShare(cfg);
+    expect(code.startsWith('y=')).toBe(true);
+    expect(resolveConfig(decodeShare(code)!).scale).toBe('dorian');
+    const { compressToEncodedURIComponent } = await import('lz-string');
+    const old = 'z=' + compressToEncodedURIComponent(JSON.stringify(configDiff(cfg)));
+    expect(resolveConfig(decodeShare(old)!)).toEqual(resolveConfig(decodeShare(code)!));
+    expect(code.length).toBeLessThan(old.length);
   });
 });

@@ -45,7 +45,7 @@ import {
 } from './engine';
 import { ensureFont } from './render/fonts';
 import { frameCount, renderFrame, themeBackground } from './render/renderer';
-import { decodeShare, encodeShare, encodeTextShare, exportProject, listProjects, parseProject, saveProject, deleteProject, shareText } from './project';
+import { decodeShare, encodeShare, exportProject, listProjects, parseProject, saveProject, deleteProject, shareText } from './project';
 
 const fontsReady = (async () => {
   try {
@@ -386,6 +386,28 @@ function startApp() {
   });
 
   const player = new LivePlayer();
+  // Speaker voicing is a per-device preference: phones get a small-speaker voicing by default.
+  const speakerSelect = $<HTMLSelectElement>('#speaker');
+  const isPhone = () => matchMedia('(pointer: coarse)').matches && Math.max(screen.width, screen.height) < 1200;
+  const applySpeaker = () => {
+    const mode = speakerSelect.value;
+    player.setSmallSpeaker(mode === 'small' || (mode === 'auto' && isPhone()));
+  };
+  try {
+    speakerSelect.value = localStorage.getItem('chord-drift.speaker') ?? 'auto';
+  } catch {
+    /* storage unavailable */
+  }
+  if (!speakerSelect.value) speakerSelect.value = 'auto';
+  speakerSelect.addEventListener('change', () => {
+    applySpeaker();
+    try {
+      localStorage.setItem('chord-drift.speaker', speakerSelect.value);
+    } catch {
+      /* ignore */
+    }
+  });
+  applySpeaker();
   let state: ChordDriftConfig = resolveConfig();
   let score: Score;
   let pausedAt = 0;
@@ -448,7 +470,10 @@ function startApp() {
       const input = out.parentElement!.querySelector('input')!;
       out.textContent = input.value;
     }
-    $('#complexity-label').textContent = `${state.complexity} · ${COMPLEXITY_NAMES[state.complexity]}`;
+    // Under a style, complexity is kept within the style's range: say so when it overrides the slider.
+    const range = state.style !== 'none' && !state.progression.trim() ? STYLES[state.style].complexity : null;
+    const played = range ? Math.max(range[0], Math.min(range[1], state.complexity)) : state.complexity;
+    $('#complexity-label').textContent = played === state.complexity ? `${state.complexity} · ${COMPLEXITY_NAMES[state.complexity]}` : `${state.complexity} → ${played} · ${COMPLEXITY_NAMES[played]} (style)`;
     const written = state.progression.trim().length > 0;
     const styled = state.style !== 'none' && !written;
     // Generator settings: shown for their mode (data-show), hidden while a style plans the chords (data-nostyle).
@@ -686,12 +711,9 @@ function startApp() {
   });
 
   // ---- URL / projects -----------------------------------------------------------
-  // A song made from words keeps the short link (#t=words) until anything is changed.
-  let textSong: { text: string; code: string } | null = null;
+  // Songs made from words link as the words plus any changes (#t=words&d=…); see encodeShare.
   function saveHash() {
-    let code = encodeShare(state);
-    if (textSong && code === textSong.code) code = encodeTextShare(textSong.text);
-    else textSong = null;
+    const code = encodeShare(state);
     history.replaceState(null, '', code ? `#${code}` : location.pathname + location.search);
   }
 
@@ -703,7 +725,6 @@ function startApp() {
     const keep = { width: state.video.width, height: state.video.height, fps: state.video.fps };
     state = resolveConfig({ ...patch, video: { ...(patch.video ?? {}), ...keep } } as DeepPartial<ChordDriftConfig>);
     applyAutoFormat();
-    textSong = { text: t, code: encodeShare(state) };
     writeForm();
     rebuild(false);
     $<HTMLInputElement>('#words').value = t;
@@ -1282,10 +1303,7 @@ function startApp() {
   state = resolveConfig(shared ?? {});
   applyAutoFormat();
   const sharedWords = shareText(location.hash.slice(1));
-  if (sharedWords) {
-    textSong = { text: sharedWords, code: encodeShare(state) };
-    $<HTMLInputElement>('#words').value = sharedWords;
-  }
+  if (sharedWords) $<HTMLInputElement>('#words').value = sharedWords;
   syncThemeUi();
   writeForm();
   refreshProjects();

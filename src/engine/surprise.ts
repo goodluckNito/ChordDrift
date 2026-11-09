@@ -9,7 +9,7 @@ import { DRUM_PRESETS, type KitId } from './drums';
 import { hashSeed, stream, type Rng } from './rng';
 import { RHYTHM_PRESETS, STRIKE_PRESETS } from './rhythm';
 import { SONG_PRESETS } from './song';
-import { STYLE_IDS, type StyleId } from './styles';
+import { STYLES, STYLE_IDS, type StyleId } from './styles';
 import { randomTheme } from './themes';
 import { KEY_NAMES } from './theory';
 
@@ -69,13 +69,16 @@ export function surpriseConfig(seed: string | number, r: Rng): DeepPartial<Chord
       ['drift', 3],
       ['voiceled', 2],
     ] as ['scale' | 'drift' | 'voiceled', number][]),
-    complexity: weighted(r, [
-      [1, 1],
-      [2, 2],
-      [3, 3],
-      [4, 2],
-      [5, 1],
-    ] as [number, number][]),
+    // Within the style's range when there is one (the style would clamp it anyway).
+    complexity: ((c: number) => (style === 'none' ? c : Math.max(STYLES[style].complexity[0], Math.min(STYLES[style].complexity[1], c))))(
+      weighted(r, [
+        [1, 1],
+        [2, 2],
+        [3, 3],
+        [4, 2],
+        [5, 1],
+      ] as [number, number][]),
+    ),
     voices: pick(r, [7, 9, 11, 13, 13, 15]),
     smoothness: between(r, 0.4, 2, 0.1),
     resolution: between(r, 0.15, 0.75),
