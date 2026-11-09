@@ -102,7 +102,8 @@ Each distinct part has its own seeded generator, so parts sound different but st
 **Melody.** Turn on a randomized lead line, drawn in red above the chords. It lands on chord tones on strong beats and whenever the harmony changes, and steps through the scale in between, skipping notes that clash a semitone above a chord tone. It moves with some momentum, leaps occasionally, and joins the final unison. You can give it a rhythm in the notation above, or leave that empty for a random rhythm at the chosen density. It can play throughout or only between chord changes. Register, wave, level and portamento are adjustable.
 
 **Drums.** Drums are synthesized, so exports stay deterministic and there are no sample licences to worry about. They start when the bloom lands.
-- **Kits:** Witch (dark, distorted, long kick, reverby clap), 808, Acoustic and Industrial.
+- **Kits:** Witch (dark, distorted, long kick, reverby clap), 808, Acoustic, Industrial and Jungle (tight punchy kick, crisp cracking breakbeat snare, bright short hats). Rides are a high-passed metallic shimmer, a noise wash and a stick ping, with an optional bell of inharmonic partials.
+- **Double time:** patterns play twice as fast (each character a 32nd note). The *Jungle break* and *Jungle roller* patterns are written for it: at around 80–90 bpm with double time they run at jungle speed over slow chords.
 - **Patterns:** one row per drum (kick, snare, hat, crash, ride) on a 16th-note grid: `x` hit, `X` accent, `.` rest, `o` open hat, `r` hat roll. Rows loop independently. Presets: Witch house (half-time), Trap (half-time), Four on the floor, Boom bap, Breakbeat, Ride groove and Sparse.
 - **Random steps:** a `?` in any drum row is decided by the seed each bar: a rest, a ghost note, a hit or an accent, and on snare and hats sometimes a roll or an open hat. The same seed always plays the same fills.
 - **Mix:** a level per drum, a drum bus level, and a reverb send (optionally snare only).

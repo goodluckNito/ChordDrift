@@ -260,6 +260,7 @@
                 <option value="808">808</option>
                 <option value="acoustic">Acoustic</option>
                 <option value="industrial">Industrial</option>
+                <option value="jungle">Jungle</option>
               </select>
             </label>
             <label data-drums>Pattern
@@ -296,6 +297,10 @@
             </label>
             <label data-drums>Drum reverb <output></output>
               <input data-path="drums.reverb" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label class="check wide" data-drums>
+              <input data-path="drums.double" type="checkbox" />
+              <span>Double time — patterns play twice as fast</span>
             </label>
             <label class="check wide" data-drums>
               <input data-path="drums.reverbSnareOnly" type="checkbox" />

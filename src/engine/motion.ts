@@ -410,7 +410,8 @@ export function drumHits(score: Score, a: number, b: number): DrumHit[] {
   const out: DrumHit[] = [];
   for (const sp of partSpans(score)) {
     if (sp.b <= a || sp.a >= b || (sp.drums && !sp.drums.length)) continue;
-    const hits = drumHitsBetween(score.drums, sp.a, sp.b, score.beat / 4, a, b, (score.seed + sp.index * 7919) >>> 0);
+    const step = score.beat / (score.config.drums.double ? 8 : 4);
+    const hits = drumHitsBetween(score.drums, sp.a, sp.b, step, a, b, (score.seed + sp.index * 7919) >>> 0);
     for (const h of hits) if (!sp.drums || sp.drums.includes(h.voice)) out.push(h);
   }
   return out;

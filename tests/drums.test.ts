@@ -78,3 +78,15 @@ describe('random steps', () => {
     expect(count).toBeLessThan(512 * 0.9);
   });
 });
+
+describe('double time', () => {
+  it('plays the patterns twice as fast', () => {
+    const base = { seed: 3, rhythm: { tempo: 120 }, drums: { enabled: true, kick: 'x...............', snare: '', hat: '', crash: '', ride: '' } };
+    const kicks = (double: boolean) => {
+      const s = generateScore(resolveConfig({ ...base, drums: { ...base.drums, double } }));
+      return drumHits(s, s.gridStart, s.gridStart + 8).filter((h) => h.voice === 'kick').length;
+    };
+    expect(kicks(false)).toBe(4);
+    expect(kicks(true)).toBe(8);
+  });
+});

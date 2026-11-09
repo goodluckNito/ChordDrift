@@ -181,6 +181,8 @@ export interface ChordDriftConfig {
     reverb: number;
     /** Only the snare goes to the reverb. */
     reverbSnareOnly: boolean;
+    /** Double time: patterns play at twice the speed (each character a 32nd note). */
+    double: boolean;
     /** Sidechain: duck the chords under the kick and/or snare. */
     duck: { kick: boolean; snare: boolean; depth: number; release: number };
   };
@@ -254,6 +256,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
     level: 0.8,
     reverb: 0.35,
     reverbSnareOnly: true,
+    double: false,
     duck: { kick: true, snare: false, depth: 0.65, release: 0.25 },
   },
   video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'orbit' },
@@ -293,6 +296,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   if (!['timeline', 'spiral', 'waterfall'].includes(c.video.view)) c.video.view = 'timeline';
   if ((c.video.spiral as string) === 'zoom') c.video.spiral = 'fly'; // older projects
   if (!['orbit', 'drain', 'fly', 'inward'].includes(c.video.spiral)) c.video.spiral = 'orbit';
+  c.drums.double = Boolean(c.drums.double);
   c.song.enabled = Boolean(c.song.enabled);
   c.song.form = String(c.song.form ?? '');
   c.chop.enabled = Boolean(c.chop.enabled);
@@ -334,7 +338,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   if (legacy && hex.test(legacy) && !(partial as { theme?: unknown }).theme) th.accent = legacy;
   const d = c.drums;
   d.enabled = Boolean(d.enabled);
-  if (!['808', 'witch', 'acoustic', 'industrial'].includes(d.kit)) d.kit = 'witch';
+  if (!['808', 'witch', 'acoustic', 'industrial', 'jungle'].includes(d.kit)) d.kit = 'witch';
   for (const v of ['kick', 'snare', 'hat', 'crash', 'ride'] as const) {
     d[v] = String(d[v] ?? '');
     d.levels[v] = Math.max(0, Math.min(1, Number(d.levels[v])));

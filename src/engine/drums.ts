@@ -10,7 +10,7 @@
  */
 export type DrumVoice = 'kick' | 'snare' | 'hat' | 'crash' | 'ride';
 export const DRUM_VOICES: DrumVoice[] = ['kick', 'snare', 'hat', 'crash', 'ride'];
-export type KitId = '808' | 'witch' | 'acoustic' | 'industrial';
+export type KitId = '808' | 'witch' | 'acoustic' | 'industrial' | 'jungle';
 
 export interface DrumHit {
   t: number;
@@ -93,6 +93,24 @@ export const DRUM_PRESETS: DrumPreset[] = [
     snare: '....X..x.x..X..x',
     hat: 'x.x.x.x.x.x.x.x.',
     crash: bars(4, 'x'),
+    ride: '',
+  },
+  {
+    // A chopped two-bar break in the spirit of the classic one: syncopated kicks, ghosted snares, ride on the 8ths.
+    name: 'Jungle break',
+    kick: 'X.x.......xx....' + 'x.x.......x.....',
+    snare: '....X..x.x..X..x' + '.x..X..x.x....X.',
+    hat: '',
+    crash: bars(4, 'x'),
+    ride: 'x.x.x.x.x.x.x.x.',
+  },
+  {
+    // Rolling: the snare's ghost notes and the last hat are rolled by the seed every bar.
+    name: 'Jungle roller',
+    kick: 'X.........x.....' + 'x.x.......x.....',
+    snare: '....X..?.?..X..?',
+    hat: 'x.xxx.x.x.xxx.x?',
+    crash: bars(8, 'x'),
     ride: '',
   },
   {

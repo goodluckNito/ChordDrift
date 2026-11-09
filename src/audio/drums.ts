@@ -25,7 +25,7 @@ export const KITS: Record<KitId, KitDef> = {
     snare: { tone: 160, toneDecay: 0.06, noiseFreq: 1250, noiseQ: 1.1, noiseDecay: 0.32, toneMix: 0.25, clap: true, drive: 0.3 },
     hat: { freq: 9200, decay: 0.03, openDecay: 0.25, metal: false },
     crash: { freq: 3600, decay: 2.6 },
-    ride: { freq: 2800, decay: 1.2, bell: 0.3 },
+    ride: { freq: 3400, decay: 1.7, bell: 0.12 },
   },
   acoustic: {
     kick: { f0: 95, f1: 52, pitchDecay: 0.03, decay: 0.38, drive: 0, click: 0.45 },
@@ -39,7 +39,15 @@ export const KITS: Record<KitId, KitDef> = {
     snare: { tone: 140, toneDecay: 0.05, noiseFreq: 800, noiseQ: 2.2, noiseDecay: 0.28, toneMix: 0.2, clap: false, drive: 0.9 },
     hat: { freq: 6200, decay: 0.05, openDecay: 0.3, metal: true },
     crash: { freq: 2400, decay: 1.4 },
-    ride: { freq: 2200, decay: 0.8, bell: 0.9 },
+    ride: { freq: 2600, decay: 0.8, bell: 0.8 },
+  },
+  jungle: {
+    // Tight and punchy: a short kick with snap, a crisp, cracking breakbeat snare, bright short hats.
+    kick: { f0: 165, f1: 54, pitchDecay: 0.028, decay: 0.3, drive: 0.3, click: 0.4 },
+    snare: { tone: 215, toneDecay: 0.075, noiseFreq: 3300, noiseQ: 0.5, noiseDecay: 0.15, toneMix: 0.5, clap: false, drive: 0.4 },
+    hat: { freq: 7600, decay: 0.032, openDecay: 0.2, metal: false },
+    crash: { freq: 4700, decay: 1.7 },
+    ride: { freq: 4400, decay: 1.1, bell: 0.35 },
   },
 };
 
@@ -176,20 +184,35 @@ export function playHit(ctx: BaseAudioContext, kitId: KitId, hit: DrumHit, level
     hp2.frequency.value = c.freq * 0.8;
     m.connect(hp2).connect(env(ctx, when, vel * 0.25, c.decay * 0.5)).connect(dest);
   } else if (hit.voice === 'ride') {
+    // Shimmer (metallic partials, high-passed so they read as cymbal, not buzz), a noise wash,
+    // a short stick ping, and an optional bell made of inharmonic partials rather than one sine.
     const r = kit.ride;
-    const m = metal(ctx, when, r.decay + 0.05, r.freq / 8);
+    const m = metal(ctx, when, r.decay + 0.05, r.freq / 7);
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = r.freq;
+    hp.Q.value = 0.5;
+    m.connect(hp).connect(env(ctx, when, vel * 0.32, r.decay, 0.002)).connect(dest);
+    const wash = noise(ctx, when, r.decay + 0.05);
+    const hp2 = ctx.createBiquadFilter();
+    hp2.type = 'highpass';
+    hp2.frequency.value = Math.max(5500, r.freq * 1.6);
+    wash.connect(hp2).connect(env(ctx, when, vel * 0.2, r.decay * 0.8, 0.002)).connect(dest);
+    const ping = noise(ctx, when, 0.03);
     const bp = ctx.createBiquadFilter();
     bp.type = 'bandpass';
-    bp.frequency.value = r.freq;
-    bp.Q.value = 1.4;
-    m.connect(bp).connect(env(ctx, when, vel * 0.5, r.decay)).connect(dest);
+    bp.frequency.value = r.freq * 1.5;
+    bp.Q.value = 1.2;
+    ping.connect(bp).connect(env(ctx, when, vel * 0.35, 0.018)).connect(dest);
     if (r.bell > 0) {
-      const o = ctx.createOscillator();
-      o.type = 'sine';
-      o.frequency.value = r.freq * 0.62;
-      o.connect(env(ctx, when, vel * 0.18 * r.bell, r.decay * 0.6)).connect(dest);
-      o.start(when);
-      o.stop(when + r.decay);
+      for (const [ratio, amp] of [[1, 1], [2.76, 0.5], [5.4, 0.25]] as const) {
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.value = r.freq * 0.22 * ratio;
+        o.connect(env(ctx, when, vel * 0.06 * r.bell * amp, r.decay * 0.35)).connect(dest);
+        o.start(when);
+        o.stop(when + r.decay * 0.4);
+      }
     }
   }
 }
