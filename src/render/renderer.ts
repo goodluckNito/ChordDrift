@@ -1408,9 +1408,10 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const cfg = score.config;
   const V = cfg.voices;
   const tl = score.timeline;
-  const lay = layoutFor(W, H, cfg, opts.textScale ?? 1);
-  const u = lay.u; // size unit (lines, dots)
-  const tu = lay.tu; // text unit
+  const baseLay = layoutFor(W, H, cfg, opts.textScale ?? 1);
+  let lay = baseLay;
+  let u = lay.u; // size unit (lines, dots)
+  let tu = lay.tu; // text unit
 
   const st = styleOf(cfg);
   const th = cfg.theme;
@@ -1424,6 +1425,21 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     ctx.fillStyle = bg;
   } else ctx.fillStyle = th.background;
   ctx.fillRect(0, 0, W, H);
+
+  // Zoom scales the picture (not the titles and HUD) around the playhead, or the centre in the other views.
+  const zoom = cfg.video.zoom;
+  ctx.save();
+  if (zoom !== 1) {
+    const zx = cfg.video.view === 'timeline' ? cfg.video.nowPosition * W : W / 2;
+    const zy = (lay.bandTop + lay.bandBottom) / 2;
+    ctx.translate(zx, zy);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-zx, -zy);
+    // A camera zoom: positions spread out, but lines, dots and labels keep their size on screen.
+    lay = { ...baseLay, u: baseLay.u / zoom, tu: baseLay.tu / zoom };
+    u = lay.u;
+    tu = lay.tu;
+  }
 
   const freqs = soundingPitches(score, t).map(midiToHz);
   if (cfg.video.view === 'waterfall') drawWaterfall(ctx, score, t, st, lay);
@@ -1625,6 +1641,11 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
 
 
   }
+
+  ctx.restore(); // end of zoom
+  lay = baseLay;
+  u = lay.u;
+  tu = lay.tu;
 
   // In the spiral views lines run behind the text, so text gets a thin halo in the background colour.
   const halo = cfg.video.view === 'spiral';

@@ -451,6 +451,9 @@ function startApp() {
     for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-drums]')) el.hidden = !state.drums.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-song]')) el.hidden = !state.song.enabled;
+    $('#loop-btn').setAttribute('aria-pressed', String(state.loop));
+    $<HTMLInputElement>('#zoom').value = String(Math.log(state.video.zoom));
+    $('#zoom-reset').textContent = `${Math.round(state.video.zoom * 100)}%`;
     for (const el of form.querySelectorAll<HTMLElement>('[data-chop]')) el.hidden = !state.chop.enabled;
     const chopIdx = CHOP_PRESETS.findIndex((p) => p.pattern === state.chop.pattern.trim());
     chopSelect.value = chopIdx >= 0 ? String(chopIdx) : 'custom';
@@ -747,6 +750,53 @@ function startApp() {
   }
 
   playBtn.addEventListener('click', () => (player.playing ? pause() : void play()));
+
+  // ---- Zoom, loop, fullscreen -------------------------------------------------
+  // Zoom is a view setting (saved with the song, used by exports) that doesn't need a rebuild.
+  const zoomInput = $<HTMLInputElement>('#zoom');
+  const zoomLabel = $<HTMLButtonElement>('#zoom-reset');
+  let zoomSave = 0;
+  const setZoom = (z: number) => {
+    z = Math.max(0.4, Math.min(4, z));
+    state.video.zoom = z;
+    score.config.video.zoom = z;
+    zoomInput.value = String(Math.log(z));
+    zoomLabel.textContent = `${Math.round(z * 100)}%`;
+    clearTimeout(zoomSave);
+    zoomSave = window.setTimeout(saveHash, 300);
+  };
+  zoomInput.addEventListener('input', () => setZoom(Math.exp(Number(zoomInput.value))));
+  $('#zoom-in').addEventListener('click', () => setZoom(state.video.zoom * 1.2));
+  $('#zoom-out').addEventListener('click', () => setZoom(state.video.zoom / 1.2));
+  zoomLabel.addEventListener('click', () => setZoom(1));
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+      setZoom(state.video.zoom * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)));
+    },
+    { passive: false },
+  );
+  const loopBtn = $<HTMLButtonElement>('#loop-btn');
+  loopBtn.addEventListener('click', () => {
+    state.loop = !state.loop;
+    if (state.loop) state.endless = false;
+    writeForm();
+    rebuild(true);
+    setStatus(state.loop ? 'Looping: the piece returns to its opening unison and starts again.' : 'Loop off.');
+  });
+  const stageEl = $<HTMLElement>('.stage');
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void stageEl.requestFullscreen?.().catch(() => setStatus('Fullscreen isn\'t available here.'));
+  };
+  $('#fullscreen').addEventListener('click', toggleFullscreen);
+  document.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() !== 'f' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const tag = (e.target as HTMLElement).tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    toggleFullscreen();
+  });
   $('#restart').addEventListener('click', () => seek(0));
   scrub.addEventListener('input', () => seek(Number(scrub.value)));
   list.addEventListener('click', (e) => {

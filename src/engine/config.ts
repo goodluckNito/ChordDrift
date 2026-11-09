@@ -194,6 +194,8 @@ export interface ChordDriftConfig {
     fps: number;
     historySeconds: number;
     nowPosition: number;
+    /** Zoom of the picture (titles and HUD stay put): 1 = normal. */
+    zoom: number;
     /** timeline = pitch over time · spiral = pitch on a spiral · waterfall = rotating 3D spectrograph, depth is time */
     view: 'timeline' | 'spiral' | 'waterfall';
     /**
@@ -261,7 +263,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
     double: false,
     duck: { kick: true, snare: false, depth: 0.65, release: 0.25 },
   },
-  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'orbit' },
+  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'orbit', zoom: 1 },
 };
 
 export type DeepPartial<T> = {
@@ -295,6 +297,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.complexity = Math.max(1, Math.min(5, Math.round(Number(c.complexity) || 3)));
   c.progression = String(c.progression ?? '');
   if (!STYLE_IDS.includes(c.style)) c.style = 'none';
+  c.video.zoom = Math.max(0.4, Math.min(4, Number(c.video.zoom) || 1));
   if (!['timeline', 'spiral', 'waterfall'].includes(c.video.view)) c.video.view = 'timeline';
   if ((c.video.spiral as string) === 'zoom') c.video.spiral = 'fly'; // older projects
   if (!['orbit', 'drain', 'fly', 'inward'].includes(c.video.spiral)) c.video.spiral = 'orbit';
