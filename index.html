@@ -450,7 +450,10 @@
             </div>
             <p id="theme-note" class="wide muted small"></p>
             <label>Preset
-              <select id="theme-preset"></select>
+              <span class="row">
+                <select id="theme-preset"></select>
+                <button type="button" id="random-theme" title="Roll a whole new theme: colours, font, palette">🎲</button>
+              </span>
             </label>
             <label>Format
               <select id="format">
@@ -487,6 +490,13 @@
                 <option value="jetbrains-mono">JetBrains Mono</option>
                 <option value="fraunces">Fraunces (serif)</option>
                 <option value="playfair">Playfair Display (serif)</option>
+                <option value="cinzel">Cinzel (engraved)</option>
+                <option value="pirata-one">Pirata One (blackletter)</option>
+                <option value="syne">Syne</option>
+                <option value="bebas-neue">Bebas Neue (condensed)</option>
+                <option value="space-mono">Space Mono</option>
+                <option value="major-mono-display">Major Mono Display</option>
+                <option value="vt323">VT323 (pixel)</option>
               </select>
             </label>
             <div class="swatches wide">
@@ -506,6 +516,9 @@
                 </select>
                 <button type="button" id="reroll-colors" title="Roll a new palette for the line colours">🎲</button>
               </span>
+            </label>
+            <label data-palette>Palette
+              <select data-path="theme.palette" id="palette-select"></select>
             </label>
             <label>Line width <output></output>
               <input data-path="theme.lineWidth" type="range" min="0.4" max="3" step="0.05" />

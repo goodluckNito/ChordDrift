@@ -127,10 +127,10 @@ Line thickness and dot size follow the level over time, in the video as well. **
 - **Fullness:** the default **Warm** wave is a soft, saw-like tone (strong 2nd and 3rd harmonics, rolling off above), matched to the reference videos. **Sub bass** adds a sine an octave under the lowest voice. It runs dry (no reverb) and ducks under the kick (and the snare, if the chords duck under it), so it doesn't flatten the chords. And **Bass** is a low shelf (default +4 dB) that pushes the low end like an EQ. **Warmth** saturates the mix gently. **Stereo width** sets both the voice panning and how wide the reverb tail is. The default is nearly mono, so the sound stays solid and centred.
 - **Envelope:** attack, decay and sustain (Sound) shape each strike, and the lines show every hit. The sound presets (**Ambient**, **Pluck**, **Dark**) change the sound (envelope, swells, reverb and tone) and how chords change: Pluck switches chord changes to Pluck, Ambient to Release & swell in. They never touch rhythm, harmony or theme. **Default sound** resets just the sound.
 
-**Themes.** Presets: Paper, Sepia, Midnight, Neon, Blueprint, Terminal, Chromatic, Sunset and Hex. You can also choose your own:
+**Themes.** Presets: Paper, Sepia, Midnight, Neon, Blueprint, Terminal, Chromatic, Sunset, Hex, Vigil, Cathode, Ossuary, Tidepool, Bubblegum, Eclipse, Ultraviolet, Moth, Static, Bruise, Hollow and Frostbite. The 🎲 next to the preset rolls a whole new theme (colours, font, palette, glow). You can also choose your own:
 - **Colours:** background (optionally a gradient), lines, melody and text.
-- **Font:** seven to choose from, loaded only when picked.
-- **Line colouring:** one colour, per voice, per note (around the circle of fifths) or by height. 🎲 rolls a new palette; it's saved with the theme.
+- **Font:** fourteen to choose from (from Inter and Plex to Cinzel, Pirata One, Syne, Bebas Neue, Space Mono, Major Mono Display and VT323), loaded only when picked.
+- **Line colouring:** one colour, per voice, per note (around the circle of fifths) or by height, through a palette: Rainbow, Ember, Bruise, Tide, Acid, Blood moon, Moss, Ghost, Oil slick, Candy, Rust, Frost, or Duotone and Mono built from the theme's own ink and accent. 🎲 rolls a palette (a dark-to-bright ramp in one hue family, a duotone, or a split scheme); it's saved with the theme.
 - **Extras:** line width, glow, an octave grid with note names, and switches for the Hz labels and HUD.
 
 Themes are saved in projects and share links and used in video exports. **My theme:**

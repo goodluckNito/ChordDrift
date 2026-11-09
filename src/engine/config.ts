@@ -1,7 +1,7 @@
 import { SCALES } from './theory';
 import { STYLE_IDS, type StyleId } from './styles';
 import { DRUM_PRESETS, type DrumVoice, type KitId } from './drums';
-import { FONT_NAMES, THEME_PRESETS, type Theme } from './themes';
+import { FONT_NAMES, PALETTES, THEME_PRESETS, type Theme } from './themes';
 import { DEFAULT_SONG_FORM } from './song';
 
 /**
@@ -329,6 +329,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   th.lineWidth = Math.max(0.3, Math.min(4, Number(th.lineWidth) || 1));
   th.glow = Math.max(0, Math.min(1, Number(th.glow) || 0));
   th.colorSeed = Math.max(0, Math.floor(Number(th.colorSeed) || 0)) >>> 0;
+  if (!(th.palette in PALETTES)) th.palette = 'rainbow';
   th.gradient = Boolean(th.gradient);
   th.grid = Boolean(th.grid);
   th.ripples = th.ripples !== false;

@@ -1,7 +1,7 @@
 import type { ChordDriftConfig } from '../engine/config';
 import { chordIndexAt, chordLabelAt, frequencyStats, hasDynamics, layerAt, levelAt, melodyAt, pitchAt, smootherstep, soundingPitches, strikeTimesBetween, voiceHits, widthFactor } from '../engine/motion';
 import type { Score } from '../engine/score';
-import type { ColorBy } from '../engine/themes';
+import { PALETTES, type ColorBy, type Theme } from '../engine/themes';
 import { midiToHz, mod12 } from '../engine/theory';
 import { fontStack } from './fonts';
 import { mulberry32 } from '../engine/rng';
@@ -26,22 +26,54 @@ interface Style {
   colorBy: ColorBy;
   glow: number;
   dark: boolean;
-  palette: Palette;
+  /** Line palette as colour stops, or null for the rainbow wheel. */
+  stops: [number, number, number][] | null;
 }
 
-/** How coloured lines map to hues. Seed 0 is the standard rainbow. */
-interface Palette {
-  start: number;
-  spread: number;
-  dir: number;
-  sat: number;
-  light: number;
+
+/**
+ * Colour stops for the line palette, or null for the hue wheel (rainbow). A rolled palette
+ * (colorSeed) is one of: a dark-to-bright ramp in one hue family, a duotone, or a split scheme.
+ */
+function paletteStops(th: Theme): [number, number, number][] | null {
+  if (th.colorSeed) {
+    const r = mulberry32(th.colorSeed);
+    const h0 = r() * 360;
+    const kind = r();
+    const sat = 45 + r() * 50;
+    const hues = kind < 0.4 ? [h0, h0 + 15 + r() * 30, h0 + 30 + r() * 40] : kind < 0.75 ? [h0, h0 + 140 + r() * 80] : [h0, h0 + 100 + r() * 40, h0 + 200 + r() * 40];
+    const n = hues.length;
+    return hues.map((h, i) => hslRgb(h % 360, sat - 10 * (1 - i / Math.max(1, n - 1)), 22 + (56 * i) / Math.max(1, n - 1) + (r() - 0.5) * 8));
+  }
+  const name = th.palette ?? 'rainbow';
+  if (name === 'rainbow' || !(name in PALETTES)) return null;
+  if (name === 'duotone') return [rgbOf(th.ink), rgbOf(th.accent)];
+  if (name === 'mono') {
+    const ink = rgbOf(th.ink);
+    const bg = rgbOf(th.background);
+    const mix = (f: number) => ink.map((c, i) => c * f + bg[i] * (1 - f)) as [number, number, number];
+    return [mix(0.35), mix(0.65), ink];
+  }
+  return PALETTES[name].map(rgbOf);
 }
 
-function paletteFor(seed: number): Palette {
-  if (!seed) return { start: 270, spread: 270, dir: -1, sat: 72, light: 0 };
-  const r = mulberry32(seed);
-  return { start: r() * 360, spread: 120 + r() * 230, dir: r() < 0.5 ? -1 : 1, sat: 55 + r() * 35, light: (r() - 0.5) * 12 };
+function hslRgb(h: number, s: number, l: number): [number, number, number] {
+  const a = (s / 100) * Math.min(l / 100, 1 - l / 100);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    return 255 * (l / 100 - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)));
+  };
+  return [f(0), f(8), f(4)];
+}
+
+/** The colour at f (0..1) along the palette's stops. */
+function stopColor(stops: [number, number, number][], f: number): string {
+  if (stops.length === 1) return `rgb(${stops[0].map(Math.round).join(',')})`;
+  const x = Math.max(0, Math.min(1, f)) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(x));
+  const k = x - i;
+  const c = stops[i].map((v, j) => Math.round(v + (stops[i + 1][j] - v) * k));
+  return `rgb(${c.join(',')})`;
 }
 
 function rgbOf(hex: string): [number, number, number] {
@@ -66,7 +98,7 @@ function styleOf(cfg: ChordDriftConfig): Style {
     colorBy: th.colorBy,
     glow: th.glow,
     dark: luminance(th.background) < 0.45,
-    palette: paletteFor(th.colorSeed),
+    stops: paletteStops(th),
   };
 }
 
@@ -75,24 +107,16 @@ export function themeBackground(cfg: ChordDriftConfig): string {
   return cfg.theme.background;
 }
 
-const hsl = (h: number, st: Style) =>
-  `hsl(${((h % 360) + 360) % 360} ${st.palette.sat}% ${(st.dark ? 66 : 44) + st.palette.light}%)`;
-/** A hue per pitch class, ordered around the circle of fifths so related notes have related colours. */
+const hsl = (h: number, st: Style) => `hsl(${((h % 360) + 360) % 360} 72% ${st.dark ? 66 : 44}%)`;
+/** A colour per pitch class, ordered around the circle of fifths so related notes have related colours. */
 const pitchColor = (p: number, st: Style) => {
-  const pal = st.palette;
   const step = mod12(Math.round(p) * 7);
-  // The standard palette uses the full wheel; seeded ones spread the 12 notes over their range.
-  return pal.spread === 270 && pal.start === 270 ? hsl(step * 30, st) : hsl(pal.start + pal.dir * (pal.spread * step) / 11, st);
+  return st.stops ? stopColor(st.stops, step / 11) : hsl(step * 30, st);
 };
-/** A hue per voice, bass to top across the palette. */
-const voiceColor = (v: number, V: number, st: Style) => hsl(st.palette.start + (st.palette.dir * st.palette.spread * v) / Math.max(1, V - 1), st);
+/** A colour per voice, bass to top across the palette. */
+const voiceColor = (v: number, V: number, st: Style) => (st.stops ? stopColor(st.stops, v / Math.max(1, V - 1)) : hsl(270 - (270 * v) / Math.max(1, V - 1), st));
 /** Register colour at a height fraction 0 (bottom) … 1 (top). */
-const registerColor = (f: number, st: Style) => {
-  const pal = st.palette;
-  const start = pal.start === 270 && pal.spread === 270 ? 260 : pal.start;
-  const spread = pal.start === 270 && pal.spread === 270 ? 250 : pal.spread;
-  return hsl(start + pal.dir * spread * Math.max(0, Math.min(1, f)), st);
-};
+const registerColor = (f: number, st: Style) => (st.stops ? stopColor(st.stops, f) : hsl(260 - 250 * Math.max(0, Math.min(1, f)), st));
 
 const LAYOUT = {
   titleY: 0.092,

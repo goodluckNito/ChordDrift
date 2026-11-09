@@ -12,6 +12,14 @@ const loaders: Record<FontId, () => Promise<unknown>> = {
   'jetbrains-mono': () => Promise.all([import('@fontsource/jetbrains-mono/latin-400.css'), import('@fontsource/jetbrains-mono/latin-700.css')]),
   fraunces: () => Promise.all([import('@fontsource/fraunces/latin-400.css'), import('@fontsource/fraunces/latin-700.css')]),
   playfair: () => Promise.all([import('@fontsource/playfair-display/latin-400.css'), import('@fontsource/playfair-display/latin-700.css')]),
+  // Single-weight faces: the bold is synthesized.
+  'pirata-one': () => import('@fontsource/pirata-one/latin-400.css'),
+  cinzel: () => Promise.all([import('@fontsource/cinzel/latin-400.css'), import('@fontsource/cinzel/latin-700.css')]),
+  syne: () => Promise.all([import('@fontsource/syne/latin-400.css'), import('@fontsource/syne/latin-700.css')]),
+  'major-mono-display': () => import('@fontsource/major-mono-display/latin-400.css'),
+  vt323: () => import('@fontsource/vt323/latin-400.css'),
+  'bebas-neue': () => import('@fontsource/bebas-neue/latin-400.css'),
+  'space-mono': () => Promise.all([import('@fontsource/space-mono/latin-400.css'), import('@fontsource/space-mono/latin-700.css')]),
 };
 
 const ready = new Map<FontId, Promise<void>>();

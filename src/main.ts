@@ -9,6 +9,9 @@ import {
   PLUCK_PRESET,
   THEME_LABELS,
   THEME_PRESETS,
+  PALETTES,
+  PALETTE_LABELS,
+  randomTheme,
   DEFAULT_CONFIG,
   KEY_NAMES,
   RHYTHM_PRESETS,
@@ -172,6 +175,18 @@ function startApp() {
       myTheme = structuredClone(preset);
       saveMyTheme();
     } else state.theme = structuredClone(preset);
+    writeForm();
+    rebuild(true);
+  });
+
+  const paletteSelect = $<HTMLSelectElement>('#palette-select');
+  paletteSelect.innerHTML = Object.keys(PALETTES).map((id) => `<option value="${id}">${PALETTE_LABELS[id] ?? id}</option>`).join('') + '<option value="rolled" disabled>Rolled 🎲</option>';
+  $('#random-theme').addEventListener('click', () => {
+    const th = randomTheme(Math.random);
+    if (useMine) {
+      myTheme = th;
+      saveMyTheme();
+    } else state.theme = th;
     writeForm();
     rebuild(true);
   });
@@ -450,6 +465,8 @@ function startApp() {
     const strikeIdx = STRIKE_PRESETS.findIndex((p) => p.pattern === state.rhythm.pluck.trim());
     strikeSelect.value = strikeIdx >= 0 ? String(strikeIdx) : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-gradient]')) el.hidden = !displayTheme().gradient;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-palette]')) el.hidden = displayTheme().colorBy === 'none';
+    if (displayTheme().colorSeed) $<HTMLSelectElement>('#palette-select').value = 'rolled';
     for (const el of form.querySelectorAll<HTMLElement>('[data-spiral]')) el.hidden = state.video.view !== 'spiral';
     const dt = displayTheme();
     themeSelect.value = dt.preset in THEME_PRESETS ? dt.preset : 'custom';
@@ -743,6 +760,11 @@ function startApp() {
     const el = e.target as Field;
     if (!el.dataset.path) return;
     readField(el);
+    // Picking a named palette replaces a rolled one.
+    if (el.dataset.path === 'theme.palette') {
+      const th = useMine && myTheme ? myTheme : state.theme;
+      th.colorSeed = 0;
+    }
     // Full song parts are built around the drums: switching Song on brings them in.
     if (el.dataset.path === 'song.enabled' && state.song.enabled && !state.drums.enabled) {
       state.drums.enabled = true;
