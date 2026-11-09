@@ -17,7 +17,7 @@ export type Easing = 'smootherstep' | 'cosine';
  * pluck: voices glide into a strike and ring out, re-struck on the strike pattern.
  */
 export type Transition = 'glide' | 'swell' | 'pluck';
-export type Wave = 'sine' | 'triangle' | 'sawtooth' | 'square';
+export type Wave = 'warm' | 'sine' | 'triangle' | 'sawtooth' | 'square';
 export type Register = 'low' | 'mid' | 'high' | 'top';
 /** off · chord: dip at each change, swell into the chord · voice: moving voices fade and re-swell · breath: slow waves */
 export type Swell = 'off' | 'chord' | 'voice' | 'breath';
@@ -140,6 +140,10 @@ export interface ChordDriftConfig {
     /** 0..1 stereo spread of the voices. */
     width: number;
     gain: number;
+    /** 0..1 sub-bass: a sine an octave under the bass voice. */
+    sub: number;
+    /** 0..1 gentle saturation on the chords. */
+    warmth: number;
     /** Volume swells (an ambient option). */
     swell: Swell;
     /** 0..1 how deep the swells dip. */
@@ -227,7 +231,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   motion: { easing: 'smootherstep', transition: 'glide' },
   rhythm: { tempo: 76, chords: '', pluck: 'e' },
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
-  audio: { wave: 'sine', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 7000, width: 0.6, gain: 0.9, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
+  audio: { wave: 'warm', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 10000, width: 0.12, gain: 0.9, sub: 0.5, warmth: 0.35, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
   theme: { ...THEME_PRESETS.paper },
   drums: {
     enabled: false,
@@ -328,8 +332,11 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   d.duck.snare = Boolean(d.duck.snare);
   d.duck.depth = Math.max(0, Math.min(1, Number(d.duck.depth)));
   d.duck.release = Math.max(0.03, Math.min(2, Number(d.duck.release) || 0.25));
-  const waves: Wave[] = ['sine', 'triangle', 'sawtooth', 'square'];
-  if (!waves.includes(c.audio.wave)) c.audio.wave = 'sine';
+  const waves: Wave[] = ['warm', 'sine', 'triangle', 'sawtooth', 'square'];
+  if (!waves.includes(c.audio.wave)) c.audio.wave = 'warm';
+  c.audio.sub = Math.max(0, Math.min(1, Number(c.audio.sub)));
+  c.audio.warmth = Math.max(0, Math.min(1, Number(c.audio.warmth)));
+  c.audio.width = Math.max(0, Math.min(1, Number(c.audio.width)));
   if (!waves.includes(c.melody.wave)) c.melody.wave = 'triangle';
   for (const k of Object.keys(c.timing) as (keyof Timing)[]) c.timing[k] = Math.max(0, Number(c.timing[k]) || 0);
   c.timing.bloom = Math.max(0.1, c.timing.bloom);

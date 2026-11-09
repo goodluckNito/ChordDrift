@@ -101,6 +101,6 @@ describe('waves', () => {
   it('accepts saw and square, and falls back for unknown waves', () => {
     expect(resolveConfig({ audio: { wave: 'sawtooth' } }).audio.wave).toBe('sawtooth');
     expect(resolveConfig({ melody: { wave: 'square' } }).melody.wave).toBe('square');
-    expect(resolveConfig({ audio: { wave: 'kazoo' as never } }).audio.wave).toBe('sine');
+    expect(resolveConfig({ audio: { wave: 'kazoo' as never } }).audio.wave).toBe('warm');
   });
 });

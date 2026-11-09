@@ -15,7 +15,31 @@ import { midiToHz } from '../engine/theory';
 const CONTROL_RATE = 250; // Hz; linear interpolation between points at this rate is inaudible
 
 /** Rough loudness compensation: saw and square carry far more energy than a sine. */
-export const WAVE_GAIN: Record<Wave, number> = { sine: 1, triangle: 0.95, sawtooth: 0.75, square: 0.6 };
+export const WAVE_GAIN: Record<Wave, number> = { warm: 0.62, sine: 1, triangle: 0.95, sawtooth: 0.75, square: 0.6 };
+
+/**
+ * "Warm": a harmonic-rich wave matched to the reference recordings — 2nd
+ * harmonic about −5 dB and 3rd about −7 dB under the fundamental, then a smooth
+ * roll-off (fuller than a sine, softer than a saw).
+ */
+const warmCache = new WeakMap<BaseAudioContext, PeriodicWave>();
+function warmWave(ctx: BaseAudioContext): PeriodicWave {
+  let w = warmCache.get(ctx);
+  if (!w) {
+    const amps = [0, 1, 0.56, 0.45, 0.3, 0.22, 0.15, 0.11, 0.075, 0.05, 0.035, 0.024, 0.016];
+    const real = new Float32Array(amps.length);
+    const imag = Float32Array.from(amps);
+    w = ctx.createPeriodicWave(real, imag);
+    warmCache.set(ctx, w);
+  }
+  return w;
+}
+
+/** Set an oscillator's waveform (the built-in types, or the custom warm wave). */
+function setWave(ctx: BaseAudioContext, osc: OscillatorNode, wave: Wave) {
+  if (wave === 'warm') osc.setPeriodicWave(warmWave(ctx));
+  else osc.type = wave;
+}
 
 export interface Master {
   input: AudioNode;
@@ -26,22 +50,30 @@ export interface Master {
   reverbSend: AudioNode;
 }
 
-/** Long, dark synthetic reverb: decaying stereo noise with a closing low-pass. */
-export function makeImpulse(ctx: BaseAudioContext, seed: number, seconds = 3.4): AudioBuffer {
+/**
+ * Long, dark synthetic reverb: decaying noise with a closing low-pass. `spread` (0..1) is how much each
+ * channel's noise is its own rather than shared. Low spread keeps the tail centred and solid, like the
+ * near-mono reverb of the reference videos; 1 is fully decorrelated, wide stereo.
+ */
+export function makeImpulse(ctx: BaseAudioContext, seed: number, seconds = 3.4, spread = 1): AudioBuffer {
   const sr = ctx.sampleRate;
   const len = Math.floor(sr * seconds);
   const buf = ctx.createBuffer(2, len, sr);
-  for (let ch = 0; ch < 2; ch++) {
-    const rng = stream(seed, `reverb-${ch}`);
-    const data = buf.getChannelData(ch);
-    const preDelay = Math.floor(sr * 0.018);
-    let lp = 0;
-    for (let i = preDelay; i < len; i++) {
-      const x = (i - preDelay) / (len - preDelay);
-      const decay = Math.pow(10, (-60 * x * 1.0) / 20); // -60 dB over the tail
-      const cutoff = 0.5 * Math.pow(1 - x, 2) + 0.03; // one-pole coefficient: bright → dark
-      lp += cutoff * (rng() * 2 - 1 - lp);
-      data[i] = lp * decay;
+  const own = Math.sqrt(Math.min(1, Math.max(0, spread)));
+  const shared = Math.sqrt(1 - own * own);
+  const common = stream(seed, 'reverb-shared');
+  const rngs = [stream(seed, 'reverb-0'), stream(seed, 'reverb-1')];
+  const data = [buf.getChannelData(0), buf.getChannelData(1)];
+  const preDelay = Math.floor(sr * 0.018);
+  const lp = [0, 0];
+  for (let i = preDelay; i < len; i++) {
+    const x = (i - preDelay) / (len - preDelay);
+    const decay = Math.pow(10, (-60 * x * 1.0) / 20); // -60 dB over the tail
+    const cutoff = 0.5 * Math.pow(1 - x, 2) + 0.03; // one-pole coefficient: bright → dark
+    const c = common() * 2 - 1;
+    for (let ch = 0; ch < 2; ch++) {
+      lp[ch] += cutoff * (shared * c + own * (rngs[ch]() * 2 - 1) - lp[ch]);
+      data[ch][i] = lp[ch] * decay;
     }
   }
   return buf;
@@ -61,7 +93,7 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
   wet.gain.value = a.reverb * 1.4;
   const convolver = ctx.createConvolver();
   // Wetter settings get a longer tail (kept moderate: long convolutions cost CPU on phones).
-  convolver.buffer = makeImpulse(ctx, score.seed, 2.8 + 2.4 * Math.max(0, a.reverb - 0.3));
+  convolver.buffer = makeImpulse(ctx, score.seed, 2.8 + 2.4 * Math.max(0, a.reverb - 0.3), Math.min(1, 0.04 + a.width * 0.8));
 
   // The limiter matters most at unison, where all voices add up in phase. For
   // sustained chords it rides gently; for plucks it must only catch peaks and
@@ -80,9 +112,27 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
   // Headroom for strikes going into the faster limiter.
   input.gain.value = pluck ? 0.8 : 1;
 
+  // Warmth: gentle tanh saturation (gain-compensated) before the reverb split.
+  let tone: AudioNode = lowpass;
+  if (a.warmth > 0) {
+    const drive = 1 + a.warmth * 3;
+    const ws = ctx.createWaveShaper();
+    const n = 2048;
+    const curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * 2 - 1;
+      curve[i] = Math.tanh(drive * x) / Math.tanh(drive);
+    }
+    ws.curve = curve;
+    ws.oversample = '2x';
+    const pre = ctx.createGain();
+    pre.gain.value = 0.9;
+    lowpass.connect(pre).connect(ws);
+    tone = ws;
+  }
   input.connect(lowpass);
-  lowpass.connect(dry).connect(limiter);
-  lowpass.connect(convolver).connect(wet).connect(limiter);
+  tone.connect(dry).connect(limiter);
+  tone.connect(convolver).connect(wet).connect(limiter);
   limiter.connect(out).connect(destination);
   const direct = ctx.createGain();
   direct.connect(limiter);
@@ -136,6 +186,8 @@ export class VoiceBank {
   private oscs: OscillatorNode[] = [];
   private gains: GainNode[] = [];
   private lead: { osc: OscillatorNode; gain: GainNode } | null = null;
+  /** Sub-bass: a sine an octave under the bass voice (one per layer). */
+  private subs: { osc: OscillatorNode; gain: GainNode; layer: 0 | 1 }[] = [];
   /** Everything this bank plays goes through here, so stop() can silence it for sure. */
   private bus: GainNode;
   /** Pluck mode: the shared strike envelope for the chord voices. */
@@ -199,7 +251,7 @@ export class VoiceBank {
     for (let L = 0; L < this.layers; L++) {
       for (let v = 0; v < score.config.voices; v++) {
         const osc = ctx.createOscillator();
-        osc.type = a.wave;
+        setWave(ctx, osc, a.wave);
         // The second layer is detuned the other way, which keeps crossfades shimmering rather than phasing.
         osc.detune.value = L === 0 ? score.detune[v] : -score.detune[v];
         osc.frequency.value = midiToHz(this.layers === 2 ? layerAt(score, L as 0 | 1, v, offset).p : pitchAt(score, v, offset));
@@ -213,9 +265,23 @@ export class VoiceBank {
         this.gains.push(g);
       }
     }
+    if (a.sub > 0) {
+      for (let L = 0; L < this.layers; L++) {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        const p0 = this.layers === 2 ? layerAt(score, L as 0 | 1, 0, offset).p : pitchAt(score, 0, offset);
+        osc.frequency.value = midiToHz(p0 - 12);
+        const g = ctx.createGain();
+        g.gain.value = 0;
+        osc.connect(g).connect(voiceOut);
+        osc.start(when);
+        this.oscs.push(osc);
+        this.subs.push({ osc, gain: g, layer: L as 0 | 1 });
+      }
+    }
     if (score.config.melody.enabled) {
       const osc = ctx.createOscillator();
-      osc.type = score.config.melody.wave;
+      setWave(ctx, osc, score.config.melody.wave);
       osc.frequency.value = midiToHz(melodyAt(score, offset)?.p ?? score.startNote);
       const g = ctx.createGain();
       g.gain.value = 0;
@@ -290,6 +356,29 @@ export class VoiceBank {
         }
         setCurve(this.oscs[idx].frequency, freq, at, dur);
         setCurve(this.gains[idx].gain, gain, at, dur);
+      }
+      for (const sub of this.subs) {
+        const freq = new Float32Array(n);
+        const gain = new Float32Array(n);
+        const subGain = cfg.audio.sub * 2.4 * (1.25 / V);
+        for (let i = 0; i < n; i++) {
+          const raw = t0 + (i / (n - 1)) * CHUNK;
+          const t = wrap(raw);
+          let p: number;
+          let g = 1;
+          if (this.layers === 2) {
+            const st = layerAt(this.score, sub.layer, 0, t);
+            p = st.p;
+            g = st.g;
+          } else p = pitchAt(this.score, 0, t);
+          freq[i] = midiToHz(p - 12);
+          let env = Math.min(1, raw / 0.05);
+          if (this.offset > 0) env *= Math.min(1, (raw - this.offset) / 0.03);
+          if (raw > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (raw - fadeOutStart) / fadeLen)));
+          gain[i] = subGain * g * Math.max(0, env) * swellAt(this.score, 0, t);
+        }
+        setCurve(sub.osc.frequency, freq, at, dur);
+        setCurve(sub.gain.gain, gain, at, dur);
       }
       if (this.duck) {
         const m = Math.round(CHUNK * ARTIC_RATE) + 1;
@@ -600,7 +689,7 @@ export class LivePlayer {
     notes.forEach((n, v) => {
       const f = midiToHz(n);
       const osc = ctx.createOscillator();
-      osc.type = a.wave;
+      setWave(ctx, osc, a.wave);
       osc.frequency.value = f;
       osc.detune.value = score.detune[v % score.detune.length] ?? 0;
       const g = ctx.createGain();

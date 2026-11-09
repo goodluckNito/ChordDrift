@@ -106,6 +106,7 @@ Line thickness and dot size follow the level over time, in the video as well. **
 **Pluck.** Timing → Chord changes → **Pluck** makes chords strike and ring out:
 - **Glide into the hit:** voices slide during the previous chord's quiet tail and land together on the change, so the hit is on the new chord.
 - **Strike pattern:** Rhythm → Strike pattern re-strikes the *current* chord at the tempo, with presets (quarters, eighths, sixteenths, tresillo, triplets, offbeats, gallop) or your own pattern in the rhythm notation, where rests skip a strike. Chords still change on their own, slower timing, so you get a fast pulse over an unhurried progression.
+- **Fullness:** the default **Warm** wave is a soft, saw-like tone (strong 2nd and 3rd harmonics, rolling off above), matched to the reference videos. **Sub bass** adds a sine an octave under the lowest voice. **Warmth** saturates the mix gently. **Stereo width** sets both the voice panning and how wide the reverb tail is. The default is nearly mono, so the sound stays solid and centred.
 - **Envelope:** attack, decay and sustain (Sound) shape each strike, and the lines show every hit. The sound presets (**Ambient**, **Pluck**, **Dark**) change only the sound: envelope, swells, reverb and tone. They never touch rhythm, timing, harmony or theme. **Default sound** resets just the sound.
 
 **Themes.** Presets: Paper, Sepia, Midnight, Neon, Blueprint, Terminal, Chromatic, Sunset and Hex. You can also choose your own:
@@ -183,7 +184,7 @@ seed ─┬─ key ───────────┐
   - `styles.ts`: the genre planner (phrase templates, cadences, modulations, closing formulas, per-style voicing).
   - `themes.ts`: theme presets (colours, fonts, line colouring, glow, grid).
 - **`src/render/renderer.ts`** draws each frame as a pure function of (score, t): the pitch-vs-time plot, a camera that frames the current chord, label de-collision, the HUD (Σf, f↑/f↓, chord), and the final zoom-out to the whole piece.
-- **`src/audio/synth.ts`** runs one oscillator per voice with seeded detune and pan. Pitch and gain curves are sampled from `pitchAt` (and `swellAt`) and scheduled in short value-curve chunks, the same path for live, endless and offline playback. If the page stalls, the scheduler skips the chunks that fell behind instead of getting stuck. On browsers that reject closely spaced curves, it switches to smooth linear ramps. The master chain is a low-pass, a generated convolution reverb, and a limiter.
+- **`src/audio/synth.ts`** runs one oscillator per voice with seeded detune and pan. Pitch and gain curves are sampled from `pitchAt` (and `swellAt`) and scheduled in short value-curve chunks, the same path for live, endless and offline playback. If the page stalls, the scheduler skips the chunks that fell behind instead of getting stuck. On browsers that reject closely spaced curves, it switches to smooth linear ramps. A sub oscillator doubles the bass voice an octave down. The master chain is a low-pass, a gentle tanh saturator (Warmth), a generated convolution reverb whose stereo spread follows Stereo width, and a limiter.
 
 ## Configuration
 
@@ -198,7 +199,7 @@ Everything the UI sets is a plain config object (see `src/engine/config.ts` for 
   "timing": { "intro": 1, "bloom": 2.7, "hold": 2, "glide": 0.8, "stagger": 0.25, "arrival": 1.5, "outro": 1.2 },
   "rhythm": { "tempo": 76, "chords": "" },
   "melody": { "enabled": false, "rhythm": "", "density": 0.5, "register": "high", "fill": "continuous", "wave": "triangle" },
-  "audio": { "wave": "sine", "detuneCents": 3, "reverb": 0.35, "lowpass": 7000, "swell": "off", "swellDepth": 0.65 },
+  "audio": { "wave": "warm", "detuneCents": 3, "reverb": 0.35, "lowpass": 10000, "width": 0.12, "sub": 0.5, "warmth": 0.35, "swell": "off", "swellDepth": 0.65 },
   "video": { "width": 1080, "height": 1920, "fps": 60, "historySeconds": 5 }
 }
 ```

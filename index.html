@@ -209,6 +209,7 @@
             </label>
             <label data-melody>Wave
               <select data-path="melody.wave">
+                <option value="warm">Warm (rich)</option>
                 <option value="sine">Sine</option>
                 <option value="triangle">Triangle</option>
                 <option value="sawtooth">Saw</option>
@@ -322,6 +323,7 @@
             <legend>Sound</legend>
             <label>Wave
               <select data-path="audio.wave">
+                <option value="warm">Warm (rich)</option>
                 <option value="sine">Sine</option>
                 <option value="triangle">Triangle</option>
                 <option value="sawtooth">Saw</option>
@@ -330,6 +332,15 @@
             </label>
             <label>Brightness (Hz) <output></output>
               <input data-path="audio.lowpass" type="range" min="400" max="14000" step="100" />
+            </label>
+            <label>Sub bass <output></output>
+              <input data-path="audio.sub" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label>Warmth <output></output>
+              <input data-path="audio.warmth" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label>Stereo width <output></output>
+              <input data-path="audio.width" type="range" min="0" max="1" step="0.05" />
             </label>
             <label>Swells
               <select data-path="audio.swell">
