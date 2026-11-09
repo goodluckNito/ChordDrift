@@ -5,6 +5,7 @@ import './style.css';
 import { LivePlayer, encodeWav, renderOffline } from './audio/synth';
 import {
   KEY_NAMES,
+  RHYTHM_PRESETS,
   SCALES,
   chordIndexAt,
   chordToToken,
@@ -119,6 +120,17 @@ function startApp() {
     .map(([fam, ids]) => `<optgroup label="${fam}">${ids.map((id) => `<option value="${id}">${SCALES[id].name}</option>`).join('')}</optgroup>`)
     .join('');
 
+  const presetSelect = $<HTMLSelectElement>('#rhythm-preset');
+  presetSelect.innerHTML = RHYTHM_PRESETS.map((_, i) => `<option value="${i}"></option>`).join('') + '<option value="custom">Custom</option>';
+  RHYTHM_PRESETS.forEach((p, i) => (presetSelect.options[i].textContent = p.name));
+  presetSelect.addEventListener('change', () => {
+    const preset = RHYTHM_PRESETS[Number(presetSelect.value)];
+    if (!preset) return;
+    state.rhythm.chords = preset.chords;
+    writeForm();
+    rebuild(true);
+  });
+
   const player = new LivePlayer();
   let state: ChordDriftConfig = resolveConfig();
   let score: Score;
@@ -154,6 +166,10 @@ function startApp() {
     $('#complexity-label').textContent = `${state.complexity} · ${COMPLEXITY_NAMES[state.complexity]}`;
     const written = state.progression.trim().length > 0;
     for (const el of form.querySelectorAll<HTMLElement>('[data-show]')) el.hidden = state.mode !== el.dataset.show;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-free]')) el.hidden = state.rhythm.chords.trim().length > 0;
+    const presetIdx = RHYTHM_PRESETS.findIndex((p) => p.chords === state.rhythm.chords.trim());
+    presetSelect.value = presetIdx >= 0 ? String(presetIdx) : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-hide]')) {
       const conds = el.dataset.hide!.split(' ');
       el.hidden = (conds.includes('endless') && state.endless) || (conds.includes('written') && written);
@@ -171,7 +187,14 @@ function startApp() {
       setStatus(String((e as Error).message ?? e));
       return;
     }
-    $('#prog-errors').textContent = score.errors.join(' · ');
+    const errs = (prefix: string | null) =>
+      score.errors
+        .filter((e) => (prefix ? e.startsWith(prefix) : !/^(chord|melody) rhythm: /.test(e)))
+        .map((e) => (prefix ? e.slice(prefix.length) : e))
+        .join(' · ');
+    $('#prog-errors').textContent = errs(null);
+    $('#rhythm-errors').textContent = errs('chord rhythm: ');
+    $('#melody-errors').textContent = errs('melody rhythm: ');
     pausedAt = Number.isFinite(score.timeline.end) ? Math.min(t, score.timeline.end) : t;
     score.extend(pausedAt);
     keySelect.options[0].textContent = state.key === 'auto' ? `Auto (${score.keyName})` : 'Auto (seeded)';
@@ -386,7 +409,7 @@ function startApp() {
     syncVisibility();
     const path = el.dataset.path;
     clearTimeout(debounce);
-    const delay = path === 'progression' ? 450 : 160;
+    const delay = path === 'progression' || path.endsWith('rhythm') || path === 'rhythm.chords' ? 450 : 160;
     debounce = window.setTimeout(() => rebuild(path !== 'seed'), delay);
   });
   form.addEventListener('submit', (e) => e.preventDefault());

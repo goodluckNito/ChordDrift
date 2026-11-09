@@ -114,8 +114,77 @@
           </fieldset>
 
           <fieldset>
+            <legend>Rhythm</legend>
+            <label>Tempo (BPM) <output></output>
+              <input data-path="rhythm.tempo" type="range" min="40" max="200" step="1" />
+            </label>
+            <label>Preset
+              <select id="rhythm-preset"></select>
+            </label>
+            <label class="wide">Chord rhythm <span class="muted">(empty = free timing below)</span>
+              <input data-path="rhythm.chords" class="mono" spellcheck="false" placeholder="e.g.  q. e+h   or   h ht ht ht   or   (q. q. q)*2 w" />
+            </label>
+            <p id="rhythm-errors" class="errors wide" role="alert"></p>
+            <details class="help wide">
+              <summary>Rhythm notation</summary>
+              <dl>
+                <dt class="mono">w h q e s</dt><dd>Whole, half, quarter, eighth, sixteenth. Numbers work too: 1 2 4 8 16 32.</dd>
+                <dt class="mono">q.  h..</dt><dd>Dotted (×1.5) and double-dotted (×1.75).</dd>
+                <dt class="mono">et et et  ht  8t</dt><dd>Triplets (×⅔) — three eighth-triplets fill one beat.</dd>
+                <dt class="mono">h+e</dt><dd>Tie: one note lasting a half plus an eighth.</dd>
+                <dt class="mono">rq  r8</dt><dd>Rests. In a chord rhythm a rest just holds the chord longer.</dd>
+                <dt class="mono">e*4  (q e e)*2</dt><dd>Repeat a note or a group. Patterns loop; | and , are ignored.</dd>
+              </dl>
+              <p class="muted">A beat is a quarter note at the tempo. Chord rhythms start when the bloom lands; each chord's glide is fitted inside its slot.</p>
+            </details>
+          </fieldset>
+
+          <fieldset>
+            <legend>Melody</legend>
+            <label class="check wide">
+              <input data-path="melody.enabled" type="checkbox" />
+              <span>Randomized melody over the chords</span>
+            </label>
+            <label class="wide" data-melody>Melody rhythm <span class="muted">(empty = random)</span>
+              <input data-path="melody.rhythm" class="mono" spellcheck="false" placeholder="e.g.  e e q  et et et h  rq q." />
+            </label>
+            <p id="melody-errors" class="errors wide" role="alert"></p>
+            <label data-melody>Density <output></output>
+              <input data-path="melody.density" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label data-melody>Register
+              <select data-path="melody.register">
+                <option value="low">Low (A3–C5)</option>
+                <option value="mid">Middle (G4–A5)</option>
+                <option value="high">High (G5–A6)</option>
+                <option value="top">Top (D6–E7)</option>
+              </select>
+            </label>
+            <label data-melody>Plays
+              <select data-path="melody.fill">
+                <option value="continuous">Throughout</option>
+                <option value="gaps">Between chord changes</option>
+              </select>
+            </label>
+            <label data-melody>Wave
+              <select data-path="melody.wave">
+                <option value="sine">Sine</option>
+                <option value="triangle">Triangle</option>
+                <option value="sawtooth">Saw</option>
+                <option value="square">Square</option>
+              </select>
+            </label>
+            <label data-melody>Level <output></output>
+              <input data-path="melody.level" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label data-melody>Portamento (s) <output></output>
+              <input data-path="melody.glide" type="range" min="0" max="0.4" step="0.01" />
+            </label>
+          </fieldset>
+
+          <fieldset>
             <legend>Timing</legend>
-            <label>Chord hold (s) <output></output>
+            <label data-free>Chord hold (s) <output></output>
               <input data-path="timing.hold" type="range" min="0.8" max="6" step="0.1" />
             </label>
             <label>Glide (s) <output></output>
@@ -135,7 +204,12 @@
               <select data-path="audio.wave">
                 <option value="sine">Sine</option>
                 <option value="triangle">Triangle</option>
+                <option value="sawtooth">Saw</option>
+                <option value="square">Square</option>
               </select>
+            </label>
+            <label>Brightness (Hz) <output></output>
+              <input data-path="audio.lowpass" type="range" min="400" max="14000" step="100" />
             </label>
             <label>Reverb <output></output>
               <input data-path="audio.reverb" type="range" min="0" max="1" step="0.05" />

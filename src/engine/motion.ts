@@ -94,3 +94,44 @@ export function frequencyStats(freqs: number[]): { sum: number; spread: number }
   }
   return { sum, spread: max / min };
 }
+
+/**
+ * The melody at time t: pitch (MIDI) and gain 0..1 (0 during rests). Notes glide
+ * into each other legato; repeated notes and notes after rests re-attack.
+ */
+export function melodyAt(score: Score, t: number): { p: number; g: number } | null {
+  const notes = score.melody;
+  if (!notes.length) return null;
+  let lo = 0;
+  let hi = notes.length - 1;
+  let idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (notes[mid].t <= t) {
+      idx = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  const lastPitch = (from: number) => {
+    for (let i = from; i >= 0; i--) if (notes[i].p !== null) return notes[i].p as number;
+    for (const n of notes) if (n.p !== null) return n.p;
+    return score.startNote;
+  };
+  if (idx < 0) return { p: lastPitch(0), g: 0 };
+  const n = notes[idx];
+  if (n.p === null || t >= n.t + n.d) return { p: lastPitch(idx), g: 0 };
+  const prev = notes[idx - 1];
+  const next = notes[idx + 1];
+  const legatoFrom = prev && prev.p !== null && prev.t + prev.d >= n.t - 1e-6 ? prev.p : null;
+  const from = n.from ?? legatoFrom;
+  const glide = Math.min(n.glide ?? score.config.melody.glide, n.d * (n.glide ? 1 : 0.5));
+  const x = t - n.t;
+  const p = from !== null && glide > 0 && from !== n.p ? from + (n.p - from) * ease(x / glide, score.config.motion.easing) : n.p;
+  let g = 1;
+  const attack = 0.012;
+  if (legatoFrom === null) g *= Math.min(1, x / attack);
+  else if (legatoFrom === n.p) g *= 0.35 + 0.65 * Math.min(1, x / attack); // re-articulate repeated notes
+  const remaining = n.t + n.d - t;
+  if (!next || next.p === null || next.p === n.p) g *= Math.min(1, remaining / 0.04);
+  return { p, g };
+}

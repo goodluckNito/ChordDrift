@@ -1,4 +1,5 @@
-import { pitchAt } from '../engine/motion';
+import { melodyAt, pitchAt } from '../engine/motion';
+import type { Wave } from '../engine/config';
 import { stream } from '../engine/rng';
 import type { Score } from '../engine/score';
 import { midiToHz } from '../engine/theory';
@@ -11,6 +12,9 @@ import { midiToHz } from '../engine/theory';
  */
 
 const CONTROL_RATE = 250; // Hz; linear interpolation between points at this rate is inaudible
+
+/** Rough loudness compensation: saw and square carry far more energy than a sine. */
+export const WAVE_GAIN: Record<Wave, number> = { sine: 1, triangle: 0.95, sawtooth: 0.75, square: 0.6 };
 
 export interface Master {
   input: AudioNode;
@@ -83,6 +87,7 @@ const CHUNK = 0.5;
 export class VoiceBank {
   private oscs: OscillatorNode[] = [];
   private gains: GainNode[] = [];
+  private lead: { osc: OscillatorNode; gain: GainNode } | null = null;
   private nextChunk = 0;
   private stopped = false;
 
@@ -113,6 +118,17 @@ export class VoiceBank {
       this.oscs.push(osc);
       this.gains.push(g);
     }
+    if (score.config.melody.enabled) {
+      const osc = ctx.createOscillator();
+      osc.type = score.config.melody.wave;
+      osc.frequency.value = midiToHz(melodyAt(score, offset)?.p ?? score.startNote);
+      const g = ctx.createGain();
+      g.gain.value = 0;
+      osc.connect(g).connect(master.input);
+      osc.start(when);
+      this.oscs.push(osc);
+      this.lead = { osc, gain: g };
+    }
     if (Number.isFinite(endAt)) {
       const stopAt = when + Math.max(0, endAt - offset) + 0.05;
       for (const o of this.oscs) o.stop(stopAt);
@@ -132,7 +148,8 @@ export class VoiceBank {
     const sr = this.ctx.sampleRate;
     const fadeLen = Math.max(0.05, Math.min(cfg.timing.outro * 0.7, 1.5));
     const fadeOutStart = this.endAt - fadeLen;
-    const baseGain = 1.25 / V;
+    const baseGain = (1.25 / V) * WAVE_GAIN[cfg.audio.wave];
+    const leadGain = 0.55 * cfg.melody.level * WAVE_GAIN[cfg.melody.wave];
     const n = Math.round(CHUNK * CONTROL_RATE) + 1;
     while (this.scheduledUntil < Math.min(until, this.endAt)) {
       const t0 = this.scheduledUntil;
@@ -155,6 +172,22 @@ export class VoiceBank {
         this.oscs[v].frequency.setValueCurveAtTime(freq, at, dur);
         this.gains[v].gain.setValueCurveAtTime(gain, at, dur);
       }
+      if (this.lead) {
+        const freq = new Float32Array(n);
+        const gain = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          const t = t0 + (i / (n - 1)) * CHUNK;
+          const m = melodyAt(this.score, t);
+          const f = midiToHz(m?.p ?? this.score.startNote);
+          freq[i] = f;
+          let env = 1;
+          if (this.offset > 0) env *= Math.min(1, (t - this.offset) / 0.03);
+          if (t > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (t - fadeOutStart) / fadeLen)));
+          gain[i] = leadGain * (m?.g ?? 0) * Math.pow(f / 440, -cfg.audio.tilt) * Math.max(0, env);
+        }
+        this.lead.osc.frequency.setValueCurveAtTime(freq, at, dur);
+        this.lead.gain.gain.setValueCurveAtTime(gain, at, dur);
+      }
       this.nextChunk++;
     }
   }
@@ -163,11 +196,12 @@ export class VoiceBank {
     if (this.stopped) return;
     this.stopped = true;
     const now = this.ctx.currentTime;
+    const gains = this.lead ? [...this.gains, this.lead.gain] : this.gains;
     for (let v = 0; v < this.oscs.length; v++) {
       try {
         // Quick fade to avoid a click, then stop.
-        this.gains[v].gain.cancelScheduledValues(now);
-        this.gains[v].gain.setTargetAtTime(0, now, 0.015);
+        gains[v].gain.cancelScheduledValues(now);
+        gains[v].gain.setTargetAtTime(0, now, 0.015);
         this.oscs[v].stop(now + 0.1);
       } catch {
         /* already stopped */
@@ -298,7 +332,7 @@ export class LivePlayer {
       osc.frequency.value = f;
       osc.detune.value = score.detune[v % score.detune.length] ?? 0;
       const g = ctx.createGain();
-      const peak = (1.1 / notes.length) * Math.pow(f / 220, -a.tilt);
+      const peak = (1.1 / notes.length) * Math.pow(f / 220, -a.tilt) * WAVE_GAIN[a.wave];
       g.gain.setValueAtTime(0, now);
       g.gain.linearRampToValueAtTime(peak, now + 0.08);
       g.gain.setTargetAtTime(0, now + seconds * 0.6, seconds * 0.15);

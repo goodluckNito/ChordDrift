@@ -9,7 +9,11 @@ import { SCALES } from './theory';
 export type Mode = 'scale' | 'drift' | 'voiceled' | 'free';
 const MODE_ALIASES: Record<string, Mode> = { diatonic: 'scale', chromatic: 'voiceled' };
 export type Easing = 'smootherstep' | 'cosine';
-export type Wave = 'sine' | 'triangle';
+export type Wave = 'sine' | 'triangle' | 'sawtooth' | 'square';
+export type Register = 'low' | 'mid' | 'high' | 'top';
+
+/** MIDI ranges for the melody's registers. */
+export const REGISTERS: Record<Register, [number, number]> = { low: [57, 72], mid: [67, 81], high: [79, 93], top: [86, 100] };
 
 export interface Timing {
   /** Unison hold before the bloom (s). */
@@ -83,6 +87,27 @@ export interface ChordDriftConfig {
     candidates: number;
   };
   motion: { easing: Easing };
+  rhythm: {
+    /** Beats (quarter notes) per minute, for chord and melody rhythms. */
+    tempo: number;
+    /** Chord-change rhythm in rhythm notation (see rhythm.ts); empty = free timing in seconds. Loops. */
+    chords: string;
+  };
+  melody: {
+    enabled: boolean;
+    /** Melody rhythm in rhythm notation; empty = random rhythm at `density`. Loops. */
+    rhythm: string;
+    /** 0 = sparse, long notes … 1 = busy, short notes (random rhythm only). */
+    density: number;
+    register: Register;
+    /** continuous = over everything; gaps = only while chords hold still, resting through changes. */
+    fill: 'continuous' | 'gaps';
+    /** Portamento between notes (s). */
+    glide: number;
+    wave: Wave;
+    /** 0..1 level relative to the chords. */
+    level: number;
+  };
   audio: {
     wave: Wave;
     detuneCents: number;
@@ -95,7 +120,7 @@ export interface ChordDriftConfig {
     width: number;
     gain: number;
   };
-  video: { width: number; height: number; fps: number; historySeconds: number; nowPosition: number };
+  video: { width: number; height: number; fps: number; historySeconds: number; nowPosition: number; melodyColor: string };
 }
 
 export const DEFAULT_CONFIG: ChordDriftConfig = {
@@ -130,8 +155,10 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   },
   voicing: { pedalBonus: 1.5, bassWeight: 0.3, movePenalty: 2, mudFloor: 48, minGap: 3, maxCopies: 3, candidates: 24 },
   motion: { easing: 'smootherstep' },
+  rhythm: { tempo: 76, chords: '' },
+  melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
   audio: { wave: 'sine', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 7000, width: 0.6, gain: 0.9 },
-  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75 },
+  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, melodyColor: '#c8442b' },
 };
 
 export type DeepPartial<T> = {
@@ -165,6 +192,18 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.complexity = Math.max(1, Math.min(5, Math.round(Number(c.complexity) || 3)));
   c.progression = String(c.progression ?? '');
   c.endless = Boolean(c.endless);
+  c.rhythm.tempo = Math.max(20, Math.min(320, Number(c.rhythm.tempo) || 76));
+  c.rhythm.chords = String(c.rhythm.chords ?? '');
+  c.melody.enabled = Boolean(c.melody.enabled);
+  c.melody.rhythm = String(c.melody.rhythm ?? '');
+  c.melody.density = Math.max(0, Math.min(1, Number(c.melody.density)));
+  if (!(c.melody.register in REGISTERS)) c.melody.register = 'high';
+  if (c.melody.fill !== 'gaps') c.melody.fill = 'continuous';
+  c.melody.glide = Math.max(0, Number(c.melody.glide) || 0);
+  c.melody.level = Math.max(0, Math.min(1, Number(c.melody.level)));
+  const waves: Wave[] = ['sine', 'triangle', 'sawtooth', 'square'];
+  if (!waves.includes(c.audio.wave)) c.audio.wave = 'sine';
+  if (!waves.includes(c.melody.wave)) c.melody.wave = 'triangle';
   for (const k of Object.keys(c.timing) as (keyof Timing)[]) c.timing[k] = Math.max(0, Number(c.timing[k]) || 0);
   c.timing.bloom = Math.max(0.1, c.timing.bloom);
   c.timing.glide = Math.max(0.05, c.timing.glide);

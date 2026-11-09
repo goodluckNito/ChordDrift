@@ -13,6 +13,8 @@ npm run dev          # open the player at http://localhost:5173
 
 Space plays/pauses, ← → seek, R rolls a new seed.
 
+**On your phone (same Wi-Fi):** run `npm run dev:lan` and open the `Network:` address it prints, e.g. `http://192.168.1.20:5173`. (`npm run dev --host` doesn't work because npm swallows the flag; the long form is `npm run dev -- --host`.) On Windows, allow Node.js through the firewall for **Private** networks the first time. If you dismissed that prompt, go to *Windows Security → Firewall → Allow an app* and tick Node.js under Private. Make sure your PC's network profile is Private, not Public. On iPhone, turn off the silent switch, because it mutes web audio.
+
 ## Exploring progressions
 
 **Key & harmony**
@@ -41,6 +43,23 @@ Separate chords with spaces, commas, `|`, `→` or `>`. Quality aliases like `Δ
 
 - **Chords in this key** shows the chord on every degree of the current scale at the current complexity. Click one to hear it and append it to the progression.
 - **Freeze chords to text** writes whatever is playing (generated or not) into the box as key-relative numerals. The text regenerates exactly the same chords, so you can generate, freeze, swap one chord for `?`, and keep exploring.
+
+**Rhythm.** Set a tempo and a chord rhythm and the changes snap to a beat grid. Leave the rhythm empty for the default free timing. The same notation drives melodies:
+
+```
+w h q e s   (or 1 2 4 8 16 32)    whole … sixteenth
+q.  h..                           dotted, double-dotted
+et et et   ht   8t                triplets: three eighth-triplets fill one beat
+h+e                               tie
+rq  r8                            rest (in a chord rhythm it just holds the chord longer)
+e*4   (q e e)*2                   repeat a note or group; patterns loop, | and , are ignored
+```
+
+For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half-note triplets. Presets are in the Rhythm section.
+
+**Melody.** Turn on a randomized lead line, drawn in red above the chords. It lands on chord tones on strong beats and whenever the harmony changes, and steps through the scale in between, skipping notes that clash a semitone above a chord tone. It moves with some momentum, leaps occasionally, and joins the final unison. You can give it a rhythm in the notation above, or leave that empty for a random rhythm at the chosen density. It can play throughout or only between chord changes. Register, wave, level and portamento are adjustable.
+
+**Sound.** Choose sine, triangle, saw or square for the chords, and separately for the melody. Saw and square are level-matched, and the Brightness control sets the master low-pass.
 
 **Projects.** Save to the browser's project list, export or import `.chorddrift.json` files, or copy a share link: the URL holds the full config, so a link always reopens the exact piece.
 
@@ -85,7 +104,9 @@ seed ─┬─ key ───────────┐
   - `progression.ts`: the generators. Root motion is weighted by interval (falling fifths and thirds strongest), which works in any scale. A few candidates are drawn and scored by voice-leading cost, so smoothness is a real knob.
   - `voicing.ts`: the core. Bass = the root in MIDI 36–47; 12 upper voices are matched sorted-to-sorted (no crossings). A dynamic program finds the cheapest legal voicing exactly: every required tone present, no tight intervals below C3, at most three copies of a pitch class. Cost = semitones moved + a penalty per moving voice + 0.3 × bass motion − a bonus for holding the top voice (the pedal). Seeded noise on re-runs gives tie-breaking alternatives, and the rules relax step by step for sparse chords.
   - `score.ts`: builds the timeline (intro → bloom → changes → arrival) chord by chord. Endless pieces grow lazily and deterministically.
-  - `motion.ts`: `pitchAt(v, t)`, a smootherstep (or cosine) S-curve in pitch space, not in Hz.
+  - `motion.ts`: `pitchAt(v, t)`, a smootherstep (or cosine) S-curve in pitch space, not in Hz, plus `melodyAt(t)` for the lead (pitch and gain, legato glides, re-attacks).
+  - `rhythm.ts`: the rhythm notation parser and presets.
+  - `melody.ts`: the melody generator (rhythm cells or written rhythm, chord-tone and scale-step random walk).
 - **`src/render/renderer.ts`** draws each frame as a pure function of (score, t): the pitch-vs-time plot, a camera that frames the current chord, label de-collision, the HUD (Σf, f↑/f↓, chord), and the final zoom-out to the whole piece.
 - **`src/audio/synth.ts`** runs one oscillator per voice with seeded detune and pan. Pitch and gain curves are sampled from `pitchAt` and scheduled in short value-curve chunks, the same path for live, endless and offline playback. The master chain is a low-pass, a generated convolution reverb, and a limiter.
 
@@ -100,7 +121,9 @@ Everything the UI sets is a plain config object (see `src/engine/config.ts` for 
   "progression": "", "endless": false, "driftProbability": 0.25, "smoothness": 1,
   "chordCount": [8, 12], "startNote": "fifth", "endNote": "tonic+2oct",
   "timing": { "intro": 1, "bloom": 2.7, "hold": 2, "glide": 0.8, "stagger": 0.25, "arrival": 1.5, "outro": 1.2 },
-  "audio": { "wave": "sine", "detuneCents": 3, "reverb": 0.35 },
+  "rhythm": { "tempo": 76, "chords": "" },
+  "melody": { "enabled": false, "rhythm": "", "density": 0.5, "register": "high", "fill": "continuous", "wave": "triangle" },
+  "audio": { "wave": "sine", "detuneCents": 3, "reverb": 0.35, "lowpass": 7000 },
   "video": { "width": 1080, "height": 1920, "fps": 60, "historySeconds": 5 }
 }
 ```
@@ -108,7 +131,7 @@ Everything the UI sets is a plain config object (see `src/engine/config.ts` for 
 ## Development
 
 ```bash
-npm test            # vitest: theory, chords, parser + freeze round-trip, voicing rules, determinism, endless, projects
+npm test            # vitest: theory, chords, parser + freeze round-trip, voicing, rhythm, melody, determinism, endless, projects
 npm run typecheck
 npm run build       # static site in dist/ (relative paths, host anywhere)
 npm run stats       # musical health check over 200 seeds: voices moved per change, pedal hold rate

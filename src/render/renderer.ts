@@ -1,4 +1,4 @@
-import { chordLabelAt, frequencyStats, pitchAt, smootherstep } from '../engine/motion';
+import { chordLabelAt, frequencyStats, melodyAt, pitchAt, smootherstep } from '../engine/motion';
 import type { Score } from '../engine/score';
 import { midiToHz } from '../engine/theory';
 
@@ -56,6 +56,14 @@ function instantExtent(score: Score, t: number): Extent {
     const p = pitchAt(score, v, t);
     if (p < lo) lo = p;
     if (p > hi) hi = p;
+  }
+  // Keep the melody in frame too (its register, so rests don't make the camera jump).
+  if (score.melody.length && t >= score.gridStart) {
+    const m = melodyAt(score, t);
+    if (m) {
+      hi = Math.max(hi, m.p);
+      lo = Math.min(lo, m.p);
+    }
   }
   return { lo, hi };
 }
@@ -162,6 +170,28 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       }
     }
     ctx.stroke();
+
+    // Melody: a separate line in the accent colour, broken during rests.
+    if (score.melody.length) {
+      ctx.strokeStyle = cfg.video.melodyColor;
+      ctx.lineWidth = 3.6 * u;
+      ctx.beginPath();
+      let pen = false;
+      for (let i = 0; i <= steps; i++) {
+        const time = tFrom + ((tTo - tFrom) * i) / steps;
+        const m = melodyAt(score, time);
+        if (!m || m.g < 0.05) {
+          pen = false;
+          continue;
+        }
+        const x = xOf(time);
+        const y = yOf(m.p);
+        if (pen) ctx.lineTo(x, y);
+        else ctx.moveTo(x, y);
+        pen = true;
+      }
+      ctx.stroke();
+    }
   }
 
   // ---- Playhead dots + labels ---------------------------------------------
@@ -178,6 +208,14 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     ctx.arc(dotX, y, 7 * u, 0, Math.PI * 2);
     ctx.fill();
   }
+  const lead = score.melody.length ? melodyAt(score, tNow) : null;
+  const leadOn = lead && lead.g > 0.05 && tNow < tl.arrivalStart;
+  if (leadOn) {
+    ctx.fillStyle = cfg.video.melodyColor;
+    ctx.beginPath();
+    ctx.arc(dotX, yOf(lead!.p), 7 * u, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 
   const labelAlpha = 1 - smootherstep(z * 2);
@@ -189,7 +227,15 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       const y = yOf(p);
       byText.set(text, byText.has(text) ? (byText.get(text)! + y) / 2 : y);
     }
-    const labels = [...byText].map(([text, y]) => ({ text, y, ly: y })).sort((a, b) => a.y - b.y);
+    const labels = [...byText].map(([text, y]) => ({ text, y, ly: y, color: THEME.text }));
+    if (leadOn) {
+      const text = `${midiToHz(lead!.p).toFixed(2)} Hz`;
+      const y = yOf(lead!.p);
+      const same = labels.find((l) => l.text === text);
+      if (same) same.color = cfg.video.melodyColor;
+      else labels.push({ text, y, ly: y, color: cfg.video.melodyColor });
+    }
+    labels.sort((a, b) => a.y - b.y);
     // Min-gap pass: push labels apart vertically; dots stay where they are.
     const gap = 25 * u;
     for (let i = 1; i < labels.length; i++) labels[i].ly = Math.max(labels[i].ly, labels[i - 1].ly + gap);
@@ -199,11 +245,13 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     for (let i = labels.length - 2; i >= 0; i--) labels[i].ly = Math.min(labels[i].ly, labels[i + 1].ly - gap);
 
     ctx.globalAlpha = labelAlpha;
-    ctx.fillStyle = THEME.text;
     ctx.font = `400 ${19 * u}px ${THEME.font}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    for (const l of labels) ctx.fillText(l.text, dotX + 33 * u, l.ly);
+    for (const l of labels) {
+      ctx.fillStyle = l.color;
+      ctx.fillText(l.text, dotX + 33 * u, l.ly);
+    }
     ctx.globalAlpha = 1;
   }
 

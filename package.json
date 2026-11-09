@@ -6,8 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:lan": "vite --host",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "preview:lan": "vite preview --host",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "score": "tsx scripts/score.ts",

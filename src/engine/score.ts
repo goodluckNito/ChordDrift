@@ -1,6 +1,8 @@
 import { resolveConfig, type ChordDriftConfig, type DeepPartial } from './config';
 import { ProgressionWalker, type ChordSpec } from './progression';
+import { MelodyGenerator, type MelodyNote } from './melody';
 import { parseProgression, type ProgressionToken } from './progression-text';
+import { chordDurations, parseRhythm } from './rhythm';
 import { formatSeed, parseSeed, randInt, stream, uniform, type Rng } from './rng';
 import { DEGREE_OFFSETS, SCALES, mod12, parseNote, parsePc, spellNote, tonicName } from './theory';
 import { spreadTemplate, voiceChord, voiceLeadingCost, type VoicingRules } from './voicing';
@@ -61,7 +63,12 @@ export interface Score {
   timeline: Timeline;
   /** Lowest and highest MIDI pitch anywhere in the (generated part of the) piece. */
   pitchRange: [number, number];
-  /** Problems reading the written progression, if any. */
+  /** Melody line (empty when the melody is off). Grows over time when endless. */
+  melody: MelodyNote[];
+  /** Where the beat grid starts (end of the bloom), and seconds per beat. */
+  gridStart: number;
+  beat: number;
+  /** Problems reading the written progression or rhythms, if any. */
   errors: string[];
   /** Make sure chords exist up to time t (no-op for finite pieces). Deterministic. */
   extend(t: number): void;
@@ -114,6 +121,9 @@ class ScoreBuilder {
   private current: number[];
   private nextChange: number;
   private total: number | null;
+  /** Chord durations in seconds from the chord rhythm, or null for free timing. */
+  private durations: number[] | null;
+  private melody: MelodyGenerator | null = null;
 
   constructor(input: DeepPartial<ChordDriftConfig> | ChordDriftConfig) {
     const cfg = (this.cfg = resolveConfig(input as DeepPartial<ChordDriftConfig>));
@@ -126,6 +136,12 @@ class ScoreBuilder {
     const keyPc = cfg.key === 'auto' ? autoKey : parsePc(cfg.key) ?? 0;
 
     const parsed = parseProgression(cfg.progression);
+    const beat = 60 / cfg.rhythm.tempo;
+    const chordRhythm = parseRhythm(cfg.rhythm.chords);
+    const durs = chordDurations(chordRhythm.steps);
+    this.durations = durs.length ? durs.map((b) => b * beat) : null;
+    const melodyRhythm = parseRhythm(cfg.melody.rhythm);
+    const gridStart = cfg.timing.intro + cfg.timing.bloom;
     const tokens: ProgressionToken[] = parsed.tokens;
     const lengthRng = stream(seed, 'length');
     const randomCount = randInt(lengthRng, cfg.chordCount[0], cfg.chordCount[1]);
@@ -160,12 +176,24 @@ class ScoreBuilder {
       labels: [{ t: 0, text: `unison ${spellNote(startNote, keyPc, cfg.scale)}` }],
       timeline: { introEnd: cfg.timing.intro, arrivalStart: inf, arrivalEnd: inf, musicEnd: inf, zoomStart: inf, zoomEnd: inf, end: inf },
       pitchRange: [startNote, startNote],
-      errors: parsed.errors,
+      melody: [],
+      gridStart,
+      beat,
+      errors: [
+        ...parsed.errors,
+        ...chordRhythm.errors.map((e) => `chord rhythm: ${e}`),
+        ...(cfg.melody.enabled ? melodyRhythm.errors.map((e) => `melody rhythm: ${e}`) : []),
+      ],
       extend: (t: number) => this.extendTo(t),
     };
+    if (cfg.melody.enabled) {
+      this.melody = new MelodyGenerator(cfg, gridStart, melodyRhythm.steps, stream(seed, 'melody-rhythm'), stream(seed, 'melody-pitch'));
+      this.score.melody = this.melody.notes;
+    }
 
     if (this.total !== null) {
       for (let k = 0; k < this.total; k++) this.addChord();
+      this.melody?.extendTo(this.nextChange, this.melodyContext(), true);
       this.addArrival();
     } else {
       this.extendTo(0);
@@ -177,6 +205,41 @@ class ScoreBuilder {
     // Hard cap so a runaway request can't hang the page.
     let guard = 0;
     while (this.nextChange < t + LOOKAHEAD && guard++ < 500) this.addChord();
+    // Melody only runs where the harmony is known.
+    this.melody?.extendTo(this.nextChange - 1e-6, this.melodyContext());
+  }
+
+  private chordIndexAt(t: number): number {
+    const chords = this.score.chords;
+    let lo = 0;
+    let hi = chords.length - 1;
+    let idx = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (chords[mid].t <= t) {
+        idx = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    return idx;
+  }
+
+  private melodyContext() {
+    const chords = this.score.chords;
+    return {
+      chordAt: (t: number) => {
+        const i = this.chordIndexAt(t);
+        return i >= 0 ? chords[i] : null;
+      },
+      changesDuring: (t0: number, t1: number) => {
+        const i = Math.max(0, this.chordIndexAt(t1));
+        for (let k = i; k >= 0 && k >= i - 2; k--) {
+          const c = chords[k];
+          if (c.t < t1 && c.settled + 0.05 > t0) return true;
+        }
+        return false;
+      },
+    };
   }
 
   private addChord() {
@@ -191,15 +254,19 @@ class ScoreBuilder {
 
     const t = this.nextChange;
     const bloom = k === 0;
+    // With a chord rhythm, each chord owns a fixed slot; glides must finish inside it.
+    const slot = this.durations ? this.durations[k % this.durations.length] : Infinity;
     let span = 0;
     for (let v = 0; v < V; v++) {
-      const delay = this.staggerRng() * (bloom ? Math.min(T.stagger, T.bloom * 0.2) * 0.3 : T.stagger);
+      const maxDelay = bloom ? Math.min(T.stagger, T.bloom * 0.2) * 0.3 : Math.min(T.stagger, slot * 0.15);
+      const delay = this.staggerRng() * maxDelay;
       const p0 = this.current[v];
       const p1 = notes[v];
       if (p0 === p1) continue;
       const leap = Math.abs(p1 - p0);
       // The bloom fans out with a slight stagger but every voice lands together.
-      const d = bloom ? T.bloom - delay : T.glide * (1 + leap / 12);
+      let d = bloom ? T.bloom - delay : T.glide * (1 + leap / 12);
+      if (!bloom) d = Math.max(0.02, Math.min(d, slot * 0.85 - delay));
       score.moves[v].push({ t0: t + delay, d, p0, p1 });
       span = Math.max(span, delay + d);
     }
@@ -209,7 +276,12 @@ class ScoreBuilder {
     score.finalKeyPc = this.walker.tonic;
     score.pitchRange = [Math.min(score.pitchRange[0], ...notes), Math.max(score.pitchRange[1], ...notes)];
     const jitter = 1 + uniform(this.timeRng, -T.holdJitter, T.holdJitter);
-    this.nextChange = t + span + Math.max(0.35, T.hold * jitter - T.glide);
+    if (this.durations) {
+      // The bloom is a pickup: the beat grid starts when it lands.
+      this.nextChange = (bloom ? score.gridStart : t) + slot;
+    } else {
+      this.nextChange = t + span + Math.max(0.35, T.hold * jitter - T.glide);
+    }
     this.current = notes;
   }
 
@@ -225,11 +297,19 @@ class ScoreBuilder {
     }
     const arrivalEnd = arrivalStart + T.arrival;
     const musicEnd = arrivalEnd + T.outro;
+    if (this.melody) {
+      // The melody joins the final unison.
+      score.melody.push({ t: arrivalStart, d: musicEnd - arrivalStart, p: endNote, glide: T.arrival, from: this.melody.lastPitch });
+    }
     const zoomStart = arrivalEnd + 0.4;
     const zoomEnd = zoomStart + T.zoom;
     score.endNote = endNote;
     score.labels.push({ t: arrivalStart, text: `→ ${spellNote(endNote, this.walker.tonic, this.walker.scale)}` });
     score.pitchRange = [Math.min(score.pitchRange[0], endNote), Math.max(score.pitchRange[1], endNote)];
+    for (const n of score.melody) {
+      if (n.p === null) continue;
+      score.pitchRange = [Math.min(score.pitchRange[0], n.p), Math.max(score.pitchRange[1], n.p)];
+    }
     score.timeline = {
       introEnd: T.intro,
       arrivalStart,
