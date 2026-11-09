@@ -93,3 +93,27 @@ describe('compact links', () => {
     expect(code.length).toBeLessThan(old.length);
   });
 });
+
+describe('song moods', () => {
+  it('keeps chill songs on familiar ground, and leaves adventurous songs as they were', async () => {
+    const { songFromText } = await import('../src/engine');
+    for (const words of ['quiet harbor', 'neon chapel', 'salt meadow', 'feral comet', 'paper reef', 'lunar motel']) {
+      const c = resolveConfig(songFromText(words, 'chill'));
+      expect(['major', 'minor', 'dorian', 'mixolydian']).toContain(c.scale);
+      expect(c.complexity).toBeLessThanOrEqual(4);
+      expect(c.mode).not.toBe('voiceled');
+      expect(['none', 'pop', 'classical', 'cinematic', 'gospel']).toContain(c.style);
+    }
+    const adv = resolveConfig(songFromText('rusted comet'));
+    expect([adv.key, adv.scale, adv.style, adv.rhythm.tempo]).toEqual(['E', 'major', 'cinematic', 97]);
+  });
+
+  it('links chill songs as w= and round-trips them', async () => {
+    const { songFromText } = await import('../src/engine');
+    const { shareMood } = await import('../src/project');
+    const c = resolveConfig(songFromText('quiet harbor', 'chill'));
+    expect(encodeShare(c)).toBe('w=quiet+harbor');
+    expect(shareMood('w=quiet+harbor')).toBe('chill');
+    expect(resolveConfig(decodeShare('w=quiet+harbor')!)).toEqual(c);
+  });
+});

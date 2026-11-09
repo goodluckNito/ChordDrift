@@ -1,6 +1,6 @@
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from 'lz-string';
 /** Project save/load: browser library (localStorage), JSON files, and share links. */
-import { DEFAULT_CONFIG, resolveConfig, songFromText, type ChordDriftConfig, type DeepPartial } from './engine';
+import { DEFAULT_CONFIG, resolveConfig, songFromText, type ChordDriftConfig, type DeepPartial, type SongMood } from './engine';
 
 export interface Project {
   app: 'chord-drift';
@@ -126,8 +126,8 @@ function seedWords(seed: string | number): string | null {
 }
 
 /** The song those words make, in the given output format (what "Make" produces). */
-function wordsBase(words: string, video: { width: number; height: number; fps: number }): ChordDriftConfig {
-  const patch = songFromText(words);
+function wordsBase(words: string, video: { width: number; height: number; fps: number }, mood: SongMood): ChordDriftConfig {
+  const patch = songFromText(words, mood);
   return resolveConfig({ ...patch, video: { ...(patch.video ?? {}), width: video.width, height: video.height, fps: video.fps } } as DeepPartial<ChordDriftConfig>);
 }
 
@@ -141,14 +141,18 @@ export function encodeShare(config: ChordDriftConfig): string {
   const plain = Object.keys(diff).length ? 'y=' + compressToEncodedURIComponent(JSON.stringify(pack(diff))) : '';
   const words = seedWords(config.seed);
   if (!words) return plain;
-  const d = configDiff(config, wordsBase(words, config.video));
-  const viaWords = encodeTextShare(words) + (Object.keys(d).length ? '&d=' + compressToEncodedURIComponent(JSON.stringify(pack(d))) : '');
-  return plain && plain.length <= viaWords.length ? plain : viaWords;
+  let best = plain;
+  for (const mood of ['chill', 'adventurous'] as SongMood[]) {
+    const d = configDiff(config, wordsBase(words, config.video, mood));
+    const viaWords = encodeTextShare(words, mood) + (Object.keys(d).length ? '&d=' + compressToEncodedURIComponent(JSON.stringify(pack(d))) : '');
+    if (!best || viaWords.length < best.length) best = viaWords;
+  }
+  return best;
 }
 
-/** The words of a t=… share code, or null. */
+/** The words of a word-song share code (w=… chill, t=… adventurous), or null. */
 export function shareText(hash: string): string | null {
-  if (!hash.startsWith('t=')) return null;
+  if (!hash.startsWith('t=') && !hash.startsWith('w=')) return null;
   try {
     const end = hash.indexOf('&');
     return decodeURIComponent(hash.slice(2, end >= 0 ? end : undefined).replace(/\+/g, ' ')).trim() || null;
@@ -157,9 +161,14 @@ export function shareText(hash: string): string | null {
   }
 }
 
-/** Share code for a song made from words. */
-export function encodeTextShare(text: string): string {
-  return 't=' + encodeURIComponent(text.trim()).replace(/%20/g, '+');
+/** The mood of a word-song share code. */
+export function shareMood(hash: string): SongMood | null {
+  return hash.startsWith('w=') ? 'chill' : hash.startsWith('t=') ? 'adventurous' : null;
+}
+
+/** Share code for a song made from words: w= for chill, t= for adventurous. */
+export function encodeTextShare(text: string, mood: SongMood = 'adventurous'): string {
+  return (mood === 'chill' ? 'w=' : 't=') + encodeURIComponent(text.trim()).replace(/%20/g, '+');
 }
 
 export function decodeShare(hash: string): DeepPartial<ChordDriftConfig> | null {
@@ -181,8 +190,8 @@ export function decodeShare(hash: string): DeepPartial<ChordDriftConfig> | null 
       return null;
     }
   }
-  // A song from words (t=…), plus any changes to it (&d=…).
-  if (hash.startsWith('t=')) {
+  // A song from words (w=… chill, t=… adventurous), plus any changes to it (&d=…).
+  if (hash.startsWith('t=') || hash.startsWith('w=')) {
     const text = shareText(hash);
     if (!text) return null;
     const amp = hash.indexOf('&d=');
@@ -194,7 +203,7 @@ export function decodeShare(hash: string): DeepPartial<ChordDriftConfig> | null 
         changes = {};
       }
     }
-    return merge(songFromText(text), changes) as DeepPartial<ChordDriftConfig>;
+    return merge(songFromText(text, shareMood(hash) ?? 'adventurous'), changes) as DeepPartial<ChordDriftConfig>;
   }
   const params = new URLSearchParams(hash);
   const c = params.get('c');

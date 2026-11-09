@@ -40,12 +40,13 @@ import {
   voicingRules,
   type ChordDriftConfig,
   type DeepPartial,
+  type SongMood,
   type Theme,
   type Score,
 } from './engine';
 import { ensureFont } from './render/fonts';
 import { frameCount, renderFrame, themeBackground } from './render/renderer';
-import { decodeShare, encodeShare, exportProject, listProjects, parseProject, saveProject, deleteProject, shareText } from './project';
+import { decodeShare, encodeShare, shareMood, exportProject, listProjects, parseProject, saveProject, deleteProject, shareText } from './project';
 
 const fontsReady = (async () => {
   try {
@@ -721,7 +722,8 @@ function startApp() {
   function makeSong(text: string) {
     const t = text.trim();
     if (!t) return;
-    const patch = songFromText(t);
+    const mood: SongMood = $<HTMLInputElement>('#mood').checked ? 'chill' : 'adventurous';
+    const patch = songFromText(t, mood);
     const keep = { width: state.video.width, height: state.video.height, fps: state.video.fps };
     state = resolveConfig({ ...patch, video: { ...(patch.video ?? {}), ...keep } } as DeepPartial<ChordDriftConfig>);
     applyAutoFormat();
@@ -730,6 +732,20 @@ function startApp() {
     $<HTMLInputElement>('#words').value = t;
     setStatus(`"${t}": ${score.keyName} ${score.scaleName}${state.style !== 'none' ? `, ${STYLES[state.style].name}` : ''} — ${score.chords.slice(0, 6).map((c) => c.name).join(' → ')}${score.chords.length > 6 ? ' …' : ''}`);
   }
+  const moodBox = $<HTMLInputElement>('#mood');
+  try {
+    const saved = localStorage.getItem('chord-drift.mood');
+    if (saved) moodBox.checked = saved === 'chill';
+  } catch {
+    /* storage unavailable */
+  }
+  moodBox.addEventListener('change', () => {
+    try {
+      localStorage.setItem('chord-drift.mood', moodBox.checked ? 'chill' : 'adventurous');
+    } catch {
+      /* ignore */
+    }
+  });
   $<HTMLFormElement>('#words-form').addEventListener('submit', (e) => {
     e.preventDefault();
     makeSong($<HTMLInputElement>('#words').value);
@@ -1303,7 +1319,10 @@ function startApp() {
   state = resolveConfig(shared ?? {});
   applyAutoFormat();
   const sharedWords = shareText(location.hash.slice(1));
-  if (sharedWords) $<HTMLInputElement>('#words').value = sharedWords;
+  if (sharedWords) {
+    $<HTMLInputElement>('#words').value = sharedWords;
+    $<HTMLInputElement>('#mood').checked = shareMood(location.hash.slice(1)) === 'chill';
+  }
   syncThemeUi();
   writeForm();
   refreshProjects();
