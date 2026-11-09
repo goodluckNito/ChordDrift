@@ -61,6 +61,13 @@ For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half
 
 **Sound.** Choose sine, triangle, saw or square for the chords, and separately for the melody. Saw and square are level-matched, and the Brightness control sets the master low-pass.
 
+**Swells (ambient).** Volume swells, with a depth control:
+- *Swell into each chord:* each change dips, then the new chord blooms in.
+- *Moving voices re-swell:* only the voices that move fade and come back, like re-bowed strings.
+- *Slow breathing:* slow overlapping waves, independent of the chords.
+
+The lines and dots breathe with the level, in the video as well. **Ambient preset** sets slow glides, long holds, a soft triangle tone, deep reverb with a longer tail, and swells. **Default sound** puts timing and sound back.
+
 **Projects.** Save to the browser's project list, export or import `.chorddrift.json` files, or copy a share link: the URL holds the full config, so a link always reopens the exact piece.
 
 ## Video and audio export
@@ -108,7 +115,7 @@ seed ─┬─ key ───────────┐
   - `rhythm.ts`: the rhythm notation parser and presets.
   - `melody.ts`: the melody generator (rhythm cells or written rhythm, chord-tone and scale-step random walk).
 - **`src/render/renderer.ts`** draws each frame as a pure function of (score, t): the pitch-vs-time plot, a camera that frames the current chord, label de-collision, the HUD (Σf, f↑/f↓, chord), and the final zoom-out to the whole piece.
-- **`src/audio/synth.ts`** runs one oscillator per voice with seeded detune and pan. Pitch and gain curves are sampled from `pitchAt` and scheduled in short value-curve chunks, the same path for live, endless and offline playback. The master chain is a low-pass, a generated convolution reverb, and a limiter.
+- **`src/audio/synth.ts`** runs one oscillator per voice with seeded detune and pan. Pitch and gain curves are sampled from `pitchAt` (and `swellAt`) and scheduled in short value-curve chunks, the same path for live, endless and offline playback. If the page stalls, the scheduler skips the chunks that fell behind instead of getting stuck. On browsers that reject closely spaced curves, it switches to smooth linear ramps. The master chain is a low-pass, a generated convolution reverb, and a limiter.
 
 ## Configuration
 
@@ -123,7 +130,7 @@ Everything the UI sets is a plain config object (see `src/engine/config.ts` for 
   "timing": { "intro": 1, "bloom": 2.7, "hold": 2, "glide": 0.8, "stagger": 0.25, "arrival": 1.5, "outro": 1.2 },
   "rhythm": { "tempo": 76, "chords": "" },
   "melody": { "enabled": false, "rhythm": "", "density": 0.5, "register": "high", "fill": "continuous", "wave": "triangle" },
-  "audio": { "wave": "sine", "detuneCents": 3, "reverb": 0.35, "lowpass": 7000 },
+  "audio": { "wave": "sine", "detuneCents": 3, "reverb": 0.35, "lowpass": 7000, "swell": "off", "swellDepth": 0.65 },
   "video": { "width": 1080, "height": 1920, "fps": 60, "historySeconds": 5 }
 }
 ```

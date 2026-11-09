@@ -1,4 +1,4 @@
-import { melodyAt, pitchAt } from '../engine/motion';
+import { melodyAt, pitchAt, swellAt } from '../engine/motion';
 import type { Wave } from '../engine/config';
 import { stream } from '../engine/rng';
 import type { Score } from '../engine/score';
@@ -55,7 +55,8 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
   const wet = ctx.createGain();
   wet.gain.value = a.reverb * 1.4;
   const convolver = ctx.createConvolver();
-  convolver.buffer = makeImpulse(ctx, score.seed);
+  // Wetter settings get a longer tail (kept moderate: long convolutions cost CPU on phones).
+  convolver.buffer = makeImpulse(ctx, score.seed, 2.8 + 2.4 * Math.max(0, a.reverb - 0.3));
 
   // The limiter matters most at unison, where all voices add up in phase.
   const limiter = ctx.createDynamicsCompressor();
@@ -76,21 +77,30 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
 }
 
 /**
- * Schedule a value curve, never letting one rejected chunk stop the scheduler:
- * on failure, clear what's pending from that time and fall back to a ramp to
- * the chunk's final value.
+ * Some browsers (notably on phones) reject value curves that sit very close to
+ * each other. Once that happens we stop using curves altogether and schedule a
+ * handful of linear ramps per chunk instead. Ramps continue from whatever value
+ * the parameter already has, so there are never jumps.
  */
+let curvesUnsupported = false;
+const RAMPS_PER_CHUNK = 10;
+
 function setCurve(param: AudioParam, curve: Float32Array, at: number, dur: number) {
-  try {
-    param.setValueCurveAtTime(curve, at, dur);
-  } catch {
+  if (!curvesUnsupported) {
     try {
-      param.cancelScheduledValues(at);
-      param.setValueAtTime(curve[0], at);
-      param.linearRampToValueAtTime(curve[curve.length - 1], at + dur);
+      param.setValueCurveAtTime(curve, at, dur);
+      return;
     } catch {
-      /* give up on this chunk only */
+      curvesUnsupported = true;
     }
+  }
+  try {
+    const last = curve.length - 1;
+    for (let k = 1; k <= RAMPS_PER_CHUNK; k++) {
+      param.linearRampToValueAtTime(curve[Math.round((k / RAMPS_PER_CHUNK) * last)], at + (dur * k) / RAMPS_PER_CHUNK);
+    }
+  } catch {
+    /* skip this chunk only */
   }
 }
 
@@ -186,8 +196,10 @@ export class VoiceBank {
       const t0 = this.scheduledUntil;
       this.score.extend(t0 + CHUNK);
       const at = this.when + this.nextChunk * CHUNK;
-      // Curves must not touch each other; leave a couple of samples between them.
-      const dur = CHUNK - 2 / sr;
+      // Curves must not touch: leave two render quanta (~5 ms) between them. Each
+      // curve still ends on the value due at the next chunk's start, so the
+      // tiny gap just holds that value — no step in pitch.
+      const dur = CHUNK - Math.max(256 / sr, 0.004);
       for (let v = 0; v < V; v++) {
         const freq = new Float32Array(n);
         const gain = new Float32Array(n);
@@ -198,7 +210,7 @@ export class VoiceBank {
           let env = Math.min(1, t / 0.05); // 50 ms fade-in at the very start
           if (this.offset > 0) env *= Math.min(1, (t - this.offset) / 0.03); // de-click when starting mid-piece
           if (t > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (t - fadeOutStart) / fadeLen)));
-          gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env);
+          gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env) * swellAt(this.score, v, t);
         }
         setCurve(this.oscs[v].frequency, freq, at, dur);
         setCurve(this.gains[v].gain, gain, at, dur);
@@ -214,7 +226,7 @@ export class VoiceBank {
           let env = 1;
           if (this.offset > 0) env *= Math.min(1, (t - this.offset) / 0.03);
           if (t > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (t - fadeOutStart) / fadeLen)));
-          gain[i] = leadGain * (m?.g ?? 0) * Math.pow(f / 440, -cfg.audio.tilt) * Math.max(0, env);
+          gain[i] = leadGain * (m?.g ?? 0) * Math.pow(f / 440, -cfg.audio.tilt) * Math.max(0, env) * swellAt(this.score, -1, t);
         }
         setCurve(this.lead.osc.frequency, freq, at, dur);
         setCurve(this.lead.gain.gain, gain, at, dur);

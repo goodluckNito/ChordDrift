@@ -135,3 +135,70 @@ export function melodyAt(score: Score, t: number): { p: number; g: number } | nu
   if (!next || next.p === null || next.p === n.p) g *= Math.min(1, remaining / 0.04);
   return { p, g };
 }
+
+/**
+ * Swell multiplier (0..1) for voice v at time t; v = -1 is the melody. Pure, so
+ * audio and picture agree.
+ *   chord  — every change dips, then the new chord swells in (peaks ~55% through)
+ *   voice  — a voice that moves fades just before its glide and swells back after
+ *   breath — slow overlapping waves, slightly out of phase per voice
+ */
+export function swellAt(score: Score, v: number, t: number): number {
+  const a = score.config.audio;
+  if (a.swell === 'off' || a.swellDepth <= 0) return 1;
+  const tl = score.timeline;
+  const depth = a.swellDepth;
+  if (t >= tl.arrivalStart) return 1;
+
+  if (a.swell === 'chord') {
+    const k = chordIndexAt(score, t);
+    if (k < 0) return 1;
+    const start = score.chords[k].t;
+    const next = score.chords[k + 1]?.t ?? (Number.isFinite(tl.arrivalStart) ? tl.arrivalStart : start + score.config.timing.hold);
+    const x = Math.min(1, Math.max(0, (t - start) / Math.max(0.05, next - start)));
+    const peak = 0.55;
+    const e = x < peak ? smootherstep(x / peak) : 1 - smootherstep((x - peak) / (1 - peak));
+    // The bloom starts from the unison at full level, then breathes like the rest.
+    if (k === 0 && x < peak) return 1;
+    return 1 - depth * (1 - e);
+  }
+
+  if (a.swell === 'voice') {
+    if (v < 0) return 1;
+    const moves = score.moves[v];
+    const pre = 0.35;
+    const post = Math.min(2, score.config.timing.hold * 0.5);
+    const bloomEnd = tl.introEnd + score.config.timing.bloom * 0.5;
+    let lo = 0;
+    let hi = moves.length - 1;
+    let idx = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (moves[mid].t0 - pre <= t) {
+        idx = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    let dip = 0;
+    for (let i = Math.max(0, idx - 1); i <= idx; i++) {
+      const m = moves[i];
+      if (!m || m.t0 < bloomEnd) continue;
+      const end = m.t0 + m.d;
+      if (t < m.t0 - pre || t > end + post) continue;
+      if (t < m.t0) dip = Math.max(dip, smootherstep((t - (m.t0 - pre)) / pre));
+      else if (t <= end) dip = 1;
+      else dip = Math.max(dip, 1 - smootherstep((t - end) / post));
+    }
+    return 1 - depth * dip;
+  }
+
+  // breath
+  const s = score.seed;
+  const p1 = 7 + (s % 5);
+  const p2 = 11.5 + ((s >>> 8) % 6);
+  const ph = ((s >>> 16) % 628) / 100 + (v + 1) * 0.35;
+  const e = 0.5 + 0.3 * Math.sin((2 * Math.PI * t) / p1 + ph) + 0.2 * Math.sin((2 * Math.PI * t) / p2 + ph * 1.7);
+  // Ease in from full level during the intro so the opening unison isn't swallowed.
+  const ramp = Math.min(1, t / Math.max(0.1, tl.introEnd + score.config.timing.bloom));
+  return 1 - depth * ramp * (1 - e);
+}

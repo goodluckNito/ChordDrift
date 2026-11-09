@@ -4,6 +4,8 @@ import '@fontsource/inter/700.css';
 import './style.css';
 import { LivePlayer, encodeWav, renderOffline } from './audio/synth';
 import {
+  AMBIENT_PRESET,
+  DEFAULT_CONFIG,
   KEY_NAMES,
   RHYTHM_PRESETS,
   SCALES,
@@ -168,6 +170,7 @@ function startApp() {
     const written = state.progression.trim().length > 0;
     for (const el of form.querySelectorAll<HTMLElement>('[data-show]')) el.hidden = state.mode !== el.dataset.show;
     for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-swell]')) el.hidden = state.audio.swell === 'off';
     for (const el of form.querySelectorAll<HTMLElement>('[data-free]')) el.hidden = state.rhythm.chords.trim().length > 0;
     const presetIdx = RHYTHM_PRESETS.findIndex((p) => p.chords === state.rhythm.chords.trim());
     presetSelect.value = presetIdx >= 0 ? String(presetIdx) : 'custom';
@@ -287,6 +290,20 @@ function startApp() {
     writeForm();
     rebuild(true);
     setStatus(`Froze ${tokens.length} chords. Edit any of them, or replace some with "?".`);
+  });
+  $('#ambient').addEventListener('click', () => {
+    const p = AMBIENT_PRESET;
+    state = resolveConfig({ ...state, timing: { ...state.timing, ...p.timing }, audio: { ...state.audio, ...p.audio }, melody: { ...state.melody, ...p.melody }, rhythm: { ...state.rhythm, ...p.rhythm } } as DeepPartial<ChordDriftConfig>);
+    writeForm();
+    rebuild(true);
+    setStatus('Ambient preset: slow glides, long holds, soft tone, deep reverb, swells. Tweak anything from here.');
+  });
+  $('#sound-reset').addEventListener('click', () => {
+    const d = DEFAULT_CONFIG;
+    state = resolveConfig({ ...state, timing: structuredClone(d.timing), audio: structuredClone(d.audio), melody: { ...structuredClone(d.melody), enabled: state.melody.enabled } } as DeepPartial<ChordDriftConfig>);
+    writeForm();
+    rebuild(true);
+    setStatus('Timing and sound back to defaults.');
   });
   $('#clear-prog').addEventListener('click', () => {
     state.progression = '';

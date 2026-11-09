@@ -11,6 +11,8 @@ const MODE_ALIASES: Record<string, Mode> = { diatonic: 'scale', chromatic: 'voic
 export type Easing = 'smootherstep' | 'cosine';
 export type Wave = 'sine' | 'triangle' | 'sawtooth' | 'square';
 export type Register = 'low' | 'mid' | 'high' | 'top';
+/** off · chord: dip at each change, swell into the chord · voice: moving voices fade and re-swell · breath: slow waves */
+export type Swell = 'off' | 'chord' | 'voice' | 'breath';
 
 /** MIDI ranges for the melody's registers. */
 export const REGISTERS: Record<Register, [number, number]> = { low: [57, 72], mid: [67, 81], high: [79, 93], top: [86, 100] };
@@ -119,6 +121,10 @@ export interface ChordDriftConfig {
     /** 0..1 stereo spread of the voices. */
     width: number;
     gain: number;
+    /** Volume swells (an ambient option). */
+    swell: Swell;
+    /** 0..1 how deep the swells dip. */
+    swellDepth: number;
   };
   video: { width: number; height: number; fps: number; historySeconds: number; nowPosition: number; melodyColor: string };
 }
@@ -157,7 +163,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   motion: { easing: 'smootherstep' },
   rhythm: { tempo: 76, chords: '' },
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
-  audio: { wave: 'sine', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 7000, width: 0.6, gain: 0.9 },
+  audio: { wave: 'sine', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 7000, width: 0.6, gain: 0.9, swell: 'off', swellDepth: 0.65 },
   video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, melodyColor: '#c8442b' },
 };
 
@@ -201,6 +207,8 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   if (c.melody.fill !== 'gaps') c.melody.fill = 'continuous';
   c.melody.glide = Math.max(0, Number(c.melody.glide) || 0);
   c.melody.level = Math.max(0, Math.min(1, Number(c.melody.level)));
+  if (!['off', 'chord', 'voice', 'breath'].includes(c.audio.swell)) c.audio.swell = 'off';
+  c.audio.swellDepth = Math.max(0, Math.min(0.95, Number(c.audio.swellDepth)));
   const waves: Wave[] = ['sine', 'triangle', 'sawtooth', 'square'];
   if (!waves.includes(c.audio.wave)) c.audio.wave = 'sine';
   if (!waves.includes(c.melody.wave)) c.melody.wave = 'triangle';
@@ -212,3 +220,11 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.voicing.candidates = Math.max(1, Math.round(c.voicing.candidates));
   return c;
 }
+
+/** Settings applied by the "Ambient" button: slow, wide, soft, swelling. */
+export const AMBIENT_PRESET: DeepPartial<ChordDriftConfig> = {
+  timing: { hold: 4.8, glide: 1.7, stagger: 0.7, bloom: 5 },
+  audio: { wave: 'triangle', reverb: 0.8, detuneCents: 7, lowpass: 3200, swell: 'chord', swellDepth: 0.7 },
+  melody: { density: 0.15, glide: 0.3, level: 0.4, wave: 'sine', register: 'top' },
+  rhythm: { chords: '' },
+};

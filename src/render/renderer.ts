@@ -1,4 +1,4 @@
-import { chordLabelAt, frequencyStats, melodyAt, pitchAt, smootherstep } from '../engine/motion';
+import { chordLabelAt, frequencyStats, melodyAt, pitchAt, smootherstep, swellAt } from '../engine/motion';
 import type { Score } from '../engine/score';
 import { midiToHz } from '../engine/theory';
 
@@ -238,17 +238,30 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     // Lines are drawn from the score's glides: flat stretches are single
     // segments and only the curves are sampled, which keeps frames cheap on phones.
     const curveStep = 2.5 * u;
-    ctx.beginPath();
-    for (let v = 0; v < V; v++) traceVoice(ctx, score, v, tFrom, tTo, xOf, yOf, curveStep);
-    ctx.stroke();
+    if (cfg.audio.swell === 'off' || z >= 1) {
+      ctx.beginPath();
+      for (let v = 0; v < V; v++) traceVoice(ctx, score, v, tFrom, tTo, xOf, yOf, curveStep);
+      ctx.stroke();
+    } else {
+      // With swells on, each line breathes with its voice's level.
+      for (let v = 0; v < V; v++) {
+        ctx.globalAlpha = lerp(0.22 + 0.78 * swellAt(score, v, tNow), 1, z);
+        ctx.beginPath();
+        traceVoice(ctx, score, v, tFrom, tTo, xOf, yOf, curveStep);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
 
     // Melody: a separate line in the accent colour, broken during rests.
     if (score.melody.length) {
       ctx.strokeStyle = cfg.video.melodyColor;
       ctx.lineWidth = 3.6 * u;
+      if (cfg.audio.swell !== 'off') ctx.globalAlpha = lerp(0.3 + 0.7 * swellAt(score, -1, tNow), 1, z);
       ctx.beginPath();
       traceMelody(ctx, score, tFrom, tTo, xOf, yOf, curveStep);
       ctx.stroke();
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -258,14 +271,16 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const dotX = xOf(tNow);
   ctx.fillStyle = THEME.ink;
   const dotYs = new Set<number>();
-  for (const p of pitches) {
+  const swelling = cfg.audio.swell !== 'off' && z < 1;
+  pitches.forEach((p, v) => {
     const y = Math.round(yOf(p) * 2) / 2;
-    if (dotYs.has(y)) continue;
+    if (dotYs.has(y)) return;
     dotYs.add(y);
+    const r = swelling ? 7 * u * (0.55 + 0.45 * swellAt(score, v, tNow)) : 7 * u;
     ctx.beginPath();
-    ctx.arc(dotX, y, 7 * u, 0, Math.PI * 2);
+    ctx.arc(dotX, y, r, 0, Math.PI * 2);
     ctx.fill();
-  }
+  });
   const lead = score.melody.length ? melodyAt(score, tNow) : null;
   const leadOn = lead && lead.g > 0.05 && tNow < tl.arrivalStart;
   if (leadOn) {
