@@ -197,3 +197,16 @@ describe('loop', () => {
     expect(resolveConfig({ loop: true, endless: true }).loop).toBe(false);
   });
 });
+
+describe('inversion chance', () => {
+  it('changes nothing at 0 and crosses voices with slash names at 1', async () => {
+    const { generateScore, resolveConfig } = await import('../src/engine');
+    const plain = generateScore(resolveConfig({ seed: 21 }));
+    const zero = generateScore(resolveConfig({ seed: 21, voicing: { inversion: 0 } }));
+    expect(zero.chords.map((c) => c.notes)).toEqual(plain.chords.map((c) => c.notes));
+    const all = generateScore(resolveConfig({ seed: 21, voicing: { inversion: 1 } }));
+    const crossed = all.chords.filter((c) => c.notes[0] > c.notes[1]);
+    expect(crossed.length).toBeGreaterThan(all.chords.length / 2);
+    expect(all.chords.some((c) => c.name.includes('/'))).toBe(true);
+  });
+});

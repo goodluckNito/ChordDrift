@@ -109,6 +109,8 @@ export interface ChordDriftConfig {
     maxCopies: number;
     /** Number of randomized searches per chord. */
     candidates: number;
+    /** Chance (0..1) that a chord is voiced as an inversion: the lowest voice or two jump up an octave, crossing the others. */
+    inversion: number;
   };
   motion: { easing: Easing; transition: Transition };
   rhythm: {
@@ -238,7 +240,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
     swellIn: 1.8,
     release: 2.6,
   },
-  voicing: { pedalBonus: 1.5, bassWeight: 0.3, movePenalty: 2, mudFloor: 48, minGap: 3, maxCopies: 3, candidates: 24 },
+  voicing: { pedalBonus: 1.5, bassWeight: 0.3, movePenalty: 2, mudFloor: 48, minGap: 3, maxCopies: 3, candidates: 24, inversion: 0 },
   motion: { easing: 'smootherstep', transition: 'glide' },
   rhythm: { tempo: 76, chords: '', pluck: 'e' },
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
@@ -297,6 +299,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   if ((c.video.spiral as string) === 'zoom') c.video.spiral = 'fly'; // older projects
   if (!['orbit', 'drain', 'fly', 'inward'].includes(c.video.spiral)) c.video.spiral = 'orbit';
   c.drums.double = Boolean(c.drums.double);
+  c.voicing.inversion = Math.max(0, Math.min(1, Number(c.voicing.inversion) || 0));
   c.song.enabled = Boolean(c.song.enabled);
   c.song.form = String(c.song.form ?? '');
   c.chop.enabled = Boolean(c.chop.enabled);

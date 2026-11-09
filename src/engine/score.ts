@@ -5,7 +5,7 @@ import { parseProgression, type ProgressionToken } from './progression-text';
 import { chordDurations, parseRhythm, strikeOnsets } from './rhythm';
 import { DRUM_VOICES, parseDrumRows, type DrumRows, type DrumVoice } from './drums';
 import { formatSeed, parseSeed, randInt, stream, uniform, type Rng } from './rng';
-import { DEGREE_OFFSETS, SCALES, mod12, parseNote, parsePc, spellNote, tonicName } from './theory';
+import { DEGREE_OFFSETS, SCALES, mod12, parseNote, parsePc, spellNote, spellPc, tonicName } from './theory';
 import { STYLES } from './styles';
 import { parseSongForm, type SongSection } from './song';
 import { parseChop, type ChopPattern } from './chop';
@@ -152,6 +152,7 @@ class ScoreBuilder {
   private voicingRng: Rng;
   private timeRng: Rng;
   private staggerRng: Rng;
+  private inversionRng: Rng;
   private current: number[];
   private nextChange: number;
   private total: number | null;
@@ -233,6 +234,7 @@ class ScoreBuilder {
     this.voicingRng = stream(seed, 'voicing');
     this.timeRng = stream(seed, 'timing');
     this.staggerRng = stream(seed, 'stagger');
+    this.inversionRng = stream(seed, 'inversion');
     this.current = new Array<number>(V).fill(startNote);
     this.nextChange = cfg.timing.intro;
 
@@ -387,6 +389,22 @@ class ScoreBuilder {
     } else {
       spec = this.walker.next(k, this.total, cost);
       notes = voiceChord(spec, ref, rules, this.voicingRng);
+    }
+    // Inversion: the lowest voice (or two) jumps up an octave over the others, so the trails cross
+    // and twist; the next chord untwists them. The bass note names the inversion (C/E).
+    if (!unison && k > 0) {
+      const roll = this.inversionRng();
+      const two = this.inversionRng() < 0.4;
+      if (roll < cfg.voicing.inversion) {
+        const inv = notes.slice();
+        const n = two ? 2 : 1;
+        for (let i = 0; i < n; i++) inv[i] += 12;
+        if (inv.slice(0, n).every((p) => p <= cfg.range.upper[1] + 7)) {
+          notes = inv;
+          const low = Math.min(...notes);
+          if (mod12(low) !== mod12(spec.root)) spec = { ...spec, name: `${spec.name}/${spellPc(mod12(low), spec.tonic, spec.scale)}` };
+        }
+      }
     }
 
     const t = this.nextChange;

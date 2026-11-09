@@ -84,6 +84,8 @@ e*4   (q e e)*2                   repeat a note or group; patterns loop, | and ,
 
 For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half-note triplets. Presets are in the Rhythm section.
 
+**Inversion chance.** Key & harmony → *Inversion chance* voices some chords as inversions: the lowest voice (or two) jumps up an octave over the others, so the trails cross and twist, and the next chord untwists them. The chord is labelled with its new bass (C/E). It uses its own random stream, so turning it up changes nothing else about the piece.
+
 **Song mode.** Turn on *Song* to build a piece from parts that collapse and resolve into each other. Write the form in a small notation, or pick a preset. The default is `A8 | B!8 > C!8 | A4 | B!8+1`:
 
 - `A B C`: parts (names are letters). A name that comes back plays the same chords again.
