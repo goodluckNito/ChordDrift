@@ -84,6 +84,10 @@ e*4   (q e e)*2                   repeat a note or group; patterns loop, | and ,
 
 For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half-note triplets. Presets are in the Rhythm section.
 
+**Resolution pull.** Key & harmony → *Resolution pull* (default 0.35) leans the generator toward strong resolutions: a dominant (7, 9, 13, or a 7sus4 / 9sus4) resolving down a fifth, falling-fifth chains (ii–V–I), and chords that set up the tonic. It also keeps the tonic's dominant and, after any dominant, its resolution among the candidates. It's exponential, so it holds its own against high smoothness, which otherwise picks whatever moves the voices least. At 0 only smoothness and the generator decide.
+
+**Scales and styles.** A style works from your key's tonic. The scale decides whether its phrases are major or minor and colours plain numerals, but the style's own moves (♭VI, ♭II, borrowed and altered chords) step outside the scale when they need to; Occult is always minor.
+
 **Inversion chance.** Key & harmony → *Inversion chance* is per chord: a chord that rolls it puts its 3rd, 5th (or 7th) in the bass instead of its root (C/E, C/G), and the voices are led to it as smoothly as to any other chord, so the bass line moves by step more often instead of leaping. It uses its own random stream, so turning it up changes nothing else about the piece.
 
 **Song mode.** Turn on *Song* to build a piece from parts that collapse and resolve into each other. Write the form in a small notation, or pick a preset. The default is `A8 | B!8 > C!8 | A4 | B!8+1`:

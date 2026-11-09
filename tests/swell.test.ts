@@ -19,7 +19,7 @@ describe('swells', () => {
   });
 
   it('voice mode only dips voices that move', () => {
-    const s = generateScore({ seed: 2, audio: { swell: 'voice', swellDepth: 0.8 } });
+    const s = generateScore({ seed: 2, resolution: 0, audio: { swell: 'voice', swellDepth: 0.8 } });
     let checkedStill = 0;
     let checkedMoving = 0;
     for (let k = 2; k < s.chords.length; k++) {

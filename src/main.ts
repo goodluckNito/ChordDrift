@@ -452,7 +452,7 @@ function startApp() {
     $('#style-note').textContent = def
       ? written
         ? 'Your written progression takes priority over the style.'
-        : `${def.description} Complexity is kept within ${def.complexity[0]}–${def.complexity[1]} for this style; chord count sets the number of phrases.`
+        : `${def.description} Complexity is kept within ${def.complexity[0]}–${def.complexity[1]} for this style; chord count sets the number of phrases. The style works from your key's tonic; the scale decides whether its phrases are major or minor and colours plain numerals, but the style's own moves (♭VI, ♭II, borrowed and altered chords) step outside the scale when they need to.`
       : 'Pick a style for planned phrases, cadences and key changes, or leave it on None for free generation.';
     for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-drums]')) el.hidden = !state.drums.enabled;

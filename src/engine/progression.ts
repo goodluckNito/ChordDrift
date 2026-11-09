@@ -227,6 +227,21 @@ export class ProgressionWalker {
       if (pool.some((p) => same(p, s))) continue;
       pool.push(s);
     }
+    // Resolution pull: make sure the strong moves are on the table — the tonic's dominant (a sus
+    // dominant at higher complexity) and, after a dominant, the chord it resolves to.
+    const pull = this.cfg.resolution;
+    if (pull > 0 && !isFirst && !isLast && this.prev) {
+      if (this.rng() < 0.35 + 0.5 * pull) {
+        const dom = this.dominantOf(this.tonic);
+        if (!pool.some((p) => same(p, dom)) && pcOverlap(dom, this.prev) < 1) pool.push(this.spec(dom, 'altered'));
+      }
+      if (isDominant(this.prev)) {
+        const target = mod12(this.prev.root + 5);
+        const d = this.degreeOf(target);
+        const res = d >= 0 ? this.scaleChord(d) : this.familyChord(target, false);
+        if (!pool.some((p) => same(p, res)) && pcOverlap(res, this.prev) < 1) pool.push(this.spec(res, d >= 0 ? 'scale' : 'borrowed'));
+      }
+    }
     if (!pool.length) return this.spec(this.scaleChord(Math.floor(this.rng() * scaleSteps(this.scale).length)), 'scale');
     const pickedSecondary = (s: ChordSpec) => {
       if (s.origin === 'secondary') this.resolveTo = mod12(s.root + 5);
@@ -240,9 +255,35 @@ export class ProgressionWalker {
       let w = Math.exp(-((costs[i] - min) * k) / 2);
       // Novelty: chords that share almost every note with the last one sound static.
       if (this.prev && mode !== 'free') w *= pcOverlap(s, this.prev) > 0.75 ? 0.35 : 1;
+      if (pull > 0 && this.prev) w *= this.functionalPull(this.prev, s, pull);
       return w;
     });
     return pickedSecondary(weighted(this.rng, pool, weights));
+  }
+
+  /** A dominant on the fifth above `target`: 7th, 9th, or a 7sus4 / 9sus4 now and then (more at higher complexity). */
+  private dominantOf(target: number): Chord {
+    const root = mod12(target + 7);
+    const c = Math.max(1, Math.min(5, Math.round(this.complexity)));
+    const sus = this.rng() < 0.25 + 0.1 * c;
+    const ext = c >= 3 ? [14] : [];
+    return { root, intervals: sus ? [0, 5, 7, 10, ...ext] : [0, 4, 7, 10, ...ext] };
+  }
+
+  /**
+   * How much a move from `a` to `b` pulls, as a weight multiplier: dominants resolving down a
+   * fifth most, then any falling fifth, then a chord setting up a resolution; an unresolved
+   * dominant is held back.
+   */
+  private functionalPull(a: Chord, b: Chord, pull: number): number {
+    const fall5 = mod12(b.root - a.root) === 5;
+    let bonus = 0;
+    if (isDominant(a)) bonus += fall5 ? (b.root === this.tonic ? 6 : 4) : -0.6;
+    else if (fall5) bonus += 2;
+    if (isDominant(b) && mod12(b.root + 5) === this.tonic) bonus += 1.5;
+    if (mod12(b.root - a.root) === 9 || mod12(b.root - a.root) === 8) bonus += 0.4; // falling thirds
+    // Exponential, so it can hold its own against strong smoothness (which is exponential too).
+    return Math.exp(pull * bonus * 1.2);
   }
 
   private propose(isFirst: boolean, isLast: boolean): ChordSpec | null {
@@ -359,4 +400,10 @@ export function scaleChords(tonic: number, scaleId: string, size: number): Chord
     const chord = stackChord(tonic, scaleId, d, size);
     return { ...chord, tonic, scale: scaleId, name: chordName(chord, tonic, scaleId), roman: romanName(chord, tonic), origin: 'scale' as const };
   });
+}
+
+/** A dominant-function chord: a minor seventh with a major third or a sus4 (7, 9, 13, 7sus4, 9sus4…). */
+function isDominant(c: Chord): boolean {
+  const pcs = new Set(c.intervals.map(mod12));
+  return pcs.has(10) && (pcs.has(4) || pcs.has(5)) && !pcs.has(3);
 }
