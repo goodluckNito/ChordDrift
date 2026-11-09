@@ -32,3 +32,10 @@ describe('themes', () => {
     expect(resolveConfig({ theme: { ink: 'not-a-colour', colorBy: 'nope' as never } }).theme.ink).toBe(THEME_PRESETS.paper.ink);
   });
 });
+
+describe('sound presets', () => {
+  it('never change the theme', async () => {
+    const { AMBIENT_PRESET, PLUCK_PRESET, DARK_PRESET } = await import('../src/engine');
+    for (const p of [AMBIENT_PRESET, PLUCK_PRESET, DARK_PRESET]) expect('theme' in p).toBe(false);
+  });
+});

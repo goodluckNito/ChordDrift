@@ -295,7 +295,7 @@ export const PLUCK_PRESET: DeepPartial<ChordDriftConfig> = {
   rhythm: { tempo: 104, chords: 'q. q. q' },
 };
 
-/** "Dark" button: witch house harmony, detuned saws through a dark filter, crossfades, deep reverb, the Hex theme. */
+/** "Dark" button: witch house harmony, detuned saws through a dark filter, crossfades, deep reverb. (Leaves the theme alone.) */
 export const DARK_PRESET: DeepPartial<ChordDriftConfig> = {
   style: 'witchhouse',
   scale: 'minor',
@@ -305,5 +305,4 @@ export const DARK_PRESET: DeepPartial<ChordDriftConfig> = {
   motion: { transition: 'swell' },
   timing: { hold: 3.6, swellIn: 1.3, release: 2.8 },
   audio: { wave: 'sawtooth', lowpass: 1600, detuneCents: 11, reverb: 0.85, swell: 'breath', swellDepth: 0.35, envelope: 'sustain' },
-  theme: { ...THEME_PRESETS.hex },
 };
