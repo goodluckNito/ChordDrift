@@ -1,4 +1,4 @@
-import { articulationAt, chopAt, drumHits, duckAt, energyAt, layerAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
+import { articulationAt, chopAt, drumHits, duckAt, duckEnvelope, energyAt, layerAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
 import { playHit } from './drums';
 import type { Wave } from '../engine/config';
 import { stream } from '../engine/rng';
@@ -101,7 +101,7 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
   // smears the attacks and makes the pulse feel loose).
   const pluck = score.config.motion.transition === 'pluck';
   const limiter = ctx.createDynamicsCompressor();
-  limiter.threshold.value = pluck ? -3 : -12;
+  limiter.threshold.value = pluck ? -3 : -6;
   limiter.knee.value = pluck ? 2 : 6;
   limiter.ratio.value = pluck ? 20 : 12;
   limiter.attack.value = pluck ? 0.001 : 0.003;
@@ -110,7 +110,9 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
   const out = ctx.createGain();
   out.gain.value = a.gain;
   // Headroom for strikes going into the faster limiter.
-  input.gain.value = pluck ? 0.8 : 1;
+  // Into the limiter with some headroom, so it catches peaks instead of riding the whole mix
+  // (with a big sub, constant gain reduction flattened the chords in the loud parts).
+  input.gain.value = pluck ? 0.8 : 0.72;
 
   // Warmth: gentle tanh saturation (gain-compensated) before the reverb split.
   let tone: AudioNode = lowpass;
@@ -195,6 +197,9 @@ export class VoiceBank {
   private lead: { osc: OscillatorNode; gain: GainNode } | null = null;
   /** Sub-bass: a sine an octave under the bass voice (one per layer). */
   private subs: { osc: OscillatorNode; gain: GainNode; layer: 0 | 1 }[] = [];
+  /** The sub runs dry to the limiter, so it gets its own copies of the pluck and chop gates. */
+  private subArt: GainNode | null = null;
+  private subChop: GainNode | null = null;
   /** Everything this bank plays goes through here, so stop() can silence it for sure. */
   private bus: GainNode;
   /** Pluck mode: the shared strike envelope for the chord voices. */
@@ -211,6 +216,7 @@ export class VoiceBank {
   /** Loop length (s) when the piece loops, else 0: score time wraps, sound continues. */
   private loopLen: number;
   private drumGate: GainNode | null = null;
+  private drySubs: GainNode[] = [];
   private nextChunk = 0;
   private stopped = false;
 
@@ -281,6 +287,23 @@ export class VoiceBank {
       }
     }
     if (a.sub > 0) {
+      // Dry (no reverb, no tone filter): reverb on a sub is mud, and it kept the limiter clamped.
+      const subBus = ctx.createGain();
+      subBus.connect(master.direct);
+      this.drySubs.push(subBus);
+      let subOut: AudioNode = subBus;
+      if (score.chop) {
+        this.subChop = ctx.createGain();
+        this.subChop.gain.value = chopAt(score, offset).level;
+        this.subChop.connect(subOut);
+        subOut = this.subChop;
+      }
+      if (score.config.motion.transition === 'pluck') {
+        this.subArt = ctx.createGain();
+        this.subArt.gain.value = articulationAt(score, offset);
+        this.subArt.connect(subOut);
+        subOut = this.subArt;
+      }
       for (let L = 0; L < this.layers; L++) {
         const osc = ctx.createOscillator();
         osc.type = 'sine';
@@ -288,7 +311,7 @@ export class VoiceBank {
         osc.frequency.value = midiToHz(p0 - 12);
         const g = ctx.createGain();
         g.gain.value = 0;
-        osc.connect(g).connect(voiceOut);
+        osc.connect(g).connect(subOut);
         osc.start(when);
         this.oscs.push(osc);
         this.subs.push({ osc, gain: g, layer: L as 0 | 1 });
@@ -380,7 +403,9 @@ export class VoiceBank {
       for (const sub of this.subs) {
         const freq = new Float32Array(n);
         const gain = new Float32Array(n);
-        const subGain = cfg.audio.sub * 2.4 * (1.25 / V);
+        // The Bass shelf no longer touches the sub (it runs dry), so it scales the sub directly.
+        const subGain = cfg.audio.sub * 2.4 * 1.3 * (1.25 / V) * Math.pow(10, cfg.audio.bass / 20);
+        const d = cfg.drums;
         for (let i = 0; i < n; i++) {
           const raw = t0 + (i / (n - 1)) * CHUNK;
           const tt = wrap(raw);
@@ -399,7 +424,9 @@ export class VoiceBank {
           if (raw > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (raw - fadeOutStart) / fadeLen)));
           // In song mode the sub is what makes a full part hit: nearly gone in soft parts, opened up in full ones.
           const energy = this.score.energy.length ? 0.1 + 1.5 * energyAt(this.score, tt) : 1;
-          gain[i] = subGain * g * Math.max(0, env) * swellAt(this.score, 0, t) * energy;
+          // The sub gets out of the kick's way (and the snare's, if the chords duck under it).
+          const duck = this.score.drums ? 1 - 0.85 * duckEnvelope(this.score, tt, true, d.duck.snare, Math.max(0.12, d.duck.release)) : 1;
+          gain[i] = subGain * g * Math.max(0, env) * swellAt(this.score, 0, t) * energy * duck;
         }
         setCurve(sub.osc.frequency, freq, at, dur);
         setCurve(sub.gain.gain, gain, at, dur);
@@ -438,12 +465,14 @@ export class VoiceBank {
         const curve = new Float32Array(m);
         for (let i = 0; i < m; i++) curve[i] = articulationAt(this.score, chopAt(this.score, wrap(t0 + (i / (m - 1)) * CHUNK)).s);
         setCurve(this.art.gain, curve, at, dur);
+        if (this.subArt) setCurve(this.subArt.gain, curve, at, dur);
       }
       if (this.chop) {
         const m = Math.round(CHUNK * ARTIC_RATE) + 1;
         const curve = new Float32Array(m);
         for (let i = 0; i < m; i++) curve[i] = chopAt(this.score, wrap(t0 + (i / (m - 1)) * CHUNK)).level;
         setCurve(this.chop.gain, curve, at, dur);
+        if (this.subChop) setCurve(this.subChop.gain, curve, at, dur);
       }
       if (this.lead) {
         const freq = new Float32Array(n);
@@ -473,7 +502,7 @@ export class VoiceBank {
     // Fade the whole bank and then disconnect it. Cancelling per-voice automation
     // isn't reliable everywhere (Firefox can keep an in-progress curve going, and
     // may reject a second stop()), but a disconnected bus is always silent.
-    for (const g of [this.bus, this.drumGate, this.drumSend]) {
+    for (const g of [this.bus, this.drumGate, this.drumSend, ...this.drySubs]) {
       if (!g) continue;
       try {
         g.gain.cancelScheduledValues(now);
@@ -491,7 +520,7 @@ export class VoiceBank {
       }
     }
     setTimeout(() => {
-      for (const n of [this.bus, this.drumGate, this.drumSend]) {
+      for (const n of [this.bus, this.drumGate, this.drumSend, ...this.drySubs]) {
         try {
           n?.disconnect();
         } catch {
