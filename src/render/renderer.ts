@@ -1430,6 +1430,12 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const zoom = cfg.video.zoom;
   ctx.save();
   if (zoom !== 1) {
+    // The timeline keeps its lines inside the band in screen space, so zoomed lines never run over the text.
+    if (cfg.video.view === 'timeline') {
+      ctx.beginPath();
+      ctx.rect(0, baseLay.clipTop, W, baseLay.clipBottom - baseLay.clipTop);
+      ctx.clip();
+    }
     const zx = cfg.video.view === 'timeline' ? cfg.video.nowPosition * W : W / 2;
     const zy = (lay.bandTop + lay.bandBottom) / 2;
     ctx.translate(zx, zy);
@@ -1648,7 +1654,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   tu = lay.tu;
 
   // In the spiral views lines run behind the text, so text gets a thin halo in the background colour.
-  const halo = cfg.video.view === 'spiral';
+  const halo = cfg.video.view !== 'timeline' || zoom !== 1;
   const say = (text: string, x: number, y: number) => {
     if (halo) {
       ctx.save();
