@@ -95,9 +95,10 @@ describe('release & swell-in transitions', () => {
     for (const L of [0, 1] as const) {
       for (let v = 0; v < 13; v++) {
         let prev = layerAt(s, L, v, bloomEnd);
-        for (let t = bloomEnd; t < s.timeline.arrivalStart; t += 0.01) {
+        for (let t = bloomEnd; t < s.timeline.arrivalEnd + 0.5; t += 0.002) {
           const cur = layerAt(s, L, v, t);
-          if (cur.p !== prev.p) expect(Math.min(cur.g, prev.g)).toBeLessThan(0.02);
+          // Pitch may only jump while silent; the arrival glide moves continuously.
+          if (Math.abs(cur.p - prev.p) > 0.5) expect(Math.min(cur.g, prev.g)).toBeLessThan(0.02);
           prev = cur;
         }
       }

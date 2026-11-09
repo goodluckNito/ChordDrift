@@ -140,10 +140,80 @@ function traceVoice(
   ctx.lineTo(xOf(tTo), yOf(pitchAt(score, v, tTo)));
 }
 
+interface RibbonPoint {
+  x: number;
+  y: number;
+  /** Half thickness at this point. */
+  h: number;
+}
+
+/** Add a variable-width stroke to the current path (filled later, so overlaps merge). */
+function ribbon(ctx: CanvasRenderingContext2D, pts: RibbonPoint[]) {
+  const n = pts.length;
+  if (n < 2) return;
+  const top: [number, number][] = [];
+  const bot: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(n - 1, i + 1)];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len;
+    const ny = dx / len;
+    const p = pts[i];
+    top.push([p.x + nx * p.h, p.y + ny * p.h]);
+    bot.push([p.x - nx * p.h, p.y - ny * p.h]);
+  }
+  ctx.moveTo(top[0][0], top[0][1]);
+  for (let i = 1; i < n; i++) ctx.lineTo(top[i][0], top[i][1]);
+  for (let i = n - 1; i >= 0; i--) ctx.lineTo(bot[i][0], bot[i][1]);
+  ctx.closePath();
+  // Round the ends so full-width ends look like the normal strokes.
+  for (const p of [pts[0], pts[n - 1]]) {
+    if (p.h < 0.3) continue;
+    ctx.moveTo(p.x + p.h, p.y);
+    ctx.arc(p.x, p.y, p.h, 0, Math.PI * 2);
+  }
+}
+
+/** Sample a voice's path over [a, b] at roughly `step` px, with a thickness function. */
+function samplePath(
+  score: Score,
+  v: number,
+  a: number,
+  b: number,
+  xOf: (t: number) => number,
+  yOf: (p: number) => number,
+  step: number,
+  half: (t: number) => number,
+  pitch: (t: number) => number = (t) => pitchAt(score, v, t),
+): RibbonPoint[] {
+  const n = Math.max(2, Math.min(600, Math.ceil(Math.abs(xOf(b) - xOf(a)) / step)));
+  const pts: RibbonPoint[] = [];
+  const at = (t: number): RibbonPoint => ({ x: xOf(t), y: yOf(pitch(t)), h: half(t) });
+  let prevT = a;
+  let prev = at(a);
+  pts.push(prev);
+  for (let i = 1; i <= n; i++) {
+    const t = a + ((b - a) * i) / n;
+    const cur = at(t);
+    // Steep glides (the arrival in the zoomed-out view) need extra points, or
+    // the ribbon's corners spike where the curve turns.
+    const extra = Math.min(64, Math.floor(Math.abs(cur.y - prev.y) / step));
+    for (let j = 1; j <= extra; j++) pts.push(at(prevT + ((t - prevT) * j) / (extra + 1)));
+    pts.push(cur);
+    prev = cur;
+    prevT = t;
+  }
+  return pts;
+}
+
 /**
- * Release-&-swell transitions: each chord is drawn as its own set of lines whose
- * opacity follows its level, so chords visibly fade in under the previous one.
- * The bloom and the arrival keep their glides.
+ * Release-&-swell transitions: each chord is drawn as its own set of lines
+ * whose *thickness* follows its level — a new chord grows out of a point while
+ * the previous one tapers away underneath, like hairpin dynamics. The bloom and
+ * the arrival keep their glides.
  */
 function traceCrossfades(
   ctx: CanvasRenderingContext2D,
@@ -152,58 +222,47 @@ function traceCrossfades(
   tTo: number,
   xOf: (t: number) => number,
   yOf: (p: number) => number,
-  step: number,
+  u: number,
 ) {
   const chords = score.chords;
   const V = score.config.voices;
-  const ink = THEME.ink;
-  const rgb = [parseInt(ink.slice(1, 3), 16), parseInt(ink.slice(3, 5), 16), parseInt(ink.slice(5, 7), 16)].join(',');
-  // Before the bloom everything is the opening unison on layer 0.
-  const first = Math.max(0, chordIndexAt(score, tFrom) - 1);
-  const drawUnison = chords.length === 0 || tFrom < chords[0].t;
-  if (drawUnison) {
-    ctx.beginPath();
+  const half = 1.6 * u;
+  const dyn = score.config.audio.swell !== 'off';
+  ctx.fillStyle = THEME.ink;
+  ctx.beginPath();
+  // Before the bloom everything is the opening unison.
+  if (chords.length === 0 || tFrom < chords[0].t) {
     const end = Math.min(tTo, chords[0]?.t ?? tTo);
-    for (let v = 0; v < V; v++) traceVoice(ctx, score, v, tFrom, end, xOf, yOf, step);
-    ctx.strokeStyle = ink;
-    ctx.stroke();
+    if (end > tFrom) {
+      for (let v = 0; v < V; v++) ribbon(ctx, samplePath(score, v, tFrom, end, xOf, yOf, 8 * u, () => half));
+    }
   }
+  const first = Math.max(0, chordIndexAt(score, tFrom) - 1);
   for (let k = first; k < chords.length && chords[k].t < tTo; k++) {
     const c = chords[k];
     const L = (k % 2) as 0 | 1;
     const next = chords[k + 1];
     const last = k === chords.length - 1;
     const a = Math.max(c.t, tFrom);
-    // Draw until fully released (or to now for the newest chord).
+    // Draw until fully released (or up to now for the newest chord).
     let b = tTo;
     if (next) {
       let end = next.t;
-      while (end < tTo && layerAt(score, L, 0, end).g > 0.01) end += 0.05;
+      while (end < tTo && layerAt(score, L, 0, end).g > 0.004) end += 0.04;
       b = Math.min(tTo, end);
     }
     if (b <= a) continue;
-    // Opacity follows the layer level via a horizontal gradient.
-    const x0 = xOf(a);
-    const x1 = xOf(b);
-    const grad = ctx.createLinearGradient(x0, 0, Math.max(x1, x0 + 1), 0);
-    const N = 12;
-    for (let i = 0; i <= N; i++) {
-      const t = a + ((b - a) * i) / N;
-      grad.addColorStop(i / N, `rgba(${rgb},${layerAt(score, L, 0, t).g.toFixed(3)})`);
-    }
-    ctx.beginPath();
+    const glides = k === 0 || (last && b > score.timeline.arrivalStart);
     for (let v = 0; v < V; v++) {
-      if (k === 0 || (last && b > score.timeline.arrivalStart)) traceVoice(ctx, score, v, a, b, xOf, yOf, step);
-      else {
-        const y = yOf(c.notes[v]);
-        ctx.moveTo(x0, y);
-        ctx.lineTo(x1, y);
-      }
+      const level = (t: number) => {
+        const g = layerAt(score, L, v, t).g;
+        return half * g * (dyn ? 0.3 + 0.7 * swellAt(score, v, t) : 1);
+      };
+      const pitch = glides ? (t: number) => layerAt(score, L, v, t).p : () => c.notes[v];
+      ribbon(ctx, samplePath(score, v, a, b, xOf, yOf, glides ? 3 * u : 5 * u, level, pitch));
     }
-    ctx.strokeStyle = grad;
-    ctx.stroke();
   }
-  ctx.strokeStyle = ink;
+  ctx.fill();
 }
 
 function traceMelody(
@@ -304,27 +363,29 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     // segments and only the curves are sampled, which keeps frames cheap on phones.
     const curveStep = 2.5 * u;
     if (cfg.motion.transition === 'swell') {
-      traceCrossfades(ctx, score, tFrom, tTo, xOf, yOf, curveStep);
+      traceCrossfades(ctx, score, tFrom, tTo, xOf, yOf, u);
     } else if (cfg.audio.swell === 'off' || z >= 1) {
       ctx.beginPath();
       for (let v = 0; v < V; v++) traceVoice(ctx, score, v, tFrom, tTo, xOf, yOf, curveStep);
       ctx.stroke();
     } else {
-      // With swells on, each line breathes with its voice's level.
+      // With swells on, line thickness follows each voice's level over time —
+      // the history reads like crescendo/decrescendo hairpins.
+      ctx.fillStyle = THEME.ink;
+      ctx.beginPath();
+      const half = 1.6 * u;
       for (let v = 0; v < V; v++) {
-        ctx.globalAlpha = lerp(0.22 + 0.78 * swellAt(score, v, tNow), 1, z);
-        ctx.beginPath();
-        traceVoice(ctx, score, v, tFrom, tTo, xOf, yOf, curveStep);
-        ctx.stroke();
+        const pts = samplePath(score, v, tFrom, tTo, xOf, yOf, 3 * u, (t) => half * (0.2 + 0.8 * swellAt(score, v, t)));
+        ribbon(ctx, pts);
       }
-      ctx.globalAlpha = 1;
+      ctx.fill();
     }
 
     // Melody: a separate line in the accent colour, broken during rests.
     if (score.melody.length) {
       ctx.strokeStyle = cfg.video.melodyColor;
       ctx.lineWidth = 3.6 * u;
-      if (cfg.audio.swell !== 'off') ctx.globalAlpha = lerp(0.3 + 0.7 * swellAt(score, -1, tNow), 1, z);
+
       ctx.beginPath();
       traceMelody(ctx, score, tFrom, tTo, xOf, yOf, curveStep);
       ctx.stroke();
@@ -343,18 +404,16 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     for (const L of [0, 1] as const) {
       const g = layerAt(score, L, 0, tNow).g;
       if (g < 0.04) continue;
-      ctx.globalAlpha = Math.min(1, 0.25 + g);
       const seen = new Set<number>();
       for (let v = 0; v < V; v++) {
         const y = Math.round(yOf(layerAt(score, L, v, tNow).p) * 2) / 2;
         if (seen.has(y)) continue;
         seen.add(y);
         ctx.beginPath();
-        ctx.arc(dotX, y, 7 * u * (0.45 + 0.55 * g), 0, Math.PI * 2);
+        ctx.arc(dotX, y, 7 * u * g, 0, Math.PI * 2);
         ctx.fill();
       }
     }
-    ctx.globalAlpha = 1;
   } else {
     const dotYs = new Set<number>();
     pitches.forEach((p, v) => {
@@ -414,24 +473,30 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     ctx.globalAlpha = 1;
   }
 
-  // ---- Title -------------------------------------------------------------
-  ctx.fillStyle = THEME.ink;
+  // ---- Title (only what's defined) -----------------------------------------
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
-  let titleSize = 64 * u;
-  ctx.font = `700 ${titleSize}px ${THEME.font}`;
-  const maxTitle = W * 0.86;
-  const tw = ctx.measureText(cfg.series).width;
-  if (tw > maxTitle) {
-    titleSize *= maxTitle / tw;
+  const header = cfg.series.trim();
+  const subtitle = [cfg.episode ? `#${cfg.episode}` : '', cfg.title.trim()].filter(Boolean).join(' · ');
+  // With no header, the subtitle (if any) takes the header's place.
+  const big = header || subtitle;
+  const small = header ? subtitle : '';
+  if (big) {
+    ctx.fillStyle = THEME.ink;
+    let titleSize = 64 * u;
     ctx.font = `700 ${titleSize}px ${THEME.font}`;
+    const maxTitle = W * 0.86;
+    const tw = ctx.measureText(big).width;
+    if (tw > maxTitle) {
+      titleSize *= maxTitle / tw;
+      ctx.font = `700 ${titleSize}px ${THEME.font}`;
+    }
+    ctx.fillText(big, W / 2, LAYOUT.titleY * H);
   }
-  ctx.fillText(cfg.series, W / 2, LAYOUT.titleY * H);
-  const subtitle = [cfg.episode ? `#${cfg.episode}` : '', cfg.title].filter(Boolean).join(' · ');
-  if (subtitle) {
+  if (small) {
     ctx.fillStyle = THEME.muted;
     ctx.font = `500 ${29 * u}px ${THEME.font}`;
-    ctx.fillText(subtitle, W / 2, LAYOUT.subtitleY * H);
+    ctx.fillText(small, W / 2, LAYOUT.subtitleY * H);
   }
 
   // ---- HUD ---------------------------------------------------------------

@@ -61,14 +61,16 @@ For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half
 
 **Sound.** Choose sine, triangle, saw or square for the chords, and separately for the melody. Saw and square are level-matched, and the Brightness control sets the master low-pass.
 
-**Chord changes.** By default the voices *glide* to the next chord. Switch Timing → Chord changes to **Release & swell in** and each chord instead fades out underneath the next one swelling in, with separate swell-in and release times. Audio uses two alternating sets of voices so chords overlap. In the picture, notes the chords share stay solid and new ones fade in as tapering lines. The opening bloom and the final arrival still glide.
+**Chord changes.** By default the voices *glide* to the next chord. Switch Timing → Chord changes to **Release & swell in** and each chord instead fades out underneath the next one swelling in, with separate swell-in and release times. Audio uses two alternating sets of voices so chords overlap. In the picture, line *thickness* shows level, like hairpin dynamics: a new chord's notes grow out of a point while the old ones taper away, and the playhead dots grow and shrink with them. The opening bloom and the final arrival still glide.
 
 **Swells (ambient).** Volume swells, with a depth control:
 - *Swell into each chord:* each change dips, then the new chord blooms in.
 - *Moving voices re-swell:* only the voices that move fade and come back, like re-bowed strings.
 - *Slow breathing:* slow overlapping waves, independent of the chords.
 
-The lines and dots breathe with the level, in the video as well. **Ambient preset** sets release-and-swell-in changes, long holds, a soft triangle tone, deep reverb with a longer tail, and gentle breathing. **Default sound** puts timing and sound back.
+Line thickness and dot size follow the level over time, in the video as well. **Ambient preset** sets release-and-swell-in changes, long holds, a soft triangle tone, deep reverb with a longer tail, and gentle breathing. **Default sound** puts timing and sound back.
+
+**Titles.** The header, episode number and name are empty by default, and only what you fill in is drawn. If you set only a name, it takes the header's place.
 
 **Projects.** Save to the browser's project list, export or import `.chorddrift.json` files, or copy a share link: the URL holds the full config, so a link always reopens the exact piece.
 
@@ -125,7 +127,7 @@ Everything the UI sets is a plain config object (see `src/engine/config.ts` for 
 
 ```jsonc
 {
-  "seed": "0xF5E68707", "series": "Chord Drift", "episode": 15, "title": "Arrival",
+  "seed": "0xF5E68707", "series": "", "episode": 0, "title": "",
   "voices": 13, "key": "auto", "scale": "major", "mode": "scale", "complexity": 3,
   "progression": "", "endless": false, "driftProbability": 0.25, "smoothness": 1,
   "chordCount": [8, 12], "startNote": "fifth", "endNote": "tonic+2oct",

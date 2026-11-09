@@ -34,7 +34,11 @@ export function pitchAt(score: Score, v: number, t: number): number {
       lo = mid + 1;
     } else hi = mid - 1;
   }
-  if (idx < 0) return moves.length ? moves[0].p0 : score.startNote;
+  // Before a voice's first glide it is always on the opening unison. (Its first
+  // glide isn't necessarily the bloom: a voice whose first-chord note equals the
+  // start note doesn't bloom, and with release-&-swell transitions its next glide
+  // is the arrival.)
+  if (idx < 0) return score.startNote;
   const m = moves[idx];
   if (t >= m.t0 + m.d) return m.p1;
   return m.p0 + (m.p1 - m.p0) * ease((t - m.t0) / m.d, score.config.motion.easing);
@@ -224,7 +228,14 @@ export function layerAt(score: Score, L: 0 | 1, v: number, t: number): { p: numb
   const next = chords[k + 1];
   const after = chords[k + 2];
   const last = k === chords.length - 1;
-  const p = k === 0 || (last && t >= tl.arrivalStart) ? pitchAt(score, v, t) : c.notes[v];
+  let p = c.notes[v];
+  if (k === 0 && !(last && t >= tl.arrivalStart)) p = pitchAt(score, v, t); // the bloom
+  else if (last && t >= tl.arrivalStart) {
+    // The arrival glide starts a little after arrivalStart for some voices (stagger);
+    // until it does, the voice is still on this chord.
+    const m = score.moves[v][score.moves[v].length - 1];
+    if (m && m.t0 >= tl.arrivalStart - 1e-9 && t >= m.t0) p = pitchAt(score, v, t);
+  }
   const nextT = next ? next.t : tl.arrivalStart;
   const swellIn = Math.max(0.01, Math.min(T.swellIn, nextT - c.t));
   const gIn = k === 0 ? 1 : smootherstep((t - c.t) / swellIn);
@@ -245,6 +256,11 @@ export function layerAt(score: Score, L: 0 | 1, v: number, t: number): { p: numb
 export function soundingPitches(score: Score, t: number): number[] {
   if (score.config.motion.transition !== 'swell') return pitchesAt(score, t);
   const k = chordIndexAt(score, t);
-  if (k <= 0 || t >= score.timeline.arrivalStart) return pitchesAt(score, t);
+  if (k < 0) return pitchesAt(score, t);
+  if (t >= score.timeline.arrivalStart) {
+    const L = ((score.chords.length - 1) % 2) as 0 | 1;
+    return score.chords[0].notes.map((_, v) => layerAt(score, L, v, t).p);
+  }
+  if (k === 0) return pitchesAt(score, t);
   return score.chords[k].notes.slice();
 }

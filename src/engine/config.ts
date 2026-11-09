@@ -48,11 +48,11 @@ export interface Timing {
 
 export interface ChordDriftConfig {
   seed: string | number;
-  /** Big header text. */
+  /** Big header text; empty = no header. */
   series: string;
   /** Episode number shown as "#15 · Title"; 0 hides it. */
   episode: number;
-  /** Piece name, shown in the subtitle. */
+  /** Piece name, shown in the subtitle; empty = none. */
   title: string;
   voices: number;
   /** Tonic: "auto" (seeded) or a name like "C", "F#", "Bb". */
@@ -137,9 +137,9 @@ export interface ChordDriftConfig {
 
 export const DEFAULT_CONFIG: ChordDriftConfig = {
   seed: '0xF5E68707',
-  series: 'Chord Drift',
-  episode: 15,
-  title: 'Arrival',
+  series: '',
+  episode: 0,
+  title: '',
   voices: 13,
   key: 'auto',
   scale: 'major',

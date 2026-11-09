@@ -154,3 +154,18 @@ describe('variety at high complexity', () => {
     expect(spellChordNote(63, c7s9)).toBe('D#4');
   });
 });
+
+describe('opening unison', () => {
+  it('is a true unison in every mode, even for voices that never bloom', async () => {
+    const { pitchesAt } = await import('../src/engine');
+    // This seed/key has a voice whose first-chord note equals the start note.
+    for (const transition of ['glide', 'swell'] as const) {
+      const s = generateScore({ seed: '0x0BDB3208', key: 'Ab', scale: 'phrygianDominant', motion: { transition } });
+      for (const t of [-3, 0, 0.5, s.chords[0].t - 0.01]) expect(new Set(pitchesAt(s, t)).size).toBe(1);
+    }
+  });
+  it('has no header text unless one is set', () => {
+    const c = resolveConfig();
+    expect([c.series, c.episode, c.title]).toEqual(['', 0, '']);
+  });
+});
