@@ -92,6 +92,7 @@ For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half
 - `A4`, `B16`: length in bars (default 8). Chords change on the chord rhythm (restarting at each part), or once a bar without one. A chord that would run past the end of the part is cut at its last bar line.
 - `B!8`: a full part. The sub bass opens up and the drums play. Parts without `!` are soft: no drums, the sub almost gone, a little quieter. Turning Song on also turns the Drums on.
 - `B!8[kh]`, `A8[h]`: pick the drums for a part: k(ick), s(nare), h(at), c(rash), r(ide); `[]` means none. Without brackets, full parts get every drum and soft parts none. Drum patterns (and the chop) restart at the start of every part, so 2- and 4-bar grooves and crashes line up with the part.
+- `B8{E,dorian}`, `C!8{jazz}`: set a part's key, scale and/or style (in any order, comma-separated). The same part in another key (or `+N`) plays the same chords transposed, so `A8 > A8{D}` lifts it into D; in another scale or style it becomes a variation with its own chords, so `A8 | A8{minor}` is A's darker twin.
 - `A8+2`, `B!4-3`: move a part up or down that many semitones. A repeat is transposed, so `B!8+1` at the end is the B part again, a half step up.
 - `A | B`: collapse. Every voice converges on the next part's tonic, holds for a bar or two, then blooms out into the next part. `A > B` resolves straight through.
 

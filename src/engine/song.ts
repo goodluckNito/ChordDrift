@@ -10,12 +10,16 @@
  *   Parts without it are soft: no drums, the sub almost gone.
  * - `[khs]` picks the drums for the part: k(ick) s(nare) h(at) c(rash) r(ide); `[]` = none.
  *   Without brackets a full part has every drum and a soft part none.
+ * - `{E,dorian,jazz}` sets the part's key (tonic), scale and/or style. A repeat with another key
+ *   (or +N) is transposed; one with another scale or style is a new variation with its own chords.
  * - `+N` / `-N` moves the part N semitones from the home key (a repeat is transposed).
  * - `|` between parts collapses every voice into a unison, holds, and blooms
  *   out into the next part. `>` resolves straight into it. Nothing between
  *   two parts means `>`.
  */
 import type { DrumVoice } from './drums';
+import { STYLE_IDS } from './styles';
+import { SCALES, parsePc } from './theory';
 
 export interface SongSection {
   /** Identity (case-insensitive) and the name as written. */
@@ -25,6 +29,10 @@ export interface SongSection {
   shift: number;
   /** Drums written for this part, or null for the default (all when full, none when soft). */
   drums: DrumVoice[] | null;
+  /** Overrides for this part: tonic name, scale id and style id (null = the piece's). */
+  key: string | null;
+  scale: string | null;
+  style: string | null;
   /** Length in bars of 4 beats. */
   bars: number;
   /** Collapse into a unison before this part (always false for the first). */
@@ -47,14 +55,16 @@ export const SONG_PRESETS: { name: string; form: string }[] = [
   { name: 'Climb', form: 'A4 > A4+2 > A4+4 > A!8+5' },
 ];
 
-const SECTION = /^([A-Za-z][A-Za-z']*)((?::?\d{1,3}|!|[+-]\d{1,2}|\[[kshcrKSHCR]*\])*)$/;
+const SECTION = /^([A-Za-z][A-Za-z']*)((?::?\d{1,3}|!|[+-]\d{1,2}|\[[kshcrKSHCR]*\]|\{[^}]*\})*)$/;
 const DRUM_LETTERS: Record<string, DrumVoice> = { k: 'kick', s: 'snare', h: 'hat', c: 'crash', r: 'ride' };
 
 export function parseSongForm(text: string): SongForm {
   const sections: SongSection[] = [];
   const errors: string[] = [];
   let pending: '|' | '>' | null = null;
-  for (const tok of text.split(/\s*([|>])\s*|\s+/).filter((x) => x !== undefined && x !== '')) {
+  // Spaces inside {…} separate options, not parts.
+  const src = text.replace(/\{[^}]*\}/g, (g) => g.replace(/\s+/g, ','));
+  for (const tok of src.split(/\s*([|>])\s*|\s+/).filter((x) => x !== undefined && x !== '')) {
     if (tok === '|' || tok === '>') {
       pending = tok;
       continue;
@@ -68,13 +78,27 @@ export function parseSongForm(text: string): SongForm {
     let full = false;
     let shift = 0;
     let drums: DrumVoice[] | null = null;
-    for (const [, n, bang, sh, kit] of m[2].matchAll(/:?(\d{1,3})|(!)|([+-]\d{1,2})|\[([a-zA-Z]*)\]/g)) {
+    let key: string | null = null;
+    let scale: string | null = null;
+    let style: string | null = null;
+    for (const [, n, bang, sh, kit, opts] of m[2].matchAll(/:?(\d{1,3})|(!)|([+-]\d{1,2})|\[([a-zA-Z]*)\]|\{([^}]*)\}/g)) {
+      if (opts !== undefined) {
+        for (const o of opts.split(',').map((x) => x.trim()).filter(Boolean)) {
+          const scaleId = Object.keys(SCALES).find((id) => id.toLowerCase() === o.toLowerCase());
+          const styleId = STYLE_IDS.find((id) => id.toLowerCase() === o.toLowerCase().replace(/[\s-]/g, ''));
+          if (/^[A-Ga-g][#b]?$/.test(o) && parsePc(o[0].toUpperCase() + o.slice(1)) !== null) key = o[0].toUpperCase() + o.slice(1);
+          else if (scaleId) scale = scaleId;
+          else if (styleId) style = styleId;
+          else errors.push(`"${o}" in ${m[1]} isn't a key, scale or style`);
+        }
+        continue;
+      }
       if (kit !== undefined) drums = [...new Set([...kit.toLowerCase()].map((c) => DRUM_LETTERS[c]))];
       else if (n) bars = Math.max(1, Math.min(128, Number(n)));
       else if (bang) full = true;
       else if (sh) shift = Math.max(-24, Math.min(24, Number(sh)));
     }
-    sections.push({ name: m[1].toLowerCase(), label: m[1], full, shift, drums, bars, collapse: sections.length > 0 && pending === '|' });
+    sections.push({ name: m[1].toLowerCase(), label: m[1], full, shift, drums, key, scale, style, bars, collapse: sections.length > 0 && pending === '|' });
     pending = null;
     if (sections.length >= 32) {
       errors.push('at most 32 parts');

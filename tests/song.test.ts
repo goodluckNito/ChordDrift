@@ -87,3 +87,20 @@ describe('song mode', () => {
     expect(resolveConfig({ endless: true, song: { enabled: true } }).endless).toBe(false);
   });
 });
+
+describe('part keys, scales and styles', () => {
+  it('parses options in braces, with or without spaces', () => {
+    const f = parseSongForm('A8{E, dorian} B!4{jazz,Bb} C{nope}');
+    expect(f.sections[0]).toMatchObject({ key: 'E', scale: 'dorian', style: null });
+    expect(f.sections[1]).toMatchObject({ key: 'Bb', scale: null, style: 'jazz', full: true, bars: 4 });
+    expect(f.errors.length).toBe(1);
+  });
+
+  it('transposes a repeat to a new key, and makes a scale change a new variation', () => {
+    const s = generateScore(resolveConfig({ seed: 4, key: 'C', song: { enabled: true, form: 'A4 > A4{D} > A4{minor}' } }));
+    const roots = (i: number) => s.chords.filter((c) => c.section === i && !c.unison).map((c) => c.root);
+    expect(roots(1)).toEqual(roots(0).map((r) => (r + 2) % 12));
+    expect(roots(2)).not.toEqual(roots(0));
+    expect(s.chords.filter((c) => c.section === 2)[0].scale).toBe('minor');
+  });
+});
