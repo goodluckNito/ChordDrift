@@ -296,11 +296,21 @@
           </fieldset>
           <fieldset>
             <legend>Theme</legend>
+            <label class="check wide">
+              <input id="use-my-theme" type="checkbox" />
+              <span>Use my theme <span class="muted">— instead of each song's</span></span>
+            </label>
+            <div class="row wide">
+              <button type="button" id="save-my-theme" title="Make the current look your theme (kept on this device)">Save as my theme</button>
+              <button type="button" id="apply-my-theme" title="Copy your theme into this song, so share links and exports carry it">Apply my theme to this song</button>
+            </div>
+            <p id="theme-note" class="wide muted small"></p>
             <label>Preset
               <select id="theme-preset"></select>
             </label>
             <label>Format
               <select id="format">
+                <option value="auto">Auto — match this screen</option>
                 <option value="portrait">Portrait 9:16 (1080×1920)</option>
                 <option value="landscape">Landscape 16:9 (1920×1080)</option>
                 <option value="square">Square 1:1 (1080×1080)</option>

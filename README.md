@@ -102,9 +102,12 @@ Line thickness and dot size follow the level over time, in the video as well. **
 - **Line colouring:** one colour, per voice, per note (around the circle of fifths) or by height.
 - **Extras:** line width, glow, an octave grid with note names, and switches for the Hz labels and HUD.
 
-Themes are saved in projects and share links and used in video exports. **Reset all settings** returns everything to defaults but keeps the seed.
+Themes are saved in projects and share links and used in video exports. **My theme:**
+- *Save as my theme* keeps a look on this device.
+- *Use my theme* shows every song in it, including shared links; the song keeps its own theme.
+- *Apply my theme to this song* copies your look into the song, so links and exports carry it. **Reset all settings** returns everything to defaults but keeps the seed.
 
-**Formats.** Theme → Format sets the frame: Portrait 9:16, Landscape 16:9, Square, Portrait 4:5 or Landscape 4K. The layout adapts: text scales with the frame, and wide frames show more history. Exports and recordings use this size.
+**Formats.** Theme → Format sets the frame. **Auto** (the default) picks landscape on wide screens and portrait on tall ones, and switches when you rotate or resize. You can also fix it to Portrait 9:16, Landscape 16:9, Square, Portrait 4:5 or Landscape 4K. The layout adapts: text scales with the frame, and wide frames show more history. Exports and recordings use this size.
 
 **Spiral view.** Theme → View → Spiral wraps pitch around a spiral: one turn per octave with C at the top, so octaves line up and the current chord shows as a shape, named in the middle. **Spiral motion** has two settings:
 - *Fly through* (default): depth is time, and you travel forward through it. Upcoming chords start small at the vanishing point and rush toward you; passed notes fly out past the edges. Held notes become slowly twisting helices, glides swing into their new intervals as they approach, and rings at every second and every chord change make the motion felt.

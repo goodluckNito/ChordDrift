@@ -558,9 +558,7 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
   };
 
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, lay.clipTop, W, lay.clipBottom - lay.clipTop);
-  ctx.clip();
+  // No clip: trails run under the title and HUD (text gets a halo instead).
 
   // Guides: the pitch spiral itself and the twelve pitch-class spokes with names.
   ctx.save();
@@ -687,6 +685,10 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
     ctx.font = `700 ${34 * tu}px ${st.font}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 8 * tu;
+    ctx.strokeStyle = withAlpha(th.background, 0.85);
+    ctx.strokeText(chordLabelAt(score, t), cx, cy);
     ctx.fillText(chordLabelAt(score, t), cx, cy);
   }
   ctx.restore();
@@ -734,9 +736,7 @@ function drawTunnel(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
   };
 
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, lay.clipTop, W, lay.clipBottom - lay.clipTop);
-  ctx.clip();
+  // No clip: lines run under the title and HUD (text gets a halo instead).
 
   // Rails: the twelve pitch classes converging on the vanishing point.
   ctx.strokeStyle = withAlpha(th.text, 0.07);
@@ -880,6 +880,10 @@ function drawTunnel(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
   if (th.labels) {
     ctx.fillStyle = st.text;
     ctx.font = `700 ${34 * tu}px ${st.font}`;
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 8 * tu;
+    ctx.strokeStyle = withAlpha(th.background, 0.85);
+    ctx.strokeText(chordLabelAt(score, t), cx, cy);
     ctx.fillText(chordLabelAt(score, t), cx, cy);
   }
   ctx.restore();
@@ -1105,6 +1109,20 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
 
   }
 
+  // In the spiral views lines run behind the text, so text gets a thin halo in the background colour.
+  const halo = cfg.video.view === 'spiral';
+  const say = (text: string, x: number, y: number) => {
+    if (halo) {
+      ctx.save();
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 6 * tu;
+      ctx.strokeStyle = withAlpha(th.background, 0.85);
+      ctx.strokeText(text, x, y);
+      ctx.restore();
+    }
+    ctx.fillText(text, x, y);
+  };
+
   // ---- Title (only what's defined) -----------------------------------------
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
@@ -1123,12 +1141,12 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       titleSize *= maxTitle / tw;
       ctx.font = `700 ${titleSize}px ${st.font}`;
     }
-    ctx.fillText(big, W / 2, lay.titleY);
+    say(big, W / 2, lay.titleY);
   }
   if (small) {
     ctx.fillStyle = st.muted;
     ctx.font = `500 ${29 * tu}px ${st.font}`;
-    ctx.fillText(small, W / 2, lay.subtitleY);
+    say(small, W / 2, lay.subtitleY);
   }
 
   // ---- HUD ---------------------------------------------------------------
@@ -1151,8 +1169,8 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   ];
   left.forEach(([k, val], i) => {
     ctx.textAlign = 'left';
-    ctx.fillText(k, lay.hudLeft, rowY(i));
-    if (val) ctx.fillText(val, lay.hudValue, rowY(i));
+    say(k, lay.hudLeft, rowY(i));
+    if (val) say(val, lay.hudValue, rowY(i));
   });
   const right: [string, string][] = [
     ['chord', chordLabelAt(score, t)],
@@ -1163,9 +1181,9 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const rx = lay.hudRight;
   right.forEach(([k, val], i) => {
     ctx.textAlign = 'right';
-    ctx.fillText(val, rx, rowY(i));
+    say(val, rx, rowY(i));
     const vw = ctx.measureText(val).width;
-    ctx.fillText(k, rx - vw - 12 * tu, rowY(i));
+    say(k, rx - vw - 12 * tu, rowY(i));
   });
 
   ctx.restore();

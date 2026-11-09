@@ -29,6 +29,7 @@ import {
   voicingRules,
   type ChordDriftConfig,
   type DeepPartial,
+  type Theme,
   type Score,
 } from './engine';
 import { ensureFont } from './render/fonts';
@@ -150,11 +151,68 @@ function startApp() {
   themeSelect.addEventListener('change', () => {
     const preset = THEME_PRESETS[themeSelect.value];
     if (!preset) return;
-    state.theme = structuredClone(preset);
+    if (useMine) {
+      myTheme = structuredClone(preset);
+      saveMyTheme();
+    } else state.theme = structuredClone(preset);
     writeForm();
     rebuild(true);
   });
 
+  const useMineBox = $<HTMLInputElement>('#use-my-theme');
+  const themeNote = $<HTMLParagraphElement>('#theme-note');
+  const syncThemeUi = () => {
+    useMineBox.checked = useMine;
+    themeNote.textContent = useMine
+      ? "Showing your theme. Edits here change your theme; the song keeps its own (share links and saved projects carry the song's)."
+      : myTheme
+        ? "Showing this song's theme. Tick \"Use my theme\" to see every song in yours."
+        : 'Share links and projects carry the song\'s theme. Save a look as your theme to use it everywhere.';
+  };
+  useMineBox.addEventListener('change', () => {
+    useMine = useMineBox.checked;
+    if (useMine && !myTheme) {
+      myTheme = structuredClone(state.theme);
+      saveMyTheme();
+    }
+    store.set('chord-drift.useMyTheme', useMine ? '1' : '0');
+    syncThemeUi();
+    writeForm();
+    rebuild(true);
+  });
+  $('#save-my-theme').addEventListener('click', () => {
+    myTheme = structuredClone(displayTheme());
+    saveMyTheme();
+    syncThemeUi();
+    setStatus('Saved as your theme. Tick "Use my theme" to see every song in it.');
+  });
+  $('#apply-my-theme').addEventListener('click', () => {
+    if (!myTheme) {
+      setStatus('Save a theme first.');
+      return;
+    }
+    state.theme = structuredClone(myTheme);
+    writeForm();
+    rebuild(true);
+    setStatus('Your theme is now part of this song (share links and exports carry it).');
+  });
+
+  const store = {
+    get: (k: string) => {
+      try {
+        return localStorage.getItem(k);
+      } catch {
+        return null;
+      }
+    },
+    set: (k: string, v: string) => {
+      try {
+        localStorage.setItem(k, v);
+      } catch {
+        /* ignore */
+      }
+    },
+  };
   // Output format (the exported frame size).
   const FORMATS: Record<string, [number, number]> = {
     portrait: [1080, 1920],
@@ -164,13 +222,44 @@ function startApp() {
     landscape4k: [3840, 2160],
   };
   const formatSelect = $<HTMLSelectElement>('#format');
+  // Auto: landscape on wide screens, portrait on tall ones (a per-device preference, on by default).
+  let autoFormat = store.get('chord-drift.formatAuto') !== '0';
+  const autoDims = (): [number, number] => (window.innerWidth > window.innerHeight * 1.05 ? FORMATS.landscape : FORMATS.portrait);
+  const applyAutoFormat = () => {
+    if (!autoFormat) return false;
+    const [w, h] = autoDims();
+    if (state.video.width === w && state.video.height === h) return false;
+    state.video.width = w;
+    state.video.height = h;
+    // The frame size doesn't change the music, so no regeneration: just reframe.
+    if (score) {
+      score.config.video.width = w;
+      score.config.video.height = h;
+      viewCache = null;
+    }
+    return true;
+  };
   formatSelect.addEventListener('change', () => {
-    const f = FORMATS[formatSelect.value];
-    if (!f) return;
-    [state.video.width, state.video.height] = f;
-    // Wide frames read best with history further left.
+    autoFormat = formatSelect.value === 'auto';
+    store.set('chord-drift.formatAuto', autoFormat ? '1' : '0');
+    if (autoFormat) applyAutoFormat();
+    else {
+      const f = FORMATS[formatSelect.value];
+      if (!f) return;
+      [state.video.width, state.video.height] = f;
+    }
     writeForm();
     rebuild(true);
+  });
+  let resizeTimer = 0;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(() => {
+      if (applyAutoFormat()) {
+        syncVisibility();
+        saveHash();
+      }
+    }, 200);
   });
 
   // Fill window ("desktop mode"): the preview uses the whole stage. A per-device preference.
@@ -205,10 +294,34 @@ function startApp() {
 
   const setStatus = (msg: string) => (status.textContent = msg);
 
+  // "My theme": a personal look (this device) that can override each song's theme.
+  let myTheme: Theme | null = null;
+  try {
+    const raw = store.get('chord-drift.myTheme');
+    if (raw) myTheme = resolveConfig({ theme: JSON.parse(raw) }).theme;
+  } catch {
+    myTheme = null;
+  }
+  let useMine = store.get('chord-drift.useMyTheme') === '1' && myTheme !== null;
+  const saveMyTheme = () => myTheme && store.set('chord-drift.myTheme', JSON.stringify(myTheme));
+  /** The theme on screen: yours when "Use my theme" is on, otherwise the song's. */
+  const displayTheme = (): Theme => (useMine && myTheme ? myTheme : state.theme);
+  let viewCache: { score: Score; theme: Theme; view: Score } | null = null;
+  /** The score as drawn (with your theme swapped in when that's on). */
+  const viewScore = (): Score => {
+    const theme = displayTheme();
+    if (theme === state.theme && !useMine) return score;
+    if (!viewCache || viewCache.score !== score || viewCache.theme !== theme) {
+      viewCache = { score, theme, view: { ...score, config: { ...score.config, theme } } };
+    }
+    return viewCache.view;
+  };
+
   // ---- State <-> form ----------------------------------------------------------
   function writeForm() {
+    const shown = { ...state, theme: displayTheme() };
     for (const el of fields) {
-      const v = getPath(state, el.dataset.path!);
+      const v = getPath(shown, el.dataset.path!);
       if (el instanceof HTMLInputElement && el.type === 'checkbox') el.checked = Boolean(v);
       else el.value = typeof v === 'number' && el.dataset.path === 'seed' ? formatSeed(v) : String(v ?? '');
     }
@@ -221,6 +334,13 @@ function startApp() {
     if (el instanceof HTMLInputElement && el.type === 'checkbox') value = el.checked;
     else if (el instanceof HTMLInputElement && (el.type === 'number' || el.type === 'range')) value = Number(el.value);
     else value = el.value;
+    if (path.startsWith('theme.') && useMine && myTheme) {
+      setPath({ theme: myTheme }, path, value);
+      myTheme.preset = 'custom';
+      myTheme = { ...myTheme }; // new identity so the view cache refreshes
+      saveMyTheme();
+      return;
+    }
     setPath(state, path, value);
   }
 
@@ -244,11 +364,12 @@ function startApp() {
     for (const el of form.querySelectorAll<HTMLElement>('[data-swell]')) el.hidden = state.audio.swell === 'off';
     for (const el of form.querySelectorAll<HTMLElement>('[data-transition]')) el.hidden = state.motion.transition !== el.dataset.transition;
     for (const el of form.querySelectorAll<HTMLElement>('[data-env]')) el.hidden = state.audio.envelope !== 'pluck';
-    for (const el of form.querySelectorAll<HTMLElement>('[data-gradient]')) el.hidden = !state.theme.gradient;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-gradient]')) el.hidden = !displayTheme().gradient;
     for (const el of form.querySelectorAll<HTMLElement>('[data-spiral]')) el.hidden = state.video.view !== 'spiral';
-    themeSelect.value = state.theme.preset in THEME_PRESETS ? state.theme.preset : 'custom';
+    const dt = displayTheme();
+    themeSelect.value = dt.preset in THEME_PRESETS ? dt.preset : 'custom';
     const fmt = Object.entries(FORMATS).find(([, [w, h]]) => w === state.video.width && h === state.video.height);
-    formatSelect.value = fmt ? fmt[0] : 'custom';
+    formatSelect.value = autoFormat ? 'auto' : fmt ? fmt[0] : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-free]')) el.hidden = state.rhythm.chords.trim().length > 0;
     const presetIdx = RHYTHM_PRESETS.findIndex((p) => p.chords === state.rhythm.chords.trim());
     presetSelect.value = presetIdx >= 0 ? String(presetIdx) : 'custom';
@@ -260,8 +381,8 @@ function startApp() {
 
   // ---- Score ------------------------------------------------------------------
   function rebuild(keepTime: boolean) {
-    void ensureFont(state.theme.font);
-    canvas.style.background = themeBackground(state);
+    void ensureFont(displayTheme().font);
+    canvas.style.background = themeBackground({ ...state, theme: displayTheme() });
     const wasPlaying = player.playing;
     const t = keepTime ? currentTime() : 0;
     if (wasPlaying) player.pause();
@@ -427,6 +548,7 @@ function startApp() {
 
   function loadConfig(cfg: DeepPartial<ChordDriftConfig>) {
     state = resolveConfig(cfg);
+    applyAutoFormat();
     writeForm();
     rebuild(false);
   }
@@ -521,7 +643,7 @@ function startApp() {
     const el = e.target as Field;
     if (!el.dataset.path) return;
     readField(el);
-    if (el.dataset.path.startsWith('theme.')) state.theme.preset = 'custom';
+    if (el.dataset.path.startsWith('theme.') && !useMine) state.theme.preset = 'custom';
     syncVisibility();
     const path = el.dataset.path;
     clearTimeout(debounce);
@@ -566,7 +688,7 @@ function startApp() {
     c.width = score.config.video.width;
     c.height = score.config.video.height;
     const t = currentTime();
-    renderFrame(c.getContext('2d')!, score, t);
+    renderFrame(c.getContext('2d')!, viewScore(), t);
     c.toBlob((b) => b && download(b, `${baseName()}-${String(Math.round(t * score.config.video.fps)).padStart(5, '0')}.png`), 'image/png');
   });
 
@@ -775,8 +897,8 @@ function startApp() {
     adaptQuality(performance.now());
     updateMeter(performance.now());
     resizeCanvas();
-    renderFrame(ctx, score, t, { textScale });
-    if (recording) renderFrame(recording.canvas.getContext('2d')!, score, t);
+    renderFrame(ctx, viewScore(), t, { textScale });
+    if (recording) renderFrame(recording.canvas.getContext('2d')!, viewScore(), t);
     // DOM updates are throttled; layout work every frame adds up on phones.
     const nowMs = performance.now();
     if (nowMs - lastDom > 100 || !player.playing) {
@@ -813,6 +935,8 @@ function startApp() {
   // ---- Boot ----------------------------------------------------------------------
   const shared = decodeShare(location.hash.slice(1));
   state = resolveConfig(shared ?? {});
+  applyAutoFormat();
+  syncThemeUi();
   writeForm();
   refreshProjects();
   rebuild(false);
