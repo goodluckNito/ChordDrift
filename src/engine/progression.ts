@@ -1,6 +1,6 @@
 import { COLOUR_BY_COMPLEXITY, SIZE_BY_COMPLEXITY, alterChord, chordName, chordSuffix, colourVariant, isMinorish, palette, pcOverlap, romanName, stackChord, suffixIntervals, type Chord } from './chords';
 import type { ChordDriftConfig } from './config';
-import type { ProgressionToken } from './progression-text';
+import { parseProgression, type ProgressionToken } from './progression-text';
 import { STYLES, StylePlanner, type PlanItem } from './styles';
 import { pick, weighted, type Rng } from './rng';
 import { PARALLEL_SCALES, SCALES, mod12, romanFor, scalePcs, scaleSteps, tonicName } from './theory';
@@ -72,6 +72,23 @@ export class ProgressionWalker {
   /** True when a style planner picks the chords. */
   get planned(): boolean {
     return this.planner !== null;
+  }
+
+  /**
+   * Resolve written chords (the progression language) in the walker's current key, as if played:
+   * used for cadences that end song parts.
+   */
+  resolveText(text: string, origin: ChordOrigin = 'cadence'): ChordSpec[] {
+    const out: ChordSpec[] = [];
+    for (const t of parseProgression(text).tokens) {
+      if (t.kind !== 'chord') continue;
+      const spec = this.resolve(t, origin);
+      this.prevPrev = this.prev;
+      this.prev = spec;
+      this.recent = [...this.recent.slice(-3), spec];
+      out.push(spec);
+    }
+    return out;
   }
 
   /** For finite styled pieces: plan the whole thing up front; returns the number of chords. */

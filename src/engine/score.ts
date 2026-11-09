@@ -5,7 +5,7 @@ import { parseProgression, type ProgressionToken } from './progression-text';
 import { chordDurations, parseRhythm, strikeOnsets } from './rhythm';
 import { DRUM_VOICES, parseDrumRows, type DrumRows, type DrumVoice } from './drums';
 import { formatSeed, parseSeed, randInt, stream, uniform, type Rng } from './rng';
-import { DEGREE_OFFSETS, SCALES, mod12, parseNote, parsePc, spellNote, spellPc, tonicName } from './theory';
+import { DEGREE_OFFSETS, SCALES, mod12, parseNote, parsePc, pcName, scaleSteps, spellNote, spellPc, tonicName } from './theory';
 import { STYLES, type StyleId } from './styles';
 import { parseSongForm, type SongSection } from './song';
 import { parseChop, type ChopPattern } from './chop';
@@ -161,9 +161,11 @@ class ScoreBuilder {
   private melody: MelodyGenerator | null = null;
   /** Song mode: the chord plan, the parts, and a generator per distinct part. */
   private song: {
-    items: { kind: 'unison' | 'chord'; section: number; local: number; slot: number }[];
+    items: { kind: 'unison' | 'chord'; section: number; local: number; slot: number; fromEnd: number }[];
     sections: SongSection[];
-    parts: Map<string, { walker: ProgressionWalker; specs: ChordSpec[]; count: number; tonic: number }>;
+    parts: Map<string, { walker: ProgressionWalker; cadence: ProgressionWalker; specs: ChordSpec[]; count: number; tonic: number }>;
+    /** Per section: the ending it plays (written chords in its key), resolved lazily. */
+    endings: ({ text: string; specs: ChordSpec[] | null } | null)[];
   } | null = null;
   private songTonic = 0;
   /** Index into the chord rhythm (collapses don't use a slot of it). */
@@ -199,8 +201,8 @@ class ScoreBuilder {
     }
     const songForm = cfg.song.enabled ? parseSongForm(cfg.song.form) : null;
     if (songForm && songForm.sections.length) {
-      const parts = new Map<string, { walker: ProgressionWalker; specs: ChordSpec[]; count: number; tonic: number }>();
-      const items: { kind: 'unison' | 'chord'; section: number; local: number; slot: number }[] = [];
+      const parts = new Map<string, { walker: ProgressionWalker; cadence: ProgressionWalker; specs: ChordSpec[]; count: number; tonic: number }>();
+      const items: { kind: 'unison' | 'chord'; section: number; local: number; slot: number; fromEnd: number }[] = [];
       // Parts last whole bars. Chords change on the chord rhythm (once a bar without one),
       // restarting at each part; the last chord is cut to end on the part's last bar line.
       const rhythm = durs.length ? durs : [4];
@@ -224,13 +226,43 @@ class ScoreBuilder {
           let count = slots.length;
           // A styled part plays its planned phrases, then repeats them to fill its bars.
           if (pcfg.style !== 'none' && !tokens.length) count = Math.min(count, walker.planPiece(Math.max(1, Math.round(count / 4))));
-          part = { walker, specs: [], count, tonic };
+          const cadence = new ProgressionWalker({ ...pcfg, style: 'none' }, mod12(tonic), stream(seed, `cadence:${id}`), []);
+          part = { walker, cadence, specs: [], count, tonic };
           parts.set(id, part);
         }
-        if (sec.collapse) items.push({ kind: 'unison', section: i, local: 0, slot: collapseSlot });
-        slots.forEach((slot, j) => items.push({ kind: 'chord', section: i, local: j, slot }));
+        if (sec.collapse) items.push({ kind: 'unison', section: i, local: 0, slot: collapseSlot, fromEnd: 0 });
+        slots.forEach((slot, j) => items.push({ kind: 'chord', section: i, local: j, slot, fromEnd: slots.length - 1 - j }));
       });
-      this.song = { items, sections: songForm.sections, parts };
+      // Endings that make the joins mean something (free generation only; styles and written
+      // progressions have their own cadences).
+      const endingRng = stream(seed, 'song-endings');
+      const endings = songForm.sections.map((sec, i) => {
+        // Keep at least one generated chord in the part: only endings shorter than it are options.
+        const len = items.filter((it) => it.section === i && it.kind === 'chord').length;
+        const pickOne = (xs: string[]) => {
+          const fit = xs.filter((x) => x.split(/\s+/).length < len);
+          const roll = endingRng();
+          return fit.length ? fit[Math.floor(roll * fit.length)] : '';
+        };
+        if (tokens.length || (sec.style ?? cfg.style) !== 'none') return null;
+        const steps = scaleSteps(sec.scale ?? cfg.scale);
+        const minor = steps.includes(3) && !steps.includes(4);
+        const next = songForm.sections[i + 1];
+        let text: string;
+        if (!next) {
+          // The close: a lift, a minor plagal, a climbing bass, a backdoor, or a plain cadence (minor may end on a Picardy major).
+          text = minor ? pickOne(['bVI bVII i', 'iv V i', 'bII i', 'bVI bVII I', 'iv bVII i']) : pickOne(['bVI bVII I', 'IV iv I', 'IV V vi bVII I', 'iv bVII I', 'ii V I']);
+        } else if (next.collapse) {
+          // Leave tension hanging; the unison resolves it.
+          text = minor ? pickOne(['bVI V', 'iv V', 'bII V', 'bVI bVII']) : pickOne(['IV V', 'bVI V', 'ii V', 'IV iv']);
+        } else if (mod12(partTonic(next, keyPc)) !== mod12(partTonic(sec, keyPc))) {
+          // Into a new key: its ii–V, so the next part lands on its tonic.
+          const t = mod12(partTonic(next, keyPc));
+          text = pickOne([`${pcName(mod12(t + 2), true)}m7 ${pcName(mod12(t + 7), true)}7`, `${pcName(mod12(t + 7), true)}7`]);
+        } else text = minor ? pickOne(['V', 'bVI V', 'bVII']) : pickOne(['V', 'IV V', 'ii V']);
+        return text ? { text, specs: null } : null;
+      });
+      this.song = { items, sections: songForm.sections, parts, endings };
       this.total = items.length;
       this.songTonic = keyPc;
     }
@@ -379,12 +411,26 @@ class ScoreBuilder {
       const sec = song.sections[item.section];
       const part = song.parts.get(partId(sec))!;
       let base: ChordSpec;
-      if (part.specs.length < part.count) {
-        // Parts after the first don't have to open on the tonic (only styled parts follow their plan from the top).
-        const off = song.sections[0].name !== sec.name && !part.walker.planned ? 1 : 0;
-        base = part.walker.next(part.specs.length + off, part.count + off, cost);
-        part.specs.push(base);
-      } else base = part.specs[item.local % part.specs.length];
+      const ending = song.endings[item.section];
+      const endLen = ending ? ending.text.split(/\s+/).length : 0;
+      if (ending && item.fromEnd < endLen) {
+        // The part's ending for this join, in the part's own key (then transposed like the rest).
+        ending.specs ??= part.cadence.resolveText(ending.text);
+        base = ending.specs[endLen - 1 - item.fromEnd];
+      } else {
+        // Chords are kept by slot, so a repeat lines up with the first time even when endings
+        // took different slots; a slot never played yet is generated now.
+        const idx = item.local % part.count;
+        if (!part.specs[idx]) {
+          // A part that follows straight on in the same key needn't open on the tonic; after a
+          // collapse or a key change it does, so the ending before it resolves.
+          const prev = song.sections[item.section - 1];
+          const sameKeyFlow = prev && !sec.collapse && mod12(partTonic(prev, score.keyPc)) === mod12(partTonic(sec, score.keyPc));
+          const off = sameKeyFlow && !part.walker.planned ? 1 : 0;
+          part.specs[idx] = part.walker.next(idx + off, part.count + off, cost);
+        }
+        base = part.specs[idx];
+      }
       const d = partTonic(sec, score.keyPc) - part.tonic;
       spec = d ? transposeSpec(base, d) : base;
       notes = voiceChord(spec, ref, rules, this.voicingRng);

@@ -72,3 +72,27 @@ describe('styles', () => {
     expect(none.chords.map((c) => c.notes)).toEqual(plain.chords.map((c) => c.notes));
   });
 });
+
+describe('generative styles', () => {
+  it('every vocabulary, ending and spark chord parses', async () => {
+    const { STYLES, parseProgression } = await import('../src/engine');
+    for (const [id, def] of Object.entries(STYLES)) {
+      const g = def.gen!;
+      expect(g, id).toBeTruthy();
+      for (const mode of ['major', 'minor'] as const) {
+        const all = [...Object.keys(g.vocab[mode]), ...g.endings[mode], ...(g.sparks?.chords[mode] ?? [])].join(' ');
+        expect(parseProgression(all).errors, `${id} ${mode}`).toEqual([]);
+      }
+    }
+  });
+
+  it('witch house no longer repeats the same few loops', async () => {
+    const { generateScore, resolveConfig } = await import('../src/engine');
+    const phrases = new Set<string>();
+    for (let seed = 1; seed <= 12; seed++) {
+      const s = generateScore(resolveConfig({ seed, key: 'F', scale: 'minor', style: 'witchhouse', chordCount: [16, 16] }));
+      for (let i = 0; i + 4 <= s.chords.length; i += 4) phrases.add(s.chords.slice(i, i + 4).map((c) => c.roman.replace(/[0-9b#()]+$/, '')).join(' '));
+    }
+    expect(phrases.size).toBeGreaterThan(20);
+  });
+});

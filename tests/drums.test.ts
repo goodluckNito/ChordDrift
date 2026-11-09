@@ -54,11 +54,13 @@ describe('drum timing', () => {
 });
 
 describe('witch house style', () => {
-  it('loops a falling-thirds minor progression (i–♭III–♭VI–V and relatives)', () => {
+  it('writes dark minor phrases from its vocabulary, home on i', () => {
     const s = generateScore({ seed: 3, key: 'F', scale: 'minor', style: 'witchhouse' });
-    const roots = s.chords.map((c) => c.root);
-    expect(roots.slice(0, 4)).toEqual([5, 8, 1, 0]); // F Ab Db C
     expect(s.chords.at(-1)!.root).toBe(5);
+    // i, ♭II, ii°, ♭III, III, iv/IV, v/V, ♭vi/♭VI, ♭VII (relative to F), allowing for its rare key changes.
+    const home = new Set([5, 6, 7, 8, 9, 10, 0, 1, 3]);
+    const inKey = s.chords.filter((c) => c.tonic !== 5 || home.has(c.root)).length;
+    expect(inKey / s.chords.length).toBeGreaterThan(0.9);
   });
 });
 

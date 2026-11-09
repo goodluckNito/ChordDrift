@@ -48,6 +48,21 @@ export interface StyleDef {
   /** Approach used to return home. */
   returnVia: string;
   voicing?: Partial<VoicingRules>;
+  /** Generative phrases (most phrases come from here; the templates above are references). */
+  gen?: StyleGen;
+}
+
+/**
+ * How a style writes its own phrases: a weighted chord vocabulary, preferred root motions
+ * (semitones up from the previous root), phrase endings (half, deceptive, plagal…), occasional
+ * "spark" chords from outside the usual palette, and how often a reference template is used.
+ */
+export interface StyleGen {
+  vocab: Record<Mode, Record<string, number>>;
+  motion: Record<number, number>;
+  endings: Record<Mode, string[]>;
+  sparks?: { prob: number; chords: Record<Mode, string[]> };
+  templateProb: number;
 }
 
 export const STYLES: Record<Exclude<StyleId, 'none'>, StyleDef> = {
@@ -176,7 +191,7 @@ export const STYLES: Record<Exclude<StyleId, 'none'>, StyleDef> = {
   witchhouse: {
     name: 'Witch house',
     description:
-      'Built from a reference track: one minor loop (i–♭III–♭VI–V and relatives) that falls by thirds and drops ♭6→5, repeated almost unchanged, with minor 7th/9th colour. Pair it with a slow tempo (half-time drums around 115–120 BPM), deep sub, dark tone and sidechain.',
+      'Dark minor phrases that fall by thirds and drop ♭6→5, with phrygian ♭II and the odd chromatic-mediant spark; loops come back often but keep changing a chord. Pair it with a slow tempo (half-time drums around 115–120 BPM), deep sub, dark tone and sidechain.',
     complexity: [2, 3],
     phrases: {
       // The reference (F minor): bass F–A♭–D♭–C = i–♭III–♭VI–V, falling thirds then the ♭6→5 half step.
@@ -189,8 +204,8 @@ export const STYLES: Record<Exclude<StyleId, 'none'>, StyleDef> = {
       { semis: 5, to: 'minor', via: '', w: 1 },
     ],
     modProb: 0.08,
-    // Loops: the same four chords come back nearly every phrase.
-    repeatProb: 0.85,
+    // Loops come back often, but usually with a chord changed.
+    repeatProb: 0.6,
     returnHome: true,
     returnVia: '',
     voicing: { pedalBonus: 2.5, bassWeight: 0.2, movePenalty: 1.6 },
@@ -219,6 +234,80 @@ export const STYLES: Record<Exclude<StyleId, 'none'>, StyleDef> = {
   },
 };
 
+const M = (major: Record<string, number>, minor: Record<string, number> = major) => ({ major, minor });
+const E = (major: string[], minor: string[] = major) => ({ major, minor });
+
+/** Generative vocabularies. The first entry of each is the tonic (openers favour it). */
+const GEN: Record<Exclude<StyleId, 'none'>, StyleGen> = {
+  classical: {
+    vocab: M({ I: 5, IV: 3, V: 4, vi: 3, ii: 3, iii: 1, viio: 0.8 }, { i: 5, iv: 3, V: 4, bVI: 3, iio: 2, bIII: 2, bVII: 1, viio: 0.8 }),
+    motion: { 5: 3, 7: 2, 9: 2.5, 8: 1.5, 2: 1.5, 3: 1, 10: 1, 4: 1, 1: 0.3, 11: 0.6, 6: 0.2 },
+    endings: E(['V', 'IV V', 'ii V', 'V vi'], ['V', 'iv V', 'bVI V', 'V bVI']),
+    sparks: { prob: 0.15, chords: E(['iv', 'bVI', 'III7', 'bVII'], ['bII', 'IV', 'I']) },
+    templateProb: 0.3,
+  },
+  jazz: {
+    vocab: M(
+      { Imaj7: 4, ii7: 4, V7: 4, vi7: 3, iii7: 2, IVmaj7: 2, VI7: 2, II7: 1.5, bII7: 1, iv7: 1, bVII7: 1 },
+      { im9: 4, iim7b5: 3, V7b9: 3, bVImaj7: 2, iv9: 2, bIIImaj7: 2, bVII13: 2, bII7: 1 },
+    ),
+    motion: { 5: 4, 7: 1, 11: 2, 9: 1.5, 2: 1, 3: 1, 6: 1, 10: 1, 8: 1, 4: 0.8, 1: 0.6 },
+    endings: E(['ii7 V7', 'V7', 'bII7', 'iv7 bVII7'], ['iim7b5 V7b9', 'V7b9', 'bII7']),
+    sparks: { prob: 0.25, chords: E(['bIIImaj7', 'bVImaj7', 'bVII7'], ['bII7', 'IV7']) },
+    templateProb: 0.3,
+  },
+  pop: {
+    vocab: M({ I: 5, V: 4, vi: 4, IV: 4, ii: 2, iii: 1, bVII: 1 }, { i: 5, bVI: 4, bIII: 4, bVII: 4, iv: 2, v: 1.5 }),
+    motion: { 5: 2, 7: 2.5, 9: 2.5, 8: 2, 2: 1.5, 10: 1.5, 3: 1, 4: 1, 1: 0.2, 11: 0.6, 6: 0.1 },
+    endings: E(['IV', 'V', 'IV V', 'vi V'], ['bVII', 'bVI bVII', 'iv']),
+    sparks: { prob: 0.2, chords: E(['iv', 'bVI', 'bVII', 'II'], ['IV', 'V']) },
+    templateProb: 0.35,
+  },
+  cinematic: {
+    vocab: M({ I: 4, bVI: 3, IV: 3, iv: 2, bVII: 2, vi: 2, III: 1.5, bIII: 1 }, { i: 5, bVI: 4, bIII: 3, bVII: 3, iv: 3, V: 2, bII: 1, IV: 1 }),
+    motion: { 8: 3, 4: 2.5, 3: 2, 9: 2, 5: 2, 7: 1.5, 10: 1.5, 2: 1, 1: 0.8, 11: 0.8, 6: 0.6 },
+    endings: E(['bVI bVII', 'iv', 'IV iv', 'bVII'], ['bVI bVII', 'iv V', 'bVI V', 'bII']),
+    sparks: { prob: 0.25, chords: E(['bIII', 'III', 'bVI'], ['IV', 'bII', 'I']) },
+    templateProb: 0.3,
+  },
+  gospel: {
+    vocab: M(
+      { I: 4, IV: 4, ii7: 3, V7: 3, vi7: 3, iii7: 2, I7: 1.5, IVmaj7: 2, II7: 1.5, VI7: 1.5 },
+      { i: 4, iv7: 3, bVImaj7: 2, V7: 3, bIII: 2, iio: 2 },
+    ),
+    motion: { 5: 3.5, 7: 1.5, 9: 2, 1: 1.5, 2: 1.5, 3: 1, 10: 1, 8: 1, 4: 1, 11: 1, 6: 0.6 },
+    endings: E(['ii7 V7', 'iv', 'V7sus4 V7', 'IV I7'], ['iio V7', 'iv V7']),
+    sparks: { prob: 0.3, chords: E(['III7', 'bVII9', 'iv6'], ['IV7', 'bII']) },
+    templateProb: 0.3,
+  },
+  impressionist: {
+    vocab: M(
+      { Imaj7: 4, IVmaj7: 3, iii7: 2, vi9: 2, ii9: 2, bVIImaj7: 2, bVImaj7: 2, IImaj7: 1.5, V9sus4: 1.5, bIIImaj7: 1 },
+      { im9: 4, ivm9: 2, bVImaj7: 3, bIIImaj7: 2, bVIImaj7: 2, IVmaj7: 1.5, iim9: 1 },
+    ),
+    motion: { 2: 2.5, 10: 2.5, 1: 1, 11: 1, 4: 2, 8: 2, 3: 1.5, 9: 1.5, 5: 1, 7: 1, 6: 1 },
+    endings: E(['IVmaj7', 'bVIImaj7', 'V9sus4', 'IImaj7'], ['bVImaj7', 'IVmaj7', 'bVIImaj7']),
+    sparks: { prob: 0.3, chords: E(['bIIImaj7', 'bVImaj7', 'IImaj7'], ['bIImaj7', 'IIImaj7']) },
+    templateProb: 0.3,
+  },
+  witchhouse: {
+    vocab: M({ i: 5, bVI: 4, bIII: 3, iv: 3, V: 2, v: 2, bVII: 2, bII: 1, iio: 0.6 }),
+    // Falling thirds (8, 9), the ♭6→5 half-step drop (11), fourths and fifths.
+    motion: { 8: 3, 9: 3, 11: 2.5, 5: 2, 7: 1.2, 1: 1, 4: 0.8, 3: 1.2, 2: 0.8, 10: 1, 6: 0.5 },
+    endings: E(['V', 'bVI V', 'bII', 'iv V', 'bVI']),
+    sparks: { prob: 0.25, chords: E(['bII', 'IV', 'III', 'bvi']) },
+    templateProb: 0.25,
+  },
+  occult: {
+    vocab: M({ i: 5, bII: 4, bvi: 2, iv: 2, bVII: 2, '#iv': 2, biii: 1.5, bVI: 2, V: 1.5 }),
+    motion: { 1: 3, 11: 3, 6: 2.5, 3: 2, 9: 2, 8: 1.5, 4: 1, 5: 1.2, 7: 1, 2: 0.8, 10: 1 },
+    endings: E(['bII', 'bII i', 'V', '#iv']),
+    sparks: { prob: 0.25, chords: E(['bv', 'vi', 'III']) },
+    templateProb: 0.3,
+  },
+};
+for (const [id, g] of Object.entries(GEN)) STYLES[id as Exclude<StyleId, 'none'>].gen = g;
+
 export const STYLE_IDS = ['none', ...Object.keys(STYLES)] as StyleId[];
 
 export interface PlanItem {
@@ -241,6 +330,7 @@ export class StylePlanner {
   private tonic: number;
   private scale: string;
   private lastTemplate: string | null = null;
+  private lastText: string | null = null;
   private phrasesAway = 0;
   private phraseCount = 0;
   private pendingKeyChange = false;
@@ -268,6 +358,68 @@ export class StylePlanner {
     return t;
   }
 
+  /**
+   * The next phrase's chords: a loop repeat (sometimes with one chord changed), a reference
+   * template now and then, or a phrase generated from the style's vocabulary.
+   */
+  private phraseText(): string {
+    const g = this.style.gen;
+    if (!g) return this.pickTemplate();
+    if (this.lastText && this.rng() < (this.style.repeatProb ?? 0)) {
+      if (this.rng() < 0.5) return this.lastText;
+      return (this.lastText = this.vary(this.lastText, g));
+    }
+    const text = this.rng() < g.templateProb ? this.pickTemplate() : this.generate(g);
+    this.lastText = text;
+    return text;
+  }
+
+  private rootOf(numeral: string): number {
+    const t = tokens(numeral)[0];
+    if (!t || t.kind !== 'chord') return 0;
+    const r = t.root;
+    return r.kind === 'roman' || r.kind === 'offset' ? r.semitones : r.kind === 'absolute' ? mod12(r.pc - this.tonic) : 0;
+  }
+
+  /** A weighted next chord after `prev`, favouring the style's root motions and avoiding repeats. */
+  private nextChord(g: StyleGen, prev: string | null, used: string[], tonicBoost = 1): string {
+    const vocab = g.vocab[this.mode];
+    const names = Object.keys(vocab);
+    const weights = names.map((n, i) => {
+      let w = vocab[n] * (i === 0 ? tonicBoost : 1);
+      if (prev !== null) {
+        w *= g.motion[mod12(this.rootOf(n) - this.rootOf(prev))] ?? 0.3;
+        if (n === prev) w *= 0.03;
+      }
+      if (used.includes(n)) w *= 0.45;
+      return w;
+    });
+    return weighted(this.rng, names, weights);
+  }
+
+  private generate(g: StyleGen): string {
+    // Open on the tonic most of the time (the first vocabulary entry), then walk, then end.
+    const chords: string[] = [this.nextChord(g, null, [], this.rng() < 0.65 ? 4 : 1)];
+    for (let i = 1; i < 4; i++) chords.push(this.nextChord(g, chords[i - 1], chords));
+    const endings = g.endings[this.mode];
+    const end = endings[Math.floor(this.rng() * endings.length)].split(/\s+/).filter(Boolean);
+    chords.splice(4 - end.length, end.length, ...end);
+    if (g.sparks && this.rng() < g.sparks.prob) {
+      const list = g.sparks.chords[this.mode];
+      chords[1 + Math.floor(this.rng() * 2)] = list[Math.floor(this.rng() * list.length)];
+    }
+    return chords.join(' ');
+  }
+
+  /** The same phrase with one inner chord changed, so loops breathe. */
+  private vary(text: string, g: StyleGen): string {
+    const chords = text.split(/\s+/);
+    if (chords.length < 3) return text;
+    const i = 1 + Math.floor(this.rng() * (chords.length - 2));
+    chords[i] = this.nextChord(g, chords[i - 1], chords);
+    return chords.join(' ');
+  }
+
   private items(text: string, origin: PlanItem['origin']): PlanItem[] {
     return tokens(text).map((token) => ({ token, tonic: this.tonic, scale: this.scale, origin, keyChange: false }));
   }
@@ -279,6 +431,7 @@ export class StylePlanner {
     if (to === 'major') this.scale = 'major';
     else if (to === 'minor') this.scale = 'minor';
     this.lastTemplate = null;
+    this.lastText = null;
     const via = mod.via ? this.items(mod.via, 'modulation') : [];
     if (via.length) {
       prev.splice(Math.max(0, prev.length - via.length), via.length, ...via);
@@ -297,7 +450,7 @@ export class StylePlanner {
   }
 
   private phrase(final: boolean): PlanItem[] {
-    const items = this.items(this.pickTemplate(), 'scale');
+    const items = this.items(this.phraseText(), 'scale');
     if (final) {
       const formulas = this.style.final[this.mode];
       const close = this.items(formulas[Math.floor(this.rng() * formulas.length)], 'cadence');

@@ -37,7 +37,7 @@ Pages on a private repo needs a paid GitHub plan; public repos are free.
 | Smoothness | 0 is a pure random walk. Higher values prefer chords that share tones with the last one, so fewer voices move and the result is calmer. |
 | Endless | Never arrive. Chords are generated on demand ahead of the playhead; a written progression loops, and each `?` is re-rolled every time round. |
 
-**Styles (genres).** Instead of walking chord to chord, a style plans the piece in 4-chord phrases. Each phrase ends on a cadence, key changes happen between phrases using approaches suited to the style, and the piece closes on the style's strongest resolution. Voicing rules change with the style too. Complexity is kept within each style's range, and the chord count sets the number of phrases.
+**Styles (genres).** Instead of walking chord to chord, a style plans the piece in 4-chord phrases. Most phrases are *written by the style*: it has a weighted chord vocabulary, preferred root motions (falling thirds, fifths, half-step drops…), phrase endings (half, deceptive, plagal) and occasional spark chords from outside the usual palette, so phrases vary from piece to piece. The phrases in the table are only references, used now and then; loops come back but usually with a chord changed. Each phrase ends on a cadence, key changes happen between phrases using approaches suited to the style, and the piece closes on the style's strongest resolution. Voicing rules change with the style too. Complexity is kept within each style's range, and the chord count sets the number of phrases.
 
 | Style | Phrases | Key changes | Ending |
 | --- | --- | --- | --- |
@@ -47,7 +47,7 @@ Pages on a private repo needs a paid GitHub plan; public repos are free.
 | Cinematic | i–♭VI–♭III–♭VII, mediants | sudden chromatic-mediant jumps | ♭VI–♭VII–I |
 | Gospel | I–III7–vi–IV, IV–iv–I, passing dim7 | lifts by half and whole steps | IV–iv–I "amen" |
 | Impressionist | parallel maj7/maj9 planing | drifts by steps and thirds | ♭VII–Imaj7#11 (voices slide together) |
-| Witch house | one minor loop, i–♭III–♭VI–V and relatives (falling thirds, ♭6→5), repeated almost unchanged, m7/m9 colour (built from a reference track) | rare | ♭VI–V–i |
+| Witch house | dark minor phrases that fall by thirds and drop ♭6→5, phrygian ♭II, the odd chromatic-mediant spark; loops recur with a chord changed | rare | ♭VI–V–i |
 | Occult (phrygian) | phrygian i–♭II, tritone-apart minor triads, minor-third cycles | lurches down a half step, by a tritone or a minor third (always minor) | phrygian ♭II–i, with a droning top voice |
 
 The score list marks every key change (e.g. `V7 (→ G major)`). Styles also run endlessly, closing a phrase with a cadence every four phrases and drifting home now and then.
@@ -96,7 +96,7 @@ For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half
 - `A8+2`, `B!4-3`: move a part up or down that many semitones. A repeat is transposed, so `B!8+1` at the end is the B part again, a half step up.
 - `A | B`: collapse. Every voice converges on the next part's tonic, holds for a bar or two, then blooms out into the next part. `A > B` resolves straight through.
 
-Each distinct part has its own seeded generator, so parts sound different but stay in the key unless shifted. Song mode replaces Endless; Loop still works.
+Each distinct part has its own seeded generator, so parts sound different but stay in the key unless shifted. Without a style or written progression, each part also gets an ending that makes its join mean something: before a collapse it leaves tension hanging (♭VI–V, IV–V, ii–V, IV–iv) for the unison to resolve; before `>` into another key it plays that key's ii–V7 and the next part opens on its tonic; in the same key it ends on a light half cadence; and the last part closes with a lift or a tear: ♭VI–♭VII–I, the minor plagal IV–iv–I, the climbing IV–V–vi–♭VII–I, the backdoor iv–♭VII–I or ii–V–I (minor keys may end on a Picardy major). A part repeats its body, but its ending follows what comes next. Song mode replaces Endless; Loop still works.
 
 **Chop.** A step pattern (one character per 16th, looping) that plays the chords back through a time and volume controller, in the spirit of beat-repeat and tape effects: `x` play, `.` cut, `-` half volume, `<` reverse (a run of them plays that stretch backwards), `=` repeat (a run of n replays the n steps before it), `~` tape stop (slows to a stop, pitch falling with it). Since the sound is a pure function of time, these are exact, and short fades at every jump keep them click-free. Pick what it chops: **drums** (the default: cut and half steps mute or soften hits, repeats replay the steps before, reverses play the stretch backwards with every hit reversed so it swells into its attack, tape stops push hits later, lower and longer), **chords + sub** (the lines thin out on cut steps) and/or the **melody**. The sidechain follows the chopped drums. In song mode it plays in full parts and restarts with each part.
 
