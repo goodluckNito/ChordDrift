@@ -90,7 +90,7 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
   const dry = ctx.createGain();
   dry.gain.value = 1 - a.reverb * 0.5;
   const wet = ctx.createGain();
-  wet.gain.value = a.reverb * 1.4;
+  wet.gain.value = a.reverb * 1.15;
   const convolver = ctx.createConvolver();
   // Wetter settings get a longer tail (kept moderate: long convolutions cost CPU on phones).
   convolver.buffer = makeImpulse(ctx, score.seed, 2.8 + 2.4 * Math.max(0, a.reverb - 0.3), Math.min(1, 0.04 + a.width * 0.8));
@@ -112,7 +112,7 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
   // Headroom for strikes going into the faster limiter.
   // Into the limiter with some headroom, so it catches peaks instead of riding the whole mix
   // (with a big sub, constant gain reduction flattened the chords in the loud parts).
-  input.gain.value = pluck ? 0.8 : 0.72;
+  input.gain.value = pluck ? 0.8 : 0.85;
 
   // Warmth: gentle tanh saturation (gain-compensated) before the reverb split.
   let tone: AudioNode = lowpass;
@@ -271,11 +271,12 @@ export class VoiceBank {
     if (score.drums) {
       // Drums skip the chords' tone filter but share the limiter and reverb; the bank's bus gates them.
       this.drumBus = ctx.createGain();
-      this.drumBus.gain.value = d.level * 0.9;
+      // Drums sit under the chords (they used to match the whole chord mix, which buried it on small speakers).
+      this.drumBus.gain.value = d.level * 0.5;
       const gate = ctx.createGain();
       this.drumBus.connect(gate).connect(master.direct);
       this.drumSend = ctx.createGain();
-      this.drumSend.gain.value = d.reverb;
+      this.drumSend.gain.value = d.reverb * 0.6;
       this.drumSend.connect(master.reverbSend);
       this.drumGate = gate;
     }

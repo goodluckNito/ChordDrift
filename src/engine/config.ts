@@ -266,7 +266,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
     reverb: 0.35,
     reverbSnareOnly: true,
     double: false,
-    duck: { kick: true, snare: false, depth: 0.65, release: 0.25 },
+    duck: { kick: true, snare: false, depth: 0.5, release: 0.25 },
   },
   video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'orbit', zoom: 1, centerLabel: true },
 };

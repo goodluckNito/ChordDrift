@@ -58,7 +58,8 @@ export function surpriseConfig(seed: string | number, r: Rng): DeepPartial<Chord
     ['constellation', 1.2],
   ] as ['timeline' | 'spiral' | 'waterfall' | 'tonnetz' | 'fifths' | 'constellation', number][]);
   const theme = randomTheme(r);
-  return {
+  let tempo = 0;
+  const out: DeepPartial<ChordDriftConfig> = {
     seed,
     key: r() < 0.25 ? 'auto' : pick(r, KEY_NAMES),
     scale,
@@ -86,7 +87,7 @@ export function surpriseConfig(seed: string | number, r: Rng): DeepPartial<Chord
     song: { enabled: song, form: pick(r, SONG_PRESETS).form },
     motion: { transition },
     rhythm: {
-      tempo: Math.round(between(r, 56, 104, 1)),
+      tempo: (tempo = Math.round(between(r, 56, 104, 1))),
       chords: r() < 0.45 ? '' : pick(r, RHYTHM_PRESETS).chords,
       pluck: pick(r, STRIKE_PRESETS).pattern,
     },
@@ -99,7 +100,8 @@ export function surpriseConfig(seed: string | number, r: Rng): DeepPartial<Chord
       hat: drumPreset.hat,
       crash: drumPreset.crash,
       ride: drumPreset.ride,
-      double: kit === 'jungle' && r() < 0.6,
+      // Double time only where it stays sane (about 180 bpm at most).
+      double: kit === 'jungle' && r() < 0.6 && tempo <= 90,
     },
     chop: { enabled: r() < 0.15, pattern: pick(r, CHOP_PRESETS).pattern, drums: true, chords: r() < 0.4, melody: false },
     audio: {
@@ -123,6 +125,9 @@ export function surpriseConfig(seed: string | number, r: Rng): DeepPartial<Chord
     theme,
     video: { view, spiral: pick(r, ['orbit', 'drain', 'inward', 'fly'] as const) },
   };
+  // Drawn last, so adding them didn't change any earlier choice (word songs keep their music).
+  out.drums = { ...out.drums, level: between(r, 0.5, 0.75), reverb: between(r, 0.1, 0.3) };
+  return out;
 }
 
 /** A song from any text: the same words always make the same song. */

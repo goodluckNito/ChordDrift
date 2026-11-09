@@ -555,6 +555,7 @@ export function duckEnvelope(score: Score, t: number, kick: boolean, snare: bool
   if (!cache || cache.n !== score.chords.length) duckCache.set(score, (cache = { n: score.chords.length, blocks: new Map() }));
   const look = release * 5;
   let env = 0;
+  let near = 0;
   for (let blk = Math.floor((t - look) / DUCK_BLOCK); blk <= Math.floor(t / DUCK_BLOCK); blk++) {
     const key = `${blk}:${kick ? 1 : 0}${snare ? 1 : 0}`;
     let hits = cache.blocks.get(key);
@@ -569,9 +570,11 @@ export function duckEnvelope(score: Score, t: number, kick: boolean, snare: bool
       if (x < -1e-9 || x > look) continue;
       const e = x < 0.005 ? x / 0.005 : Math.exp(-(x - 0.005) / release);
       env = Math.max(env, e * Math.min(1, h.vel + 0.2));
+      if (x < 0.5) near++;
     }
   }
-  return env;
+  // Dense hits (fast breaks, double time) would hold the chords down constantly: ease off as they pile up.
+  return near > 3 ? env * (3 / near) : env;
 }
 
 /**

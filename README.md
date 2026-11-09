@@ -112,6 +112,8 @@ Each distinct part has its own seeded generator, so parts sound different but st
 - **Kits:** Witch (dark, distorted, long kick, reverby clap), 808, Acoustic, Industrial and Jungle (tight punchy kick, crisp cracking breakbeat snare, bright short hats). Rides are a high-passed metallic shimmer, a noise wash and a stick ping, with an optional bell of inharmonic partials.
 - **Double time:** patterns play twice as fast (each character a 32nd note). The *Jungle break* and *Jungle roller* patterns are written for it: at around 80–90 bpm with double time they run at jungle speed over slow chords.
 - **Patterns:** one row per drum (kick, snare, hat, crash, ride) on a 16th-note grid: `x` hit, `X` accent, `.` rest, `o` open hat, `r` hat roll. Rows loop independently. Presets: Witch house (half-time), Trap (half-time), Four on the floor, Boom bap, Breakbeat, Ride groove and Sparse.
+- **Ghost notes:** `g` is a quiet hit (about a third of full level), for the ghosted snares of breaks.
+- **Mix:** drums sit under the chords by default, the sidechain eases off when hits pile up (fast breaks, double time), so it doesn't hold the chords down constantly.
 - **Random steps:** a `?` in any drum row is decided by the seed each bar: a rest, a ghost note, a hit or an accent, and on snare and hats sometimes a roll or an open hat. The same seed always plays the same fills.
 - **Mix:** a level per drum, a drum bus level, and a reverb send (optionally snare only).
 - **Sidechain:** duck the chords under the kick and/or snare, with depth and release. The lines dip with it.

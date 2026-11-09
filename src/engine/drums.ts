@@ -41,6 +41,7 @@ export function parseSteps(text: string): { steps: DrumStep[]; length: number } 
     else if (c === 'o') steps.push({ i, vel: 0.8, open: true });
     else if (c === 'O') steps.push({ i, vel: 1, open: true });
     else if (c === 'r') steps.push({ i, vel: 0.65, roll: true });
+    else if (c === 'g') steps.push({ i, vel: 0.32 });
     else if (c === '?') steps.push({ i, vel: 0.8, maybe: true });
   });
   return { steps, length: chars.length };
@@ -102,7 +103,7 @@ export const DRUM_PRESETS: DrumPreset[] = [
     // A chopped two-bar break in the spirit of the classic one: syncopated kicks, ghosted snares, ride on the 8ths.
     name: 'Jungle break',
     kick: 'X.x.......xx....' + 'x.x.......x.....',
-    snare: '....X..x.x..X..x' + '.x..X..x.x....X.',
+    snare: '....X..g.g..X..g' + '.g..X..g.g....X.',
     hat: '',
     crash: bars(4, 'x'),
     ride: 'x.x.x.x.x.x.x.x.',
