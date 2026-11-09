@@ -249,6 +249,13 @@ export function cameraExtent(score: Score, t: number): Extent {
   }
   lo /= wsum;
   hi /= wsum;
+  // The smoothed frame lags; never let a voice that's here now (or arriving in the next half second)
+  // fall outside it, or it slides off the band and gets cut at the edge.
+  for (const ahead of [0, 0.25, 0.5]) {
+    const e = instantExtent(score, t + ahead);
+    if (Number.isFinite(e.lo)) lo = Math.min(lo, e.lo);
+    if (Number.isFinite(e.hi)) hi = Math.max(hi, e.hi);
+  }
   const span = Math.max(hi - lo, LAYOUT.minSpan);
   const mid = (lo + hi) / 2;
   return { lo: mid - span / 2, hi: mid + span / 2 };
@@ -1482,12 +1489,17 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     const yOf = (p: number) => yLo + ((p - loP) / (hiP - loP)) * (yHi - yLo);
 
     // ---- Lines -------------------------------------------------------------
-    const tFrom = lerp(timeAtX(-4), 0, z);
+    // When zoomed out, the visible left edge is further left than the canvas edge.
+    const leftEdge = zoom < 1 ? cfg.video.nowPosition * W * (1 - 1 / zoom) - 4 : -4;
+    const tFrom = lerp(timeAtX(leftEdge), 0, z);
     const tTo = tNow;
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, lay.clipTop, W, lay.clipBottom - lay.clipTop);
-    ctx.clip();
+    // (Zoomed, the band is already clipped in screen space, before the zoom.)
+    if (zoom === 1) {
+      ctx.beginPath();
+      ctx.rect(0, lay.clipTop, W, lay.clipBottom - lay.clipTop);
+      ctx.clip();
+    }
 
     if (th.grid) {
       // Octave lines at every C in view, with note names.
