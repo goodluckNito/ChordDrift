@@ -4,17 +4,26 @@ import '@fontsource/inter/700.css';
 import './style.css';
 import { LivePlayer, encodeWav, renderOffline } from './audio/synth';
 import {
-  DEFAULT_CONFIG,
   KEY_NAMES,
+  SCALES,
+  chordIndexAt,
+  chordToToken,
   formatSeed,
   generateScore,
-  noteName,
+  pitchesAt,
   randomSeed,
+  resolveConfig,
+  scaleChords,
+  spellNote,
+  typicalSize,
+  voiceChord,
+  voicingRules,
   type ChordDriftConfig,
   type DeepPartial,
   type Score,
 } from './engine';
 import { frameCount, renderFrame } from './render/renderer';
+import { decodeShare, encodeShare, exportProject, listProjects, parseProject, saveProject, deleteProject } from './project';
 
 const fontsReady = (async () => {
   try {
@@ -29,24 +38,29 @@ const fontsReady = (async () => {
 // ---------------------------------------------------------------------------
 let exportScore: Score | null = null;
 let exportCanvas: HTMLCanvasElement | null = null;
+let exportDuration = 0;
 
 const api = {
   ready: fontsReady,
-  load(partial: DeepPartial<ChordDriftConfig>) {
+  /** Load a config. Endless pieces need a duration (default 60 s). */
+  load(partial: DeepPartial<ChordDriftConfig>, duration?: number) {
     exportScore = generateScore(partial);
+    exportDuration = exportScore.endless ? duration ?? 60 : duration ?? exportScore.timeline.end;
+    exportScore.extend(exportDuration);
     const { width, height, fps } = exportScore.config.video;
     exportCanvas = document.createElement('canvas');
     exportCanvas.width = width;
     exportCanvas.height = height;
     return {
-      frames: frameCount(exportScore),
+      frames: frameCount(exportScore, exportDuration),
       fps,
       width,
       height,
-      duration: exportScore.timeline.end,
+      duration: exportDuration,
       seed: exportScore.seedLabel,
-      key: exportScore.keyName,
-      chords: exportScore.chords.map((c) => c.name),
+      key: `${exportScore.keyName} ${exportScore.scaleName}`,
+      chords: exportScore.chords.filter((c) => c.t < exportDuration).map((c) => c.name),
+      errors: exportScore.errors,
     };
   },
   frame(n: number, type: 'image/png' | 'image/jpeg' = 'image/png', quality = 0.95): string {
@@ -57,7 +71,7 @@ const api = {
   },
   async wav(): Promise<string> {
     if (!exportScore) throw new Error('call load() first');
-    const bytes = new Uint8Array(encodeWav(await renderOffline(exportScore)));
+    const bytes = new Uint8Array(encodeWav(await renderOffline(exportScore, exportDuration)));
     let bin = '';
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
     return btoa(bin);
@@ -65,12 +79,24 @@ const api = {
 };
 (window as unknown as { chordDrift: typeof api }).chordDrift = api;
 
-const isExport = new URLSearchParams(location.search).has('export');
-if (!isExport) startApp();
 
 // ---------------------------------------------------------------------------
 // Interactive player
 // ---------------------------------------------------------------------------
+type Field = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+
+const COMPLEXITY_NAMES = ['', 'triads', 'sevenths', 'ninths & elevenths', 'elevenths & thirteenths', '13ths & altered'];
+
+function getPath(obj: unknown, path: string): unknown {
+  return path.split('.').reduce<unknown>((o, k) => (o as Record<string, unknown>)?.[k], obj);
+}
+function setPath(obj: unknown, path: string, value: unknown) {
+  const keys = path.split('.');
+  let o = obj as Record<string, unknown>;
+  for (const k of keys.slice(0, -1)) o = o[k] as Record<string, unknown>;
+  o[keys[keys.length - 1]] = value;
+}
+
 function startApp() {
   const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
   const form = $<HTMLFormElement>('#controls');
@@ -81,128 +107,80 @@ function startApp() {
   const clock = $<HTMLSpanElement>('#clock');
   const status = $<HTMLParagraphElement>('#status');
   const list = $<HTMLOListElement>('#score-list');
-  const field = <T extends HTMLInputElement | HTMLSelectElement>(name: string) => form.elements.namedItem(name) as T;
+  const fields = [...form.querySelectorAll<Field>('[data-path]')];
 
-  const keySelect = field<HTMLSelectElement>('key');
+  // Populate selects.
+  const keySelect = $<HTMLSelectElement>('#key');
   keySelect.innerHTML = `<option value="auto">Auto (seeded)</option>` + KEY_NAMES.map((k) => `<option>${k}</option>`).join('');
+  const scaleSelect = $<HTMLSelectElement>('#scale');
+  const families = new Map<string, string[]>();
+  for (const [id, def] of Object.entries(SCALES)) families.set(def.family, [...(families.get(def.family) ?? []), id]);
+  scaleSelect.innerHTML = [...families]
+    .map(([fam, ids]) => `<optgroup label="${fam}">${ids.map((id) => `<option value="${id}">${SCALES[id].name}</option>`).join('')}</optgroup>`)
+    .join('');
 
   const player = new LivePlayer();
+  let state: ChordDriftConfig = resolveConfig();
   let score: Score;
   let pausedAt = 0;
   let recording: { recorder: MediaRecorder; canvas: HTMLCanvasElement } | null = null;
 
-  // ---- Config <-> form <-> URL ----------------------------------------------
-  const HASH_FIELDS = ['seed', 'mode', 'key', 'driftProbability', 'smoothness', 'chordMin', 'chordMax', 'voices', 'easing', 'hold', 'glide', 'stagger', 'bloom', 'wave', 'reverb', 'detuneCents', 'series', 'episode', 'title'];
+  const setStatus = (msg: string) => (status.textContent = msg);
 
-  function formValues(c: ChordDriftConfig): Record<string, string | number> {
-    return {
-      seed: typeof c.seed === 'number' ? formatSeed(c.seed) : c.seed,
-      mode: c.mode,
-      key: c.key,
-      driftProbability: c.driftProbability,
-      smoothness: c.smoothness,
-      chordMin: c.chordCount[0],
-      chordMax: c.chordCount[1],
-      voices: c.voices,
-      easing: c.motion.easing,
-      hold: c.timing.hold,
-      glide: c.timing.glide,
-      stagger: c.timing.stagger,
-      bloom: c.timing.bloom,
-      wave: c.audio.wave,
-      reverb: c.audio.reverb,
-      detuneCents: c.audio.detuneCents,
-      series: c.series,
-      episode: c.episode,
-      title: c.title,
-    };
-  }
-
-  function readForm(): DeepPartial<ChordDriftConfig> {
-    const v = (n: string) => field(n).value;
-    const num = (n: string) => Number(v(n));
-    return {
-      seed: v('seed').trim() || DEFAULT_CONFIG.seed,
-      mode: v('mode') as ChordDriftConfig['mode'],
-      key: v('key'),
-      driftProbability: num('driftProbability'),
-      smoothness: num('smoothness'),
-      chordCount: [num('chordMin') || 1, num('chordMax') || 1],
-      voices: num('voices') || DEFAULT_CONFIG.voices,
-      motion: { easing: v('easing') as ChordDriftConfig['motion']['easing'] },
-      timing: { hold: num('hold'), glide: num('glide'), stagger: num('stagger'), bloom: num('bloom') },
-      audio: { wave: v('wave') as ChordDriftConfig['audio']['wave'], reverb: num('reverb'), detuneCents: num('detuneCents') },
-      series: v('series'),
-      episode: num('episode'),
-      title: v('title'),
-    };
-  }
-
-  function writeForm(values: Record<string, string | number>) {
-    for (const [k, val] of Object.entries(values)) {
-      const el = field(k);
-      if (el) el.value = String(val);
+  // ---- State <-> form ----------------------------------------------------------
+  function writeForm() {
+    for (const el of fields) {
+      const v = getPath(state, el.dataset.path!);
+      if (el instanceof HTMLInputElement && el.type === 'checkbox') el.checked = Boolean(v);
+      else el.value = typeof v === 'number' && el.dataset.path === 'seed' ? formatSeed(v) : String(v ?? '');
     }
-    syncOutputs();
+    syncVisibility();
   }
 
-  function syncOutputs() {
-    for (const out of form.querySelectorAll('output')) {
+  function readField(el: Field) {
+    const path = el.dataset.path!;
+    let value: unknown;
+    if (el instanceof HTMLInputElement && el.type === 'checkbox') value = el.checked;
+    else if (el instanceof HTMLInputElement && (el.type === 'number' || el.type === 'range')) value = Number(el.value);
+    else value = el.value;
+    setPath(state, path, value);
+  }
+
+  function syncVisibility() {
+    for (const out of form.querySelectorAll('output:not([id])')) {
       const input = out.parentElement!.querySelector('input')!;
       out.textContent = input.value;
     }
-    const drift = form.querySelector<HTMLElement>('[data-show="drift"]')!;
-    drift.hidden = field('mode').value !== 'drift';
-  }
-
-  function saveHash() {
-    const params = new URLSearchParams();
-    const defaults = formValues(DEFAULT_CONFIG);
-    for (const k of HASH_FIELDS) {
-      const val = field(k).value;
-      if (String(defaults[k]) !== val) params.set(k, val);
+    $('#complexity-label').textContent = `${state.complexity} · ${COMPLEXITY_NAMES[state.complexity]}`;
+    const written = state.progression.trim().length > 0;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-show]')) el.hidden = state.mode !== el.dataset.show;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-hide]')) {
+      const conds = el.dataset.hide!.split(' ');
+      el.hidden = (conds.includes('endless') && state.endless) || (conds.includes('written') && written);
     }
-    history.replaceState(null, '', params.size ? `#${params}` : location.pathname + location.search);
   }
 
-  function loadHash() {
-    const values = formValues(DEFAULT_CONFIG);
-    const params = new URLSearchParams(location.hash.slice(1));
-    for (const k of HASH_FIELDS) if (params.has(k)) values[k] = params.get(k)!;
-    writeForm(values);
-  }
-
-  // ---- Score ----------------------------------------------------------------
+  // ---- Score ------------------------------------------------------------------
   function rebuild(keepTime: boolean) {
     const wasPlaying = player.playing;
     const t = keepTime ? currentTime() : 0;
     if (wasPlaying) player.pause();
     try {
-      score = generateScore(readForm());
-      status.textContent = '';
+      score = generateScore(state);
     } catch (e) {
-      status.textContent = String((e as Error).message ?? e);
+      setStatus(String((e as Error).message ?? e));
       return;
     }
-    pausedAt = Math.min(t, score.timeline.end);
-    scrub.max = String(score.timeline.end);
+    $('#prog-errors').textContent = score.errors.join(' · ');
+    pausedAt = Number.isFinite(score.timeline.end) ? Math.min(t, score.timeline.end) : t;
+    score.extend(pausedAt);
+    keySelect.options[0].textContent = state.key === 'auto' ? `Auto (${score.keyName})` : 'Auto (seeded)';
+    renderedRows = 0;
+    list.innerHTML = '';
     renderList();
+    renderPalette();
     saveHash();
     if (wasPlaying) void player.play(score, pausedAt);
-  }
-
-  function renderList() {
-    const s = score;
-    $('#score-meta').textContent = `· ${s.config.mode}, key of ${s.keyName}, ${s.chords.length} chords`;
-    const rows = [
-      `<li data-t="0"><span class="mono muted">0:00.0</span><span class="name">unison</span><span class="muted">${noteName(s.startNote, s.keyPc)}</span></li>`,
-      ...s.chords.map(
-        (c) =>
-          `<li data-t="${c.t}"><span class="mono muted">${fmt(c.t, 1)}</span><span class="name">${c.name}</span><span class="muted">${c.roman}${c.origin !== 'diatonic' && c.origin !== 'cadence' ? ' · ' + c.origin : ''}</span><span class="notes mono muted">${c.notes.map((n) => noteName(n, c.keyPc)).join(' ')}</span></li>`,
-      ),
-      `<li data-t="${s.timeline.arrivalStart}"><span class="mono muted">${fmt(s.timeline.arrivalStart, 1)}</span><span class="name">arrival</span><span class="muted">→ ${noteName(s.endNote, s.finalKeyPc)}</span></li>`,
-    ];
-    list.innerHTML = rows.join('');
   }
 
   const fmt = (t: number, digits = 2) => {
@@ -210,11 +188,171 @@ function startApp() {
     return `${m}:${(t - m * 60).toFixed(digits).padStart(digits + 3, '0')}`;
   };
 
+  // Rows are appended incrementally so endless pieces stay cheap.
+  let renderedRows = 0;
+  const MAX_ROWS = 300;
+  function row(t: number, name: string, meta: string, notes = '') {
+    const li = document.createElement('li');
+    li.dataset.t = String(t);
+    li.innerHTML = `<span class="mono muted">${fmt(t, 1)}</span><span class="name"></span><span class="muted"></span>${notes ? '<span class="notes mono muted"></span>' : ''}`;
+    li.children[1].textContent = name;
+    li.children[2].textContent = meta;
+    if (notes) li.children[3].textContent = notes;
+    return li;
+  }
+  function renderList() {
+    const s = score;
+    $('#score-meta').textContent = `· ${s.keyName} ${s.scaleName}${s.endless ? ', endless' : `, ${s.chords.length} chords`}`;
+    if (renderedRows === 0) list.append(row(0, 'unison', spellNote(s.startNote, s.keyPc, s.config.scale)));
+    for (let i = Math.max(0, renderedRows - 1); i < s.chords.length; i++) {
+      const c = s.chords[i];
+      const origin = c.origin === 'scale' || c.origin === 'cadence' || c.origin === 'written' ? '' : ` · ${c.origin}`;
+      list.append(row(c.t, c.name, c.roman + origin, c.notes.map((n) => spellNote(n, c.tonic, c.scale)).join(' ')));
+    }
+    renderedRows = s.chords.length + 1;
+    if (!s.endless) {
+      list.append(row(s.timeline.arrivalStart, 'arrival', `→ ${spellNote(s.endNote, s.finalKeyPc, s.config.scale)}`));
+    }
+    while (list.children.length > MAX_ROWS) list.firstElementChild!.remove();
+  }
+
+  // ---- Chord palette ------------------------------------------------------------
+  function renderPalette() {
+    const palette = $('#palette');
+    const size = typicalSize(state.complexity);
+    const chords = scaleChords(score.keyPc, state.scale, size);
+    $('#palette-caption').textContent = `${score.keyName} ${SCALES[state.scale].name}, ${COMPLEXITY_NAMES[state.complexity]}. Click to hear and add it to the progression.`;
+    palette.innerHTML = '';
+    for (const c of chords) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip';
+      b.innerHTML = '<b></b><span></span>';
+      b.children[0].textContent = c.roman;
+      b.children[1].textContent = c.name;
+      b.title = `Add ${chordToToken(c, score.keyPc)}`;
+      b.addEventListener('click', () => {
+        appendToken(chordToToken(c, score.keyPc));
+        const ref = pitchesAt(score, currentTime()).map(Math.round);
+        void player.audition(score, voiceChord(c, ref, voicingRules(score.config), null));
+      });
+      palette.append(b);
+    }
+    const w = document.createElement('button');
+    w.type = 'button';
+    w.className = 'chip wild';
+    w.textContent = '?';
+    w.title = 'Add a generated chord';
+    w.addEventListener('click', () => appendToken('?'));
+    palette.append(w);
+  }
+
+  function appendToken(token: string) {
+    const ta = form.querySelector<HTMLTextAreaElement>('[data-path="progression"]')!;
+    ta.value = (ta.value.trim() + ' ' + token).trim();
+    readField(ta);
+    syncVisibility();
+    rebuild(true);
+  }
+
+  $('#freeze').addEventListener('click', () => {
+    const upTo = score.endless ? score.chords.filter((c) => c.t <= Math.max(currentTime(), 1) + 0.01) : score.chords;
+    const tokens = (upTo.length ? upTo : score.chords.slice(0, 8)).map((c) => chordToToken(c, score.keyPc));
+    if (state.key === 'auto') state.key = score.keyName; // pin the key so the numerals mean the same chords
+    state.progression = tokens.join(' ');
+    writeForm();
+    rebuild(true);
+    setStatus(`Froze ${tokens.length} chords. Edit any of them, or replace some with "?".`);
+  });
+  $('#clear-prog').addEventListener('click', () => {
+    state.progression = '';
+    writeForm();
+    rebuild(false);
+  });
+
+  // ---- URL / projects -----------------------------------------------------------
+  function saveHash() {
+    const code = encodeShare(state);
+    history.replaceState(null, '', code ? `#${code}` : location.pathname + location.search);
+  }
+
+  function refreshProjects(select?: string) {
+    const sel = $<HTMLSelectElement>('#project-list');
+    const names = listProjects().map((p) => p.name);
+    sel.innerHTML = names.length ? names.map(() => `<option></option>`).join('') : '<option value="">No saved projects</option>';
+    names.forEach((n, i) => {
+      sel.options[i].value = n;
+      sel.options[i].textContent = n;
+    });
+    if (select) sel.value = select;
+  }
+
+  function loadConfig(cfg: DeepPartial<ChordDriftConfig>) {
+    state = resolveConfig(cfg);
+    writeForm();
+    rebuild(false);
+  }
+
+  $('#project-save').addEventListener('click', () => {
+    const suggested = [state.series, state.episode ? `#${state.episode}` : '', state.title].filter(Boolean).join(' ');
+    const name = prompt('Project name', suggested);
+    if (!name) return;
+    try {
+      saveProject(name, state);
+      refreshProjects(name);
+      setStatus(`Saved "${name}" in this browser.`);
+    } catch (e) {
+      setStatus(`Couldn't save: ${(e as Error).message}`);
+    }
+  });
+  $('#project-load').addEventListener('click', () => {
+    const name = $<HTMLSelectElement>('#project-list').value;
+    const p = listProjects().find((x) => x.name === name);
+    if (!p) return;
+    loadConfig(p.config);
+    setStatus(`Opened "${name}".`);
+  });
+  $('#project-delete').addEventListener('click', () => {
+    const name = $<HTMLSelectElement>('#project-list').value;
+    if (!name || !confirm(`Delete "${name}" from this browser?`)) return;
+    deleteProject(name);
+    refreshProjects();
+  });
+  $('#project-export').addEventListener('click', () => {
+    const name = [state.title || 'chord-drift', formatSeedLabel()].join('-').replace(/[^\w#-]+/g, '-');
+    download(new Blob([exportProject(state.title || 'Chord Drift', state)], { type: 'application/json' }), `${name}.chorddrift.json`);
+  });
+  $('#project-import').addEventListener('click', () => $<HTMLInputElement>('#project-file').click());
+  $<HTMLInputElement>('#project-file').addEventListener('change', async (e) => {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    try {
+      const p = parseProject(await file.text());
+      loadConfig(p.config);
+      setStatus(`Imported "${p.name}".`);
+    } catch (err) {
+      setStatus(`Couldn't read that file: ${(err as Error).message}`);
+    }
+  });
+  $('#share').addEventListener('click', async () => {
+    saveHash();
+    try {
+      await navigator.clipboard.writeText(location.href);
+      setStatus('Link copied — it opens this exact piece.');
+    } catch {
+      setStatus('Copy the address bar to share this piece.');
+    }
+  });
+
+  const formatSeedLabel = () => score.seedLabel;
+
   // ---- Transport ------------------------------------------------------------
   const currentTime = () => (player.playing ? player.time() : pausedAt);
 
   async function play() {
-    if (pausedAt >= score.timeline.end - 0.01) pausedAt = 0;
+    if (Number.isFinite(score.timeline.end) && pausedAt >= score.timeline.end - 0.01) pausedAt = 0;
     await player.play(score, pausedAt);
     playBtn.textContent = '❚❚';
     playBtn.setAttribute('aria-label', 'Pause');
@@ -225,7 +363,9 @@ function startApp() {
     playBtn.setAttribute('aria-label', 'Play');
   }
   function seek(t: number) {
-    pausedAt = Math.max(0, Math.min(score.timeline.end, t));
+    const end = Number.isFinite(score.timeline.end) ? score.timeline.end : Infinity;
+    pausedAt = Math.max(0, Math.min(end, t));
+    score.extend(pausedAt);
     if (player.playing) void player.play(score, pausedAt);
   }
 
@@ -240,38 +380,43 @@ function startApp() {
   // ---- Form events ----------------------------------------------------------
   let debounce = 0;
   form.addEventListener('input', (e) => {
-    syncOutputs();
-    const name = (e.target as HTMLInputElement).name;
-    const structural = !['series', 'episode', 'title'].includes(name);
+    const el = e.target as Field;
+    if (!el.dataset.path) return;
+    readField(el);
+    syncVisibility();
+    const path = el.dataset.path;
     clearTimeout(debounce);
-    debounce = window.setTimeout(() => rebuild(!structural || name !== 'seed'), 180);
+    const delay = path === 'progression' ? 450 : 160;
+    debounce = window.setTimeout(() => rebuild(path !== 'seed'), delay);
   });
   form.addEventListener('submit', (e) => e.preventDefault());
   $('#dice').addEventListener('click', () => {
-    field('seed').value = formatSeed(randomSeed());
+    state.seed = formatSeed(randomSeed());
+    writeForm();
     rebuild(false);
   });
 
   // ---- Exports ----------------------------------------------------------------
-  const download = (blob: Blob, name: string) => {
+  function download(blob: Blob, name: string) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
-  };
+  }
   const baseName = () => `chord-drift-${score.seedLabel}`;
 
   $<HTMLButtonElement>('#wav').addEventListener('click', async (e) => {
     const btn = e.currentTarget as HTMLButtonElement;
     btn.disabled = true;
-    status.textContent = 'Rendering audio…';
+    const duration = score.endless ? Math.max(30, currentTime()) : score.timeline.end;
+    setStatus(score.endless ? `Rendering the first ${duration.toFixed(0)} s…` : 'Rendering audio…');
     try {
-      const buf = await renderOffline(score);
+      const buf = await renderOffline(score, duration);
       download(new Blob([encodeWav(buf)], { type: 'audio/wav' }), `${baseName()}.wav`);
-      status.textContent = `Saved ${baseName()}.wav (${buf.duration.toFixed(1)} s)`;
+      setStatus(`Saved ${baseName()}.wav (${buf.duration.toFixed(1)} s)`);
     } catch (err) {
-      status.textContent = `Audio export failed: ${(err as Error).message}`;
+      setStatus(`Audio export failed: ${(err as Error).message}`);
     } finally {
       btn.disabled = false;
     }
@@ -287,10 +432,10 @@ function startApp() {
   });
 
   $('#json').addEventListener('click', async () => {
-    const json = JSON.stringify({ ...score.config, seed: score.seedLabel }, null, 2);
+    const json = JSON.stringify(state, null, 2);
     try {
       await navigator.clipboard.writeText(json);
-      status.textContent = 'Config copied — use it with npm run export -- --config file.json';
+      setStatus('Config copied — save it to a file and run: npm run export -- --config file.json');
     } catch {
       download(new Blob([json], { type: 'application/json' }), `${baseName()}.json`);
     }
@@ -303,7 +448,7 @@ function startApp() {
       return;
     }
     if (typeof MediaRecorder === 'undefined') {
-      status.textContent = 'This browser cannot record video; use npm run export instead.';
+      setStatus('This browser cannot record video; use npm run export instead.');
       return;
     }
     const rc = document.createElement('canvas');
@@ -320,12 +465,12 @@ function startApp() {
       download(new Blob(chunks, { type }), `${baseName()}.${type.includes('mp4') ? 'mp4' : 'webm'}`);
       recording = null;
       recordBtn.textContent = 'Record video';
-      status.textContent = 'Recording saved. For frame-exact 60 fps video use npm run export.';
+      setStatus('Recording saved. For frame-exact 60 fps video use npm run export.');
       pause();
     };
     recording = { recorder, canvas: rc };
     recordBtn.textContent = 'Stop recording';
-    status.textContent = 'Recording in real time…';
+    setStatus(score.endless ? 'Recording — press Stop recording when you have enough.' : 'Recording in real time…');
     pausedAt = 0;
     recorder.start(250);
     await play();
@@ -358,33 +503,57 @@ function startApp() {
     }
   }
 
-  let lastListIndex = -2;
+  let lastHighlight = -2;
   function tick() {
     let t = currentTime();
-    if (player.playing && t >= score.timeline.end) {
+    const end = score.timeline.end;
+    if (player.playing && Number.isFinite(end) && t >= end) {
       if (recording) recording.recorder.stop();
       else pause();
-      pausedAt = score.timeline.end;
-      t = pausedAt;
+      pausedAt = end;
+      t = end;
     }
+    score.extend(t);
+    if (score.endless && score.chords.length + 1 > renderedRows) renderList();
     resizeCanvas();
     renderFrame(ctx, score, t);
     if (recording) renderFrame(recording.canvas.getContext('2d')!, score, t);
+    const scrubMax = Number.isFinite(end) ? end : Math.max(30, t + 10, score.chords.at(-1)?.t ?? 0);
+    scrub.max = String(scrubMax);
     if (document.activeElement !== scrub) scrub.value = String(t);
-    clock.textContent = `${fmt(t)} / ${fmt(score.timeline.end)}`;
+    clock.textContent = `${fmt(t)} / ${Number.isFinite(end) ? fmt(end) : '∞'}`;
 
-    let idx = -1;
-    score.chords.forEach((c, i) => c.t <= t && (idx = i));
-    const arrival = t >= score.timeline.arrivalStart;
-    const li = arrival ? list.children.length - 1 : idx + 1;
-    if (li !== lastListIndex) {
-      [...list.children].forEach((el, i) => el.classList.toggle('current', i === li));
-      lastListIndex = li;
+    // Highlight the current row (rows are keyed by start time).
+    const idx = chordIndexAt(score, t);
+    const target = !score.endless && t >= score.timeline.arrivalStart ? Infinity : idx < 0 ? 0 : score.chords[idx].t;
+    if (target !== lastHighlight) {
+      let current: Element | null = null;
+      for (const li of list.children) {
+        const lt = Number((li as HTMLElement).dataset.t);
+        if (target === Infinity ? li === list.lastElementChild : lt <= target + 1e-6) current = li;
+        li.classList.remove('current');
+      }
+      current?.classList.add('current');
+      // Scroll inside the list only, never the whole panel (that would interrupt editing).
+      if (current) {
+        const li = current as HTMLElement;
+        if (li.offsetTop < list.scrollTop || li.offsetTop + li.offsetHeight > list.scrollTop + list.clientHeight) {
+          list.scrollTop = li.offsetTop - list.clientHeight / 2;
+        }
+      }
+      lastHighlight = target;
     }
     requestAnimationFrame(tick);
   }
 
-  loadHash();
+  // ---- Boot ----------------------------------------------------------------------
+  const shared = decodeShare(location.hash.slice(1));
+  state = resolveConfig(shared ?? {});
+  writeForm();
+  refreshProjects();
   rebuild(false);
   void fontsReady.then(() => requestAnimationFrame(tick));
 }
+
+// Boot last, so every module-level constant above is initialised.
+if (!new URLSearchParams(location.search).has('export')) startApp();

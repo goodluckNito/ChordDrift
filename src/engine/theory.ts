@@ -1,4 +1,4 @@
-/** Pitch helpers and the chord vocabulary. Everything works in MIDI note numbers. */
+/** Pitch helpers and the scale library. Everything works in MIDI note numbers / pitch classes. */
 
 export const midiToHz = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
 export const hzToMidi = (f: number) => 69 + 12 * Math.log2(f / 440);
@@ -7,32 +7,141 @@ export const mod12 = (n: number) => ((n % 12) + 12) % 12;
 const SHARP_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const FLAT_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
 
-/** Conventional key names (major keys). */
+/** Conventional tonic names. */
 export const KEY_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
-const FLAT_KEYS = new Set([1, 3, 5, 8, 10]);
+/** Major keys written with flats. */
+const FLAT_MAJOR_KEYS = new Set([1, 3, 5, 8, 10]);
 
-export const MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11];
+export interface ScaleDef {
+  name: string;
+  /** Semitones above the tonic, ascending, starting with 0. */
+  steps: number[];
+  family: string;
+}
 
-export function scalePcs(keyPc: number): Set<number> {
-  return new Set(MAJOR_SCALE.map((i) => mod12(keyPc + i)));
+/** The scale library. Ids are stable (used in saved projects and URLs). */
+export const SCALES: Record<string, ScaleDef> = {
+  major: { name: 'Major (Ionian)', steps: [0, 2, 4, 5, 7, 9, 11], family: 'Church modes' },
+  dorian: { name: 'Dorian', steps: [0, 2, 3, 5, 7, 9, 10], family: 'Church modes' },
+  phrygian: { name: 'Phrygian', steps: [0, 1, 3, 5, 7, 8, 10], family: 'Church modes' },
+  lydian: { name: 'Lydian', steps: [0, 2, 4, 6, 7, 9, 11], family: 'Church modes' },
+  mixolydian: { name: 'Mixolydian', steps: [0, 2, 4, 5, 7, 9, 10], family: 'Church modes' },
+  minor: { name: 'Natural minor (Aeolian)', steps: [0, 2, 3, 5, 7, 8, 10], family: 'Church modes' },
+  locrian: { name: 'Locrian', steps: [0, 1, 3, 5, 6, 8, 10], family: 'Church modes' },
+
+  harmonicMinor: { name: 'Harmonic minor', steps: [0, 2, 3, 5, 7, 8, 11], family: 'Harmonic & melodic' },
+  phrygianDominant: { name: 'Phrygian dominant', steps: [0, 1, 4, 5, 7, 8, 10], family: 'Harmonic & melodic' },
+  melodicMinor: { name: 'Melodic minor', steps: [0, 2, 3, 5, 7, 9, 11], family: 'Harmonic & melodic' },
+  dorianFlat2: { name: 'Dorian b2', steps: [0, 1, 3, 5, 7, 9, 10], family: 'Harmonic & melodic' },
+  lydianAugmented: { name: 'Lydian augmented', steps: [0, 2, 4, 6, 8, 9, 11], family: 'Harmonic & melodic' },
+  lydianDominant: { name: 'Lydian dominant', steps: [0, 2, 4, 6, 7, 9, 10], family: 'Harmonic & melodic' },
+  mixolydianFlat6: { name: 'Mixolydian b6', steps: [0, 2, 4, 5, 7, 8, 10], family: 'Harmonic & melodic' },
+  altered: { name: 'Altered (Super Locrian)', steps: [0, 1, 3, 4, 6, 8, 10], family: 'Harmonic & melodic' },
+  harmonicMajor: { name: 'Harmonic major', steps: [0, 2, 4, 5, 7, 8, 11], family: 'Harmonic & melodic' },
+
+  doubleHarmonic: { name: 'Double harmonic (Byzantine)', steps: [0, 1, 4, 5, 7, 8, 11], family: 'Exotic' },
+  hungarianMinor: { name: 'Hungarian minor', steps: [0, 2, 3, 6, 7, 8, 11], family: 'Exotic' },
+  neapolitanMajor: { name: 'Neapolitan major', steps: [0, 1, 3, 5, 7, 9, 11], family: 'Exotic' },
+  neapolitanMinor: { name: 'Neapolitan minor', steps: [0, 1, 3, 5, 7, 8, 11], family: 'Exotic' },
+  persian: { name: 'Persian', steps: [0, 1, 4, 5, 6, 8, 11], family: 'Exotic' },
+  enigmatic: { name: 'Enigmatic', steps: [0, 1, 4, 6, 8, 10, 11], family: 'Exotic' },
+
+  majorPentatonic: { name: 'Major pentatonic', steps: [0, 2, 4, 7, 9], family: 'Pentatonic & hexatonic' },
+  minorPentatonic: { name: 'Minor pentatonic', steps: [0, 3, 5, 7, 10], family: 'Pentatonic & hexatonic' },
+  hirajoshi: { name: 'Hirajoshi', steps: [0, 2, 3, 7, 8], family: 'Pentatonic & hexatonic' },
+  inSen: { name: 'In-sen', steps: [0, 1, 5, 7, 10], family: 'Pentatonic & hexatonic' },
+  iwato: { name: 'Iwato', steps: [0, 1, 5, 6, 10], family: 'Pentatonic & hexatonic' },
+  blues: { name: 'Blues', steps: [0, 3, 5, 6, 7, 10], family: 'Pentatonic & hexatonic' },
+  wholeTone: { name: 'Whole tone', steps: [0, 2, 4, 6, 8, 10], family: 'Pentatonic & hexatonic' },
+  prometheus: { name: 'Prometheus', steps: [0, 2, 4, 6, 9, 10], family: 'Pentatonic & hexatonic' },
+  augmented: { name: 'Augmented (hexatonic)', steps: [0, 3, 4, 7, 8, 11], family: 'Pentatonic & hexatonic' },
+
+  octatonicHW: { name: 'Octatonic (half-whole)', steps: [0, 1, 3, 4, 6, 7, 9, 10], family: 'Symmetric & bebop' },
+  octatonicWH: { name: 'Octatonic (whole-half)', steps: [0, 2, 3, 5, 6, 8, 9, 11], family: 'Symmetric & bebop' },
+  bebopDominant: { name: 'Bebop dominant', steps: [0, 2, 4, 5, 7, 9, 10, 11], family: 'Symmetric & bebop' },
+};
+
+export const SCALE_IDS = Object.keys(SCALES);
+
+/** Scales with the same tonic used for modal interchange (borrowed chords). */
+export const PARALLEL_SCALES = ['major', 'minor', 'dorian', 'mixolydian', 'lydian', 'phrygian', 'harmonicMinor', 'melodicMinor'];
+
+export function scaleSteps(scaleId: string): number[] {
+  return (SCALES[scaleId] ?? SCALES.major).steps;
+}
+
+export function scalePcs(tonic: number, scaleId: string): Set<number> {
+  return new Set(scaleSteps(scaleId).map((s) => mod12(tonic + s)));
 }
 
 /**
- * Spell a pitch class in the context of a key: diatonic notes follow the key
- * signature; borrowed notes use flats for the "minor side" degrees (b3, b6, b7, b2)
- * and sharps otherwise (#4).
+ * Whether to spell with flats in this key. Scales with a minor third borrow
+ * the signature of their relative major (D minor → F major → flats).
  */
-export function pcName(pc: number, keyPc = 0): string {
-  const p = mod12(pc);
-  const rel = mod12(p - keyPc);
-  if (MAJOR_SCALE.includes(rel)) return FLAT_KEYS.has(mod12(keyPc)) ? FLAT_NAMES[p] : SHARP_NAMES[p];
-  if (FLAT_KEYS.has(mod12(keyPc))) return FLAT_NAMES[p];
-  return rel === 6 ? SHARP_NAMES[p] : FLAT_NAMES[p];
+export function prefersFlats(tonic: number, scaleId = 'major'): boolean {
+  const steps = scaleSteps(scaleId);
+  const t = mod12(tonic);
+  if (steps.includes(3) && !steps.includes(4)) return FLAT_MAJOR_KEYS.has(mod12(t + 3)) || t === 5 || t === 0 || t === 7;
+  return FLAT_MAJOR_KEYS.has(t);
 }
 
-export function noteName(midi: number, keyPc = 0): string {
+/**
+ * Flats or sharps for a chord root heard in a key: diatonic roots follow the
+ * key signature; borrowed roots on the "flat side" (b2, b3, b6, b7) use flats,
+ * #4 uses a sharp.
+ */
+export function rootPrefersFlats(root: number, tonic: number, scaleId = 'major'): boolean {
+  const keyFlats = prefersFlats(tonic, scaleId);
+  const rel = mod12(root - tonic);
+  if (scaleSteps(scaleId).includes(rel)) return keyFlats;
+  if ([1, 3, 8, 10].includes(rel)) return true;
+  return rel === 6 ? false : keyFlats;
+}
+
+const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+const LETTER_PC = [0, 2, 4, 5, 7, 9, 11];
+
+/** Name of the tonic as conventionally written for this scale (C# minor, Db major). */
+export function tonicName(tonic: number, scaleId = 'major'): string {
+  return pcName(tonic, prefersFlats(tonic, scaleId));
+}
+
+/**
+ * Spell a pitch class in a key. In seven-note scales, scale tones get
+ * consecutive letters like a key signature (F# major → … D# E#); other notes
+ * fall back to flats/sharps by context. Returns the name and its accidental.
+ */
+export function spellPcParts(pc: number, tonic: number, scaleId = 'major'): { name: string; acc: number } {
+  const p = mod12(pc);
+  const steps = scaleSteps(scaleId);
+  const k = steps.indexOf(mod12(p - tonic));
+  if (steps.length === 7 && k >= 0) {
+    const letter = (LETTERS.indexOf(tonicName(tonic, scaleId)[0]) + k) % 7;
+    const acc = mod12(p - LETTER_PC[letter] + 6) - 6;
+    if (Math.abs(acc) <= 1) return { name: LETTERS[letter] + (acc === 1 ? '#' : acc === -1 ? 'b' : ''), acc };
+  }
+  const name = pcName(p, rootPrefersFlats(p, tonic, scaleId));
+  return { name, acc: name.length > 1 ? (name[1] === '#' ? 1 : -1) : 0 };
+}
+
+export function spellPc(pc: number, tonic: number, scaleId = 'major'): string {
+  return spellPcParts(pc, tonic, scaleId).name;
+}
+
+/** Note name with octave, spelled in a key (B#3 and Cb4 keep their written octave). */
+export function spellNote(midi: number, tonic: number, scaleId = 'major'): string {
   const n = Math.round(midi);
-  return pcName(n, keyPc) + (Math.floor(n / 12) - 1);
+  const { name, acc } = spellPcParts(n, tonic, scaleId);
+  return name + (Math.floor((n - acc) / 12) - 1);
+}
+
+export function pcName(pc: number, flats = false): string {
+  return (flats ? FLAT_NAMES : SHARP_NAMES)[mod12(pc)];
+}
+
+export function noteName(midi: number, flats = false): string {
+  const n = Math.round(midi);
+  return pcName(n, flats) + (Math.floor(n / 12) - 1);
 }
 
 /** Parse "C", "F#", "Bb", "Db" etc. to a pitch class, or null. */
@@ -52,56 +161,12 @@ export function parseNote(name: string): number | null {
   return pc === null ? null : pc + 12 * (Number(m[2]) + 1);
 }
 
-export type Quality = 'major' | 'minor' | 'dominant' | 'sus';
-
-export interface ChordType {
-  /** Semitones above the root. */
-  intervals: number[];
-  /** Tones that must appear in the upper voices, most important first (the root is always the bass). */
-  required: number[];
-  quality: Quality;
-  /** Relative likelihood when the progression picks a type for a degree. */
-  weight: number;
-}
-
-/** The fifth is always optional; everything else colourful is required. */
-export const CHORD_TYPES: Record<string, ChordType> = {
-  maj7: { intervals: [0, 4, 7, 11], required: [4, 11], quality: 'major', weight: 1 },
-  maj9: { intervals: [0, 4, 7, 11, 14], required: [4, 11, 14], quality: 'major', weight: 1.3 },
-  'maj7#11': { intervals: [0, 4, 7, 11, 14, 18], required: [4, 11, 18, 14], quality: 'major', weight: 1.3 },
-  '6': { intervals: [0, 4, 7, 9], required: [4, 9], quality: 'major', weight: 0.5 },
-  '6/9': { intervals: [0, 4, 7, 9, 14], required: [4, 9, 14], quality: 'major', weight: 1 },
-  m7: { intervals: [0, 3, 7, 10], required: [3, 10], quality: 'minor', weight: 1 },
-  m9: { intervals: [0, 3, 7, 10, 14], required: [3, 10, 14], quality: 'minor', weight: 1.2 },
-  m11: { intervals: [0, 3, 7, 10, 14, 17], required: [3, 10, 17, 14], quality: 'minor', weight: 1.3 },
-  '7sus4': { intervals: [0, 5, 7, 10], required: [5, 10], quality: 'sus', weight: 0.5 },
-  '9sus4': { intervals: [0, 5, 7, 10, 14], required: [5, 10, 14], quality: 'sus', weight: 0.5 },
-  '7': { intervals: [0, 4, 7, 10], required: [4, 10], quality: 'dominant', weight: 0.5 },
-  '9': { intervals: [0, 4, 7, 10, 14], required: [4, 10, 14], quality: 'dominant', weight: 0.8 },
-};
-
-export const ALL_CHORD_TYPES = Object.keys(CHORD_TYPES);
-
-export function chordPcs(root: number, type: string): number[] {
-  return CHORD_TYPES[type].intervals.map((i) => mod12(root + i));
-}
-
-export function isDiatonic(root: number, type: string, keyPc: number): boolean {
-  const scale = scalePcs(keyPc);
-  return chordPcs(root, type).every((pc) => scale.has(pc));
-}
-
-export function chordName(root: number, type: string, keyPc = 0): string {
-  return pcName(root, keyPc) + type;
-}
-
 const ROMAN = ['I', 'bII', 'II', 'bIII', 'III', 'IV', '#IV', 'V', 'bVI', 'VI', 'bVII', 'VII'];
 
-/** Roman numeral of a chord relative to a key; lower case for minor chords. */
-export function romanNumeral(root: number, type: string, keyPc: number): string {
-  const r = ROMAN[mod12(root - keyPc)];
-  if (CHORD_TYPES[type].quality !== 'minor') return r;
-  return r.replace(/[IV]+/, (s) => s.toLowerCase());
+/** Roman numeral for a root relative to the tonic (major-scale reference), lower case if minor. */
+export function romanFor(root: number, tonic: number, minor: boolean): string {
+  const r = ROMAN[mod12(root - tonic)];
+  return minor ? r.replace(/[IV]+/, (s) => s.toLowerCase()) : r;
 }
 
 /** Degree names usable for start/end notes, as semitones above the tonic. */

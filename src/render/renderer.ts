@@ -85,7 +85,8 @@ export function cameraExtent(score: Score, t: number): Extent {
   return { lo: mid - span / 2, hi: mid + span / 2 };
 }
 
-const lerp = (a: number, b: number, x: number) => a + (b - a) * x;
+/** Linear interpolation that tolerates an infinite target when x is 0 (endless pieces never zoom out). */
+const lerp = (a: number, b: number, x: number) => (x <= 0 ? a : x >= 1 ? b : a + (b - a) * x);
 
 function formatClock(t: number): string {
   const s = Math.max(0, t);
@@ -113,7 +114,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
 
   // ---- Camera ------------------------------------------------------------
   // z: 0 while playing, eases to 1 for the final whole-piece view.
-  const z = smootherstep((t - tl.zoomStart) / Math.max(1e-6, tl.zoomEnd - tl.zoomStart));
+  const z = Number.isFinite(tl.zoomStart) ? smootherstep((t - tl.zoomStart) / Math.max(1e-6, tl.zoomEnd - tl.zoomStart)) : 0;
   const nowX = cfg.video.nowPosition * W;
   const H_s = cfg.video.historySeconds;
   const viewEnd = tl.zoomEnd; // final view spans [0, viewEnd]
@@ -263,4 +264,4 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
 }
 
 /** Frame count for a video of the whole piece. */
-export const frameCount = (score: Score) => Math.ceil(score.timeline.end * score.config.video.fps) + 1;
+export const frameCount = (score: Score, duration = score.timeline.end) => Math.ceil(duration * score.config.video.fps) + 1;

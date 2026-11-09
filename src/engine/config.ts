@@ -1,6 +1,13 @@
-import { ALL_CHORD_TYPES } from './theory';
+import { SCALES } from './theory';
 
-export type Mode = 'diatonic' | 'drift' | 'chromatic';
+/**
+ * scale    — key-locked: chords built from the selected scale
+ * drift    — key-locked, but sometimes borrows (modal interchange, mediants) or modulates
+ * voiceled — any root, any quality; the smoothest voice leading wins
+ * free     — any root, any quality, no preference
+ */
+export type Mode = 'scale' | 'drift' | 'voiceled' | 'free';
+const MODE_ALIASES: Record<string, Mode> = { diatonic: 'scale', chromatic: 'voiceled' };
 export type Easing = 'smootherstep' | 'cosine';
 export type Wave = 'sine' | 'triangle';
 
@@ -36,15 +43,25 @@ export interface ChordDriftConfig {
   /** Piece name, shown in the subtitle. */
   title: string;
   voices: number;
-  /** "auto" (seeded) or a key name like "C", "F#", "Bb". */
+  /** Tonic: "auto" (seeded) or a name like "C", "F#", "Bb". */
   key: string;
+  /** Scale id from SCALES (major, dorian, hirajoshi, octatonicHW…). */
+  scale: string;
   mode: Mode;
+  /** 1 = triads … 3 = 9ths/11ths … 5 = 13ths and altered colours. */
+  complexity: number;
+  /**
+   * Written progression (see progression-text.ts). Empty = generate everything.
+   * "?" tokens are filled by the generator. Loops when endless.
+   */
+  progression: string;
+  /** Never arrive: keep generating chords forever. */
+  endless: boolean;
   /** Drift mode: chance per change of borrowing a chord from outside the key. */
   driftProbability: number;
   chordCount: [number, number];
   /** 0 = pure random walk; higher = strongly prefer chords that share tones with the last one. */
   smoothness: number;
-  chordTypes: string[];
   range: { bass: [number, number]; upper: [number, number] };
   /** Degree relative to the key ("fifth", "tonic+1oct"), a note name ("G2") or MIDI number. */
   startNote: string | number;
@@ -88,11 +105,14 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   title: 'Arrival',
   voices: 13,
   key: 'auto',
-  mode: 'diatonic',
+  scale: 'major',
+  mode: 'scale',
+  complexity: 3,
+  progression: '',
+  endless: false,
   driftProbability: 0.25,
   chordCount: [8, 12],
   smoothness: 1,
-  chordTypes: ['maj7', 'maj9', 'maj7#11', 'm7', 'm9', 'm11', '6/9', '7sus4', '9sus4', '9'],
   range: { bass: [36, 47], upper: [45, 79] },
   startNote: 'fifth',
   endNote: 'tonic+2oct',
@@ -139,9 +159,12 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.smoothness = Math.max(0, c.smoothness);
   const [lo, hi] = c.chordCount;
   c.chordCount = [Math.max(1, Math.round(Math.min(lo, hi))), Math.max(1, Math.round(Math.max(lo, hi)))];
-  c.chordTypes = c.chordTypes.filter((t) => ALL_CHORD_TYPES.includes(t));
-  if (c.chordTypes.length === 0) c.chordTypes = [...DEFAULT_CONFIG.chordTypes];
-  if (!['diatonic', 'drift', 'chromatic'].includes(c.mode)) c.mode = 'diatonic';
+  c.mode = MODE_ALIASES[c.mode] ?? c.mode;
+  if (!['scale', 'drift', 'voiceled', 'free'].includes(c.mode)) c.mode = 'scale';
+  if (!SCALES[c.scale]) c.scale = 'major';
+  c.complexity = Math.max(1, Math.min(5, Math.round(Number(c.complexity) || 3)));
+  c.progression = String(c.progression ?? '');
+  c.endless = Boolean(c.endless);
   for (const k of Object.keys(c.timing) as (keyof Timing)[]) c.timing[k] = Math.max(0, Number(c.timing[k]) || 0);
   c.timing.bloom = Math.max(0.1, c.timing.bloom);
   c.timing.glide = Math.max(0.05, c.timing.glide);

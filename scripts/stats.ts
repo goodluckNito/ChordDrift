@@ -1,7 +1,7 @@
 // Quick musical health check over many seeds: how many voices move per change,
 // how often the top voice holds, how long pieces run.
 import { generateScore, type ChordDriftConfig } from '../src/engine';
-const mode = (process.argv[2] ?? 'diatonic') as ChordDriftConfig['mode'];
+const mode = (process.argv[2] ?? 'scale') as ChordDriftConfig['mode'];
 let changes = 0, moved = 0, topHeld = 0, dur = 0, maxMoved = 0;
 const N = 200;
 const t0 = Date.now();

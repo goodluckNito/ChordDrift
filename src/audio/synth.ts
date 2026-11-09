@@ -71,80 +71,122 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
   return { input, output: out };
 }
 
-export interface Voices {
-  stop(): void;
-}
+/** Length of each scheduled automation chunk (s). */
+const CHUNK = 0.5;
 
 /**
- * Schedule every voice. `when` is the context time at which score time `offset`
- * should sound, so playback can start mid-piece.
+ * The oscillator bank. Frequency and gain automation is scheduled in short
+ * consecutive chunks, each a value curve sampled from pitchAt — so the same
+ * code serves a finite piece, an endless one (scheduled just ahead of the
+ * playhead), and offline export (all chunks scheduled up front).
  */
-export function scheduleVoices(ctx: BaseAudioContext, score: Score, master: Master, when: number, offset: number): Voices {
-  const cfg = score.config;
-  const a = cfg.audio;
-  const V = cfg.voices;
-  const musicEnd = score.timeline.musicEnd;
-  if (offset >= musicEnd) return { stop() {} };
+export class VoiceBank {
+  private oscs: OscillatorNode[] = [];
+  private gains: GainNode[] = [];
+  private nextChunk = 0;
+  private stopped = false;
 
-  const n = Math.max(2, Math.ceil((musicEnd - offset) * CONTROL_RATE) + 1);
-  const duration = (n - 1) / CONTROL_RATE;
-  const fadeOutStart = musicEnd - cfg.timing.outro * 0.7;
-  const fadeOutLen = Math.max(0.05, musicEnd - fadeOutStart);
-  const baseGain = 1.25 / V;
-
-  const oscs: OscillatorNode[] = [];
-  for (let v = 0; v < V; v++) {
-    const freq = new Float32Array(n);
-    const gain = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      const t = offset + i / CONTROL_RATE;
-      const f = midiToHz(pitchAt(score, v, t));
-      freq[i] = f;
-      let env = 1;
-      env *= Math.min(1, t / 0.05); // 50 ms fade-in at the very start
-      env *= Math.min(1, (t - offset) / 0.03 + (offset === 0 ? 1 : 0)); // de-click when starting mid-piece
-      if (t > fadeOutStart) env *= 0.5 * (1 + Math.cos((Math.PI * Math.min(1, (t - fadeOutStart) / fadeOutLen))));
-      gain[i] = baseGain * Math.pow(f / 220, -a.tilt) * Math.max(0, env);
+  /**
+   * @param when   context time at which score time `offset` sounds
+   * @param endAt  score time at which the voices fade to silence (musicEnd, or an export length)
+   */
+  constructor(
+    private ctx: BaseAudioContext,
+    private score: Score,
+    master: Master,
+    private when: number,
+    private offset: number,
+    private endAt: number,
+  ) {
+    const a = score.config.audio;
+    for (let v = 0; v < score.config.voices; v++) {
+      const osc = ctx.createOscillator();
+      osc.type = a.wave;
+      osc.detune.value = score.detune[v];
+      osc.frequency.value = midiToHz(pitchAt(score, v, offset));
+      const g = ctx.createGain();
+      g.gain.value = 0;
+      const pan = ctx.createStereoPanner();
+      pan.pan.value = score.pan[v];
+      osc.connect(g).connect(pan).connect(master.input);
+      osc.start(when);
+      this.oscs.push(osc);
+      this.gains.push(g);
     }
-
-    const osc = ctx.createOscillator();
-    osc.type = a.wave;
-    osc.detune.value = score.detune[v];
-    osc.frequency.value = freq[0];
-    osc.frequency.setValueCurveAtTime(freq, when, duration);
-
-    const g = ctx.createGain();
-    g.gain.value = 0;
-    g.gain.setValueCurveAtTime(gain, when, duration);
-
-    const pan = ctx.createStereoPanner();
-    pan.pan.value = score.pan[v];
-
-    osc.connect(g).connect(pan).connect(master.input);
-    osc.start(when);
-    osc.stop(when + duration + 0.02);
-    oscs.push(osc);
+    if (Number.isFinite(endAt)) {
+      const stopAt = when + Math.max(0, endAt - offset) + 0.05;
+      for (const o of this.oscs) o.stop(stopAt);
+    }
   }
-  return {
-    stop() {
-      for (const o of oscs) {
-        try {
-          o.stop();
-          o.disconnect();
-        } catch {
-          /* already stopped */
+
+  /** Score time up to which automation has been scheduled. */
+  get scheduledUntil(): number {
+    return this.offset + this.nextChunk * CHUNK;
+  }
+
+  /** Schedule chunks until score time `until` is covered. */
+  scheduleUntil(until: number): void {
+    if (this.stopped) return;
+    const cfg = this.score.config;
+    const V = cfg.voices;
+    const sr = this.ctx.sampleRate;
+    const fadeLen = Math.max(0.05, Math.min(cfg.timing.outro * 0.7, 1.5));
+    const fadeOutStart = this.endAt - fadeLen;
+    const baseGain = 1.25 / V;
+    const n = Math.round(CHUNK * CONTROL_RATE) + 1;
+    while (this.scheduledUntil < Math.min(until, this.endAt)) {
+      const t0 = this.scheduledUntil;
+      this.score.extend(t0 + CHUNK);
+      const at = this.when + this.nextChunk * CHUNK;
+      // Curves must not touch each other; leave a couple of samples between them.
+      const dur = CHUNK - 2 / sr;
+      for (let v = 0; v < V; v++) {
+        const freq = new Float32Array(n);
+        const gain = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          const t = t0 + (i / (n - 1)) * CHUNK;
+          const f = midiToHz(pitchAt(this.score, v, t));
+          freq[i] = f;
+          let env = Math.min(1, t / 0.05); // 50 ms fade-in at the very start
+          if (this.offset > 0) env *= Math.min(1, (t - this.offset) / 0.03); // de-click when starting mid-piece
+          if (t > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (t - fadeOutStart) / fadeLen)));
+          gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env);
         }
+        this.oscs[v].frequency.setValueCurveAtTime(freq, at, dur);
+        this.gains[v].gain.setValueCurveAtTime(gain, at, dur);
       }
-    },
-  };
+      this.nextChunk++;
+    }
+  }
+
+  stop(): void {
+    if (this.stopped) return;
+    this.stopped = true;
+    const now = this.ctx.currentTime;
+    for (let v = 0; v < this.oscs.length; v++) {
+      try {
+        // Quick fade to avoid a click, then stop.
+        this.gains[v].gain.cancelScheduledValues(now);
+        this.gains[v].gain.setTargetAtTime(0, now, 0.015);
+        this.oscs[v].stop(now + 0.1);
+      } catch {
+        /* already stopped */
+      }
+    }
+  }
 }
 
-/** Render the whole piece (reverb tail included) to an AudioBuffer. */
-export async function renderOffline(score: Score, sampleRate = 48000): Promise<AudioBuffer> {
-  const length = Math.ceil(score.timeline.end * sampleRate);
+/** Render the piece (or the first `duration` seconds of an endless one) to an AudioBuffer. */
+export async function renderOffline(score: Score, duration = score.timeline.end, sampleRate = 48000): Promise<AudioBuffer> {
+  if (!Number.isFinite(duration)) throw new Error('Endless pieces need an explicit duration to render.');
+  const length = Math.ceil(duration * sampleRate);
   const ctx = new OfflineAudioContext(2, length, sampleRate);
   const master = createMaster(ctx, score, ctx.destination);
-  scheduleVoices(ctx, score, master, 0, 0);
+  // Finite pieces fade at musicEnd; endless renders fade out a little before the cut, leaving room for the reverb.
+  const endAt = Number.isFinite(score.timeline.musicEnd) ? score.timeline.musicEnd : Math.max(1, duration - 2.5);
+  score.extend(duration);
+  const bank = new VoiceBank(ctx, score, master, 0, 0, endAt);
+  bank.scheduleUntil(endAt);
   return ctx.startRendering();
 }
 
@@ -182,14 +224,16 @@ export function encodeWav(buffer: AudioBuffer): ArrayBuffer {
 }
 
 /**
- * Live playback with a clock the renderer can follow. Rebuilds the voices on
- * every play/seek; the master chain (and its reverb) is kept.
+ * Live playback with a clock the renderer can follow. A light scheduler keeps
+ * automation a couple of seconds ahead of the playhead, which is what lets
+ * endless pieces play forever.
  */
 export class LivePlayer {
   ctx: AudioContext | null = null;
   private master: Master | null = null;
   private masterScore: Score | null = null;
-  private voices: Voices | null = null;
+  private bank: VoiceBank | null = null;
+  private timer = 0;
   private startedAt = 0;
   private startOffset = 0;
   private recordTap: MediaStreamAudioDestinationNode | null = null;
@@ -209,18 +253,27 @@ export class LivePlayer {
   async play(score: Score, offset: number): Promise<void> {
     const ctx = this.ensure(score);
     if (ctx.state === 'suspended') await ctx.resume();
-    this.voices?.stop();
-    const when = ctx.currentTime + 0.06;
-    this.voices = scheduleVoices(ctx, score, this.master!, when, offset);
+    this.stopBank();
+    const when = ctx.currentTime + 0.08;
+    this.bank = new VoiceBank(ctx, score, this.master!, when, offset, score.timeline.musicEnd);
+    const bank = this.bank;
+    const pump = () => bank.scheduleUntil(this.time() + 2.5);
+    pump();
+    this.timer = window.setInterval(pump, 200);
     this.startedAt = when;
     this.startOffset = offset;
     this.playing = true;
   }
 
+  private stopBank() {
+    clearInterval(this.timer);
+    this.bank?.stop();
+    this.bank = null;
+  }
+
   pause(): number {
     const t = this.time();
-    this.voices?.stop();
-    this.voices = null;
+    this.stopBank();
     this.playing = false;
     this.startOffset = t;
     return t;
@@ -230,6 +283,31 @@ export class LivePlayer {
   time(): number {
     if (!this.playing || !this.ctx) return this.startOffset;
     return this.startOffset + Math.max(0, this.ctx.currentTime - this.startedAt);
+  }
+
+  /** Play a chord voicing once, for auditioning palette chords. */
+  async audition(score: Score, notes: number[], seconds = 1.8): Promise<void> {
+    const ctx = this.ensure(score);
+    if (ctx.state === 'suspended') await ctx.resume();
+    const now = ctx.currentTime + 0.02;
+    const a = score.config.audio;
+    notes.forEach((n, v) => {
+      const f = midiToHz(n);
+      const osc = ctx.createOscillator();
+      osc.type = a.wave;
+      osc.frequency.value = f;
+      osc.detune.value = score.detune[v % score.detune.length] ?? 0;
+      const g = ctx.createGain();
+      const peak = (1.1 / notes.length) * Math.pow(f / 220, -a.tilt);
+      g.gain.setValueAtTime(0, now);
+      g.gain.linearRampToValueAtTime(peak, now + 0.08);
+      g.gain.setTargetAtTime(0, now + seconds * 0.6, seconds * 0.15);
+      const pan = ctx.createStereoPanner();
+      pan.pan.value = score.pan[v % score.pan.length] ?? 0;
+      osc.connect(g).connect(pan).connect(this.master!.input);
+      osc.start(now);
+      osc.stop(now + seconds + 0.5);
+    });
   }
 
   /** An audio MediaStream of the master output, for MediaRecorder. */

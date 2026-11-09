@@ -11,7 +11,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "score": "tsx scripts/score.ts",
-    "export": "tsx scripts/export.ts"
+    "export": "tsx scripts/export.ts",
+    "stats": "tsx scripts/stats.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

@@ -52,9 +52,34 @@ export function frequenciesAt(score: Score, t: number): number[] {
 
 /** HUD chord label at time t. */
 export function chordLabelAt(score: Score, t: number): string {
-  let text = score.labels[0].text;
-  for (const l of score.labels) if (l.t <= t) text = l.text;
-  return text;
+  const labels = score.labels;
+  let lo = 0;
+  let hi = labels.length - 1;
+  let idx = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (labels[mid].t <= t) {
+      idx = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return labels[idx].text;
+}
+
+/** Index of the chord sounding (or gliding in) at time t, -1 before the first change. */
+export function chordIndexAt(score: Score, t: number): number {
+  const chords = score.chords;
+  let lo = 0;
+  let hi = chords.length - 1;
+  let idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (chords[mid].t <= t) {
+      idx = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return idx;
 }
 
 /** Σf and f↑/f↓ (highest ÷ lowest frequency). */

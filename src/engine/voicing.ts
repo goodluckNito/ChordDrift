@@ -1,5 +1,6 @@
 import type { Rng } from './rng';
-import { CHORD_TYPES, mod12 } from './theory';
+import { requiredTones, type Chord } from './chords';
+import { mod12 } from './theory';
 
 /**
  * Voicing and voice leading — the musical core.
@@ -29,10 +30,6 @@ export interface VoicingRules {
   candidates: number;
 }
 
-export interface ChordInput {
-  root: number;
-  type: string;
-}
 
 interface Level {
   lo: number;
@@ -50,6 +47,8 @@ function levels(r: VoicingRules): Level[] {
     // Allow an extra doubling before widening the top, which would break the pedal.
     { lo: lo - 5, hi, cap: r.maxCopies + 1, strict: true },
     { lo: lo - 5, hi: hi + 5, cap: r.maxCopies + 1, strict: true },
+    // Sparse chords (sus2, 5ths, pentatonic colours) need more room before doubling unisons.
+    { lo: lo - 7, hi: hi + 12, cap: Infinity, strict: true },
     { lo: lo - 7, hi: hi + 12, cap: Infinity, strict: false },
   ];
 }
@@ -193,12 +192,11 @@ function pcCountsOk(upper: number[], cap: number): boolean {
  * Deterministic for a given rng state. `rng` null = single noiseless search
  * (used for cheap cost estimates).
  */
-export function voiceChord(chord: ChordInput, current: number[], rules: VoicingRules, rng: Rng | null): number[] {
-  const type = CHORD_TYPES[chord.type];
+export function voiceChord(chord: Chord, current: number[], rules: VoicingRules, rng: Rng | null): number[] {
   const U = current.length - 1;
   const bass = chooseBass(chord.root, current[0], rules.bass);
-  const pcs = new Set(type.intervals.map((i) => mod12(chord.root + i)));
-  const required = type.required.map((i) => mod12(chord.root + i)).slice(0, Math.max(0, U));
+  const pcs = new Set(chord.intervals.map((i) => mod12(chord.root + i)));
+  const required = requiredTones(chord.intervals).map((i) => mod12(chord.root + i)).slice(0, Math.max(0, U));
   const top = current[U];
   const pedalOk = pcs.has(mod12(top));
 
