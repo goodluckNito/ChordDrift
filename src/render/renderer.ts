@@ -806,51 +806,58 @@ function drawWaterfall(ctx: CanvasRenderingContext2D, score: Score, t: number, s
   const u = lay.u;
   const crossfade = cfg.motion.transition === 'swell';
 
-  // A square surface: pitch across, time in depth (now at the front edge).
+  // A square slab of raked lines, seen isometrically and turning slowly on its vertical
+  // axis. Each line is one moment (the newest at the front edge of the slab); across it
+  // runs pitch. Silence is flat floor; each voice raises a narrow ridge that runs back
+  // through time, and nearer lines hide the ones behind them.
   const cam = cameraExtent(score, t);
-  const lo = cam.lo - 3;
-  const hi = cam.hi + 3;
+  const mid = (cam.lo + cam.hi) / 2;
+  const span = Math.max(30, cam.hi - cam.lo + 10);
+  const lo = mid - span / 2;
+  const hi = mid + span / 2;
   const DEPTH = Math.max(6, cfg.video.historySeconds * 1.6); // seconds of history
-  const SLICES = 56;
-  const POINTS = 120;
-  const sigma = 0.85; // broad, smooth humps (semitones)
+  const SLICES = 64;
+  const POINTS = 180;
+  const sigma = 0.8; // rolling humps (semitones)
 
-  // The camera keeps travelling around the surface: a slow full turn plus a rocking
-  // elevation, so it passes through front, corner, edge-on and near top-down views.
-  const yaw = (t / 38) * Math.PI * 2 + 0.6;
-  const pitch = 0.62 + 0.34 * Math.sin((t / 27) * Math.PI * 2);
-  const camDist = 3.4;
-  const size = Math.min(W * 0.95, (lay.bandBottom - lay.bandTop) * 1.25);
+  // Orthographic, fixed elevation (about 32°), one full turn every 48 s.
+  const yaw = (t / 48) * Math.PI * 2 + Math.PI / 4;
+  const elev = 0.56;
+  const cosY = Math.cos(yaw);
+  const sinY = Math.sin(yaw);
+  const cosE = Math.cos(elev);
+  const sinE = Math.sin(elev);
+  const bandH = lay.bandBottom - lay.bandTop;
+  // The footprint's diagonal (2√2 world units) must fit the width; its depth plus the ridges the band.
+  const k = Math.min((W * 0.86) / (2 * Math.SQRT2), bandH / (2 * Math.SQRT2 * sinE + 0.9 * cosE));
   const cx = W / 2;
-  const cy = (lay.bandTop + lay.bandBottom) / 2;
-  // World: x, z ∈ [-1, 1] (pitch, time), y up.
+  const cy = (lay.bandTop + lay.bandBottom) / 2 + 0.12 * k;
+  // World: x ∈ [-1, 1] pitch, z ∈ [-1, 1] time (front = now), y up.
   const project = (x: number, y: number, z: number) => {
-    const xr = x * Math.cos(yaw) - z * Math.sin(yaw);
-    const zr = x * Math.sin(yaw) + z * Math.cos(yaw);
-    const yr = y * Math.cos(pitch) - zr * Math.sin(pitch);
-    const zz = y * Math.sin(pitch) + zr * Math.cos(pitch) + camDist;
-    const k = (size * 1.05) / zz;
-    return { x: cx + xr * k, y: cy - yr * k };
+    const xr = x * cosY - z * sinY;
+    const zr = x * sinY + z * cosY;
+    return { x: cx + xr * k, y: cy - (y * cosE - zr * sinE) * k, depth: zr * cosE + y * sinE };
   };
 
-  // Spectrum of one moment: a smooth hump per voice (and the melody), heights by level.
+  // Spectrum of one moment: a hump per voice (and the melody), heights by level.
   const spectrum = (tau: number): Float32Array => {
     const out = new Float32Array(POINTS + 1);
     const add = (p: number, amp: number) => {
       if (amp <= 0.003) return;
       const center = ((p - lo) / (hi - lo)) * POINTS;
-      const span = (3 * sigma * POINTS) / (hi - lo);
-      for (let i = Math.max(0, Math.floor(center - span)); i <= Math.min(POINTS, Math.ceil(center + span)); i++) {
+      const reach = (3 * sigma * POINTS) / (hi - lo);
+      for (let i = Math.max(0, Math.floor(center - reach)); i <= Math.min(POINTS, Math.ceil(center + reach)); i++) {
         const d = ((i - center) / POINTS) * (hi - lo);
         out[i] += amp * Math.exp(-(d * d) / (2 * sigma * sigma));
       }
     };
     for (let v = 0; v < V; v++) {
       const level = levelAt(score, v, tau);
-      if (crossfade) for (const L of [0, 1] as const) {
-        const sl = layerAt(score, L, v, tau);
-        add(sl.p, sl.g * level);
-      }
+      if (crossfade)
+        for (const L of [0, 1] as const) {
+          const sl = layerAt(score, L, v, tau);
+          add(sl.p, sl.g * level);
+        }
       else add(pitchAt(score, v, tau), level);
     }
     const m = score.melody.length ? melodyAt(score, tau) : null;
@@ -858,33 +865,49 @@ function drawWaterfall(ctx: CanvasRenderingContext2D, score: Score, t: number, s
     return out;
   };
 
-  // Wire surface: one line per moment, thin and even, drawn over each other.
+  // Draw back to front: each line is filled down to the floor with the background, then stroked.
+  const slices = Array.from({ length: SLICES + 1 }, (_, i) => {
+    const z = (i / SLICES) * 2 - 1;
+    return { i, z, depth: project(0, 0, z).depth };
+  }).sort((p, q) => q.depth - p.depth);
   ctx.save();
-  const heightScale = 0.26;
-  const style = st.colorBy === 'none' ? st.ink : null;
   ctx.lineJoin = 'round';
-  for (let k = SLICES; k >= 0; k--) {
-    const z = (k / SLICES) * 2 - 1; // front (now) = -1
-    const values = spectrum(t - (k / SLICES) * DEPTH);
-    const path = new Path2D();
-    for (let i = 0; i <= POINTS; i++) {
-      const q = project((i / POINTS) * 2 - 1, Math.min(2, values[i]) * heightScale, z);
-      if (i === 0) path.moveTo(q.x, q.y);
-      else path.lineTo(q.x, q.y);
+  const heightScale = 0.3;
+  const bg = cfg.theme.background;
+  const style = st.colorBy === 'none' ? st.ink : null;
+  for (const { i, z } of slices) {
+    const tau = t - (i / SLICES) * DEPTH;
+    const values = tau < 0 ? new Float32Array(POINTS + 1) : spectrum(tau);
+    const line = new Path2D();
+    const fill = new Path2D();
+    for (let j = 0; j <= POINTS; j++) {
+      const x = (j / POINTS) * 2 - 1;
+      // Heights saturate, so stacked voices (a unison) rise to a crest instead of a wall.
+      const q = project(x, (1 - Math.exp(-values[j] / 1.3)) * heightScale * 1.6, z);
+      if (j === 0) {
+        line.moveTo(q.x, q.y);
+        fill.moveTo(q.x, q.y);
+      } else {
+        line.lineTo(q.x, q.y);
+        fill.lineTo(q.x, q.y);
+      }
     }
-    ctx.globalAlpha = k === 0 ? 1 : 0.85;
-    ctx.lineWidth = Math.max(1, (k === 0 ? 2.4 : 1.5) * u * st.lw);
+    const b1 = project(1, 0, z);
+    const b0 = project(-1, 0, z);
+    fill.lineTo(b1.x, b1.y);
+    fill.lineTo(b0.x, b0.y);
+    fill.closePath();
+    ctx.fillStyle = bg;
+    ctx.fill(fill);
+    ctx.lineWidth = Math.max(1, (i === 0 ? 2 : 1.25) * u * st.lw);
     if (style) ctx.strokeStyle = style;
     else {
-      const a = project(-1, 0, z);
-      const b = project(1, 0, z);
-      const g = ctx.createLinearGradient(a.x, a.y, b.x + 0.01, b.y);
-      for (let i = 0; i <= 8; i++) g.addColorStop(i / 8, st.colorBy === 'pitch' ? pitchColor(lo + ((hi - lo) * i) / 8, st) : registerColor(i / 8, st));
+      const g = ctx.createLinearGradient(b0.x, b0.y, b1.x + 0.01, b1.y);
+      for (let c = 0; c <= 8; c++) g.addColorStop(c / 8, st.colorBy === 'pitch' ? pitchColor(lo + ((hi - lo) * c) / 8, st) : registerColor(c / 8, st));
       ctx.strokeStyle = g;
     }
-    ctx.stroke(path);
+    ctx.stroke(line);
   }
-  ctx.globalAlpha = 1;
   ctx.restore();
 }
 

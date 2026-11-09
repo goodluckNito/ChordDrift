@@ -138,7 +138,7 @@ Themes are saved in projects and share links and used in video exports. **My the
 
 **Formats.** Theme → Format sets the frame. **Auto** (the default) picks landscape on wide screens and portrait on tall ones, and switches when you rotate or resize. You can also fix it to Portrait 9:16, Landscape 16:9, Square, Portrait 4:5 or Landscape 4K. The layout adapts: text scales with the frame, and wide frames show more history. Exports and recordings use this size.
 
-**3D spectrograph view.** Theme → View → 3D spectrograph draws each moment as a slice with a smooth hump per voice, its height set by loudness. Slices recede in depth over time to form a wire surface, and the camera keeps travelling around it through front, corner, edge-on and near-top-down views.
+**3D spectrograph view.** Theme → View → 3D spectrograph draws a square slab of raked lines in an isometric (orthographic) view, turning slowly on its vertical axis (one turn every 48 s). Each line is one moment, newest at the front edge, with pitch running across it. Silence is flat floor; each voice raises a hump (height by loudness, saturating so a unison crests rather than walls up), and held notes become ridges running back through time. Nearer lines hide the ones behind them, like a zen garden.
 
 **Ripples.** When a voice lands on a new note (or is struck), its dot swells and sends out a fading ring. Toggle it in Theme.
 
