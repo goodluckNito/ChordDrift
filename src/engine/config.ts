@@ -153,8 +153,11 @@ export interface ChordDriftConfig {
     nowPosition: number;
     /** timeline = pitch over time (the classic view) · spiral = pitch wrapped around a spiral, history curling inward */
     view: 'timeline' | 'spiral';
-    /** Spiral motion: fly = travel forward through time, upcoming notes rushing toward you · inward = history curls toward the centre */
-    spiral: 'fly' | 'inward';
+    /**
+     * Spiral motion. orbit = rotation is time, distance from the centre is pitch, the past spirals inward ·
+     * fly = travel forward through time, upcoming notes rushing toward you · inward = pitch-class clock, history curls inward
+     */
+    spiral: 'orbit' | 'fly' | 'inward';
   };
 }
 
@@ -197,7 +200,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
   audio: { wave: 'sine', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 7000, width: 0.6, gain: 0.9, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
   theme: { ...THEME_PRESETS.paper },
-  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'fly' },
+  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'orbit' },
 };
 
 export type DeepPartial<T> = {
@@ -232,7 +235,8 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.progression = String(c.progression ?? '');
   if (!STYLE_IDS.includes(c.style)) c.style = 'none';
   if (c.video.view !== 'spiral') c.video.view = 'timeline';
-  if (c.video.spiral !== 'inward') c.video.spiral = 'fly'; // ('zoom' from older projects becomes 'fly')
+  if ((c.video.spiral as string) === 'zoom') c.video.spiral = 'fly'; // older projects
+  if (!['orbit', 'fly', 'inward'].includes(c.video.spiral)) c.video.spiral = 'orbit';
   c.endless = Boolean(c.endless);
   c.rhythm.tempo = Math.max(20, Math.min(320, Number(c.rhythm.tempo) || 76));
   c.rhythm.chords = String(c.rhythm.chords ?? '');
@@ -256,6 +260,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   if (!['none', 'voice', 'pitch', 'register'].includes(th.colorBy)) th.colorBy = 'none';
   th.lineWidth = Math.max(0.3, Math.min(4, Number(th.lineWidth) || 1));
   th.glow = Math.max(0, Math.min(1, Number(th.glow) || 0));
+  th.colorSeed = Math.max(0, Math.floor(Number(th.colorSeed) || 0)) >>> 0;
   th.gradient = Boolean(th.gradient);
   th.grid = Boolean(th.grid);
   th.hud = th.hud !== false;

@@ -4,6 +4,7 @@ import type { Score } from '../engine/score';
 import type { ColorBy } from '../engine/themes';
 import { midiToHz, mod12 } from '../engine/theory';
 import { fontStack } from './fonts';
+import { mulberry32 } from '../engine/rng';
 
 /**
  * Pitch-versus-time plot with a moving camera. Everything is a pure function of
@@ -25,6 +26,22 @@ interface Style {
   colorBy: ColorBy;
   glow: number;
   dark: boolean;
+  palette: Palette;
+}
+
+/** How coloured lines map to hues. Seed 0 is the standard rainbow. */
+interface Palette {
+  start: number;
+  spread: number;
+  dir: number;
+  sat: number;
+  light: number;
+}
+
+function paletteFor(seed: number): Palette {
+  if (!seed) return { start: 270, spread: 270, dir: -1, sat: 72, light: 0 };
+  const r = mulberry32(seed);
+  return { start: r() * 360, spread: 120 + r() * 230, dir: r() < 0.5 ? -1 : 1, sat: 55 + r() * 35, light: (r() - 0.5) * 12 };
 }
 
 function rgbOf(hex: string): [number, number, number] {
@@ -49,6 +66,7 @@ function styleOf(cfg: ChordDriftConfig): Style {
     colorBy: th.colorBy,
     glow: th.glow,
     dark: luminance(th.background) < 0.45,
+    palette: paletteFor(th.colorSeed),
   };
 }
 
@@ -57,13 +75,24 @@ export function themeBackground(cfg: ChordDriftConfig): string {
   return cfg.theme.background;
 }
 
-const hsl = (h: number, dark: boolean) => `hsl(${((h % 360) + 360) % 360} 72% ${dark ? 66 : 44}%)`;
+const hsl = (h: number, st: Style) =>
+  `hsl(${((h % 360) + 360) % 360} ${st.palette.sat}% ${(st.dark ? 66 : 44) + st.palette.light}%)`;
 /** A hue per pitch class, ordered around the circle of fifths so related notes have related colours. */
-const pitchColor = (p: number, st: Style) => hsl(mod12(Math.round(p) * 7) * 30, st.dark);
-/** A hue per voice: bass violet up to top red. */
-const voiceColor = (v: number, V: number, st: Style) => hsl(270 - (270 * v) / Math.max(1, V - 1), st.dark);
+const pitchColor = (p: number, st: Style) => {
+  const pal = st.palette;
+  const step = mod12(Math.round(p) * 7);
+  // The standard palette uses the full wheel; seeded ones spread the 12 notes over their range.
+  return pal.spread === 270 && pal.start === 270 ? hsl(step * 30, st) : hsl(pal.start + pal.dir * (pal.spread * step) / 11, st);
+};
+/** A hue per voice, bass to top across the palette. */
+const voiceColor = (v: number, V: number, st: Style) => hsl(st.palette.start + (st.palette.dir * st.palette.spread * v) / Math.max(1, V - 1), st);
 /** Register colour at a height fraction 0 (bottom) … 1 (top). */
-const registerColor = (f: number, st: Style) => hsl(260 - 250 * Math.max(0, Math.min(1, f)), st.dark);
+const registerColor = (f: number, st: Style) => {
+  const pal = st.palette;
+  const start = pal.start === 270 && pal.spread === 270 ? 260 : pal.start;
+  const spread = pal.start === 270 && pal.spread === 270 ? 250 : pal.spread;
+  return hsl(start + pal.dir * spread * Math.max(0, Math.min(1, f)), st);
+};
 
 const LAYOUT = {
   titleY: 0.092,
@@ -696,6 +725,163 @@ function drawSpiral(ctx: CanvasRenderingContext2D, score: Score, t: number, st: 
 }
 
 /**
+ * Orbit: one meaning per dimension. Rotation is time (one turn per bar with a
+ * chord rhythm, otherwise every 8 s); distance from the centre is pitch, with
+ * octave rings like staff lines; the past drifts inward. The present rides a
+ * rotating hand, the chord stacked along it, and history becomes a spiral
+ * galaxy where every interval change is a step in an arm (smooth for a glide)
+ * that rotates around and sinks toward the centre.
+ */
+function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: Style, lay: FrameLayout) {
+  const { width: W, height: H } = ctx.canvas;
+  const cfg = score.config;
+  const th = cfg.theme;
+  const V = cfg.voices;
+  const u = lay.u;
+  const tu = lay.tu;
+  const cx = W / 2;
+  const cy = (lay.bandTop + lay.bandBottom) / 2;
+  const R = Math.min(W * 0.45, (lay.bandBottom - lay.bandTop) / 2 + 0.07 * H);
+
+  // One revolution per bar (4 beats) when there's a chord rhythm, so changes on
+  // the beat land at the same angles; otherwise a slow, steady 8 s per turn.
+  const period = cfg.rhythm.chords.trim() ? 4 * score.beat : 8;
+  const omega = (2 * Math.PI) / period;
+  const angleAt = (tau: number) => -Math.PI / 2 + omega * tau;
+
+  // Pitch → distance from the centre (camera-smoothed so the chord fills the disc).
+  const cam = cameraExtent(score, t);
+  const mid = (cam.lo + cam.hi) / 2;
+  const span = Math.max(18, cam.hi - cam.lo + 3);
+  const lo = mid - span / 2;
+  const radial = (p: number) => R * (0.2 + 0.8 * Math.max(-0.1, Math.min(1.1, (p - lo) / span)));
+  const sink = cfg.video.historySeconds * 1.1; // e-folding time of the inward drift
+  const memory = sink * 3.2; // how far back trails go
+  const at = (p: number, age: number) => {
+    const s = Math.exp(-age / sink);
+    const r = radial(p) * s;
+    const a = angleAt(t - age);
+    return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, s };
+  };
+
+  ctx.save();
+  // Octave rings (like staff lines) with names on the upward axis, and the hand.
+  ctx.strokeStyle = withAlpha(th.text, 0.1);
+  ctx.fillStyle = withAlpha(th.text, 0.45);
+  ctx.lineWidth = Math.max(1, 1.1 * u);
+  ctx.font = `500 ${15 * tu}px ${st.font}`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  for (let n = Math.ceil(lo / 12) * 12; n <= lo + span; n += 12) {
+    const r = radial(n);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillText(`C${n / 12 - 1}`, cx + 6 * tu, cy - r - 8 * tu);
+  }
+  const handA = angleAt(t);
+  ctx.strokeStyle = withAlpha(th.text, 0.16);
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + Math.cos(handA) * R * 1.15, cy + Math.sin(handA) * R * 1.15);
+  ctx.stroke();
+
+  // Trails: sampled from oldest to newest; quick pitch moves get extra points so
+  // interval steps stay crisp curves; silences and instant jumps break the line.
+  const painter = new Painter(ctx, st, V, cy - R, cy + R);
+  const half = 1.8 * u * st.lw;
+  const crossfade = cfg.motion.transition === 'swell';
+  const samples = 220;
+  const trail = (sample: (tau: number) => { p: number; g: number }, width: number): RibbonPoint[][] => {
+    const runs: RibbonPoint[][] = [];
+    let run: RibbonPoint[] = [];
+    let lastP = NaN;
+    const push = (age: number) => {
+      const { p, g } = sample(t - age);
+      if (g < 0.02 || Math.abs(p - lastP) > 1) {
+        if (run.length > 1) runs.push(run);
+        run = [];
+      }
+      lastP = p;
+      if (g < 0.02) return;
+      const q = at(p, age);
+      run.push({ x: q.x, y: q.y, h: width * (0.25 + 0.75 * q.s) * g });
+    };
+    let prevAge = memory;
+    let prevP = sample(t - memory).p;
+    push(memory);
+    for (let i = 1; i <= samples; i++) {
+      const age = memory * Math.pow(1 - i / samples, 1.6); // denser near the present
+      const p = sample(t - age).p;
+      const extra = Math.min(40, Math.floor(Math.abs(p - prevP) / 0.3));
+      for (let j = 1; j <= extra; j++) push(prevAge + ((age - prevAge) * j) / (extra + 1));
+      push(age);
+      prevAge = age;
+      prevP = p;
+    }
+    if (run.length > 1) runs.push(run);
+    return runs;
+  };
+  for (let v = 0; v < V; v++) {
+    if (crossfade) {
+      for (const L of [0, 1] as const) {
+        const runs = trail((tau) => {
+          const sl = layerAt(score, L, v, tau);
+          return { p: sl.p, g: sl.g * (0.3 + 0.7 * levelAt(score, v, tau)) };
+        }, half);
+        for (const r of runs) ribbon(painter.fill(v, layerAt(score, L, v, t).p), r);
+      }
+    } else {
+      const runs = trail((tau) => ({ p: pitchAt(score, v, tau), g: 0.3 + 0.7 * levelAt(score, v, tau) }), half);
+      for (const r of runs) ribbon(painter.fill(v, pitchAt(score, v, t)), r);
+    }
+  }
+  painter.paint(3.2 * u * st.lw);
+  if (score.melody.length) {
+    const runs = trail((tau) => melodyAt(score, tau) ?? { p: 0, g: 0 }, half * 1.1);
+    for (const r of runs) ribbon(painter.fill(-1, 0, st.accent), r);
+    painter.paint(3.2 * u * st.lw);
+  }
+
+  // The present: dots along the hand.
+  const dotR = 7 * u * Math.max(0.7, Math.min(1.8, st.lw));
+  const layers: { pitches: number[]; g: number }[] = crossfade
+    ? ([0, 1] as const).map((L) => ({ pitches: Array.from({ length: V }, (_, v) => layerAt(score, L, v, t).p), g: layerAt(score, L, 0, t).g }))
+    : [{ pitches: soundingPitches(score, t), g: 1 }];
+  for (const layer of layers) {
+    if (layer.g < 0.01) continue;
+    layer.pitches.forEach((p, v) => {
+      const q = at(p, 0);
+      ctx.fillStyle = painter.dotColor(v, p, q.y);
+      ctx.beginPath();
+      ctx.arc(q.x, q.y, dotR * layer.g * (0.55 + 0.45 * levelAt(score, v, t)), 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+  const lead = score.melody.length ? melodyAt(score, t) : null;
+  if (lead && lead.g > 0.05) {
+    const q = at(lead.p, 0);
+    ctx.fillStyle = st.accent;
+    ctx.beginPath();
+    ctx.arc(q.x, q.y, dotR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Chord name in the eye of the spiral.
+  if (th.labels) {
+    ctx.fillStyle = st.text;
+    ctx.font = `700 ${34 * tu}px ${st.font}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 8 * tu;
+    ctx.strokeStyle = withAlpha(th.background, 0.85);
+    ctx.strokeText(chordLabelAt(score, t), cx, cy);
+    ctx.fillText(chordLabelAt(score, t), cx, cy);
+  }
+  ctx.restore();
+}
+
+/**
  * Fly-through: depth is time. Every note sits in 3D at the moment it sounds, on
  * a pitch spiral (angle = pitch class, radius = height), and the camera moves
  * forward through time. Upcoming chords start small at the vanishing point and
@@ -921,6 +1107,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const freqs = soundingPitches(score, t).map(midiToHz);
   if (cfg.video.view === 'spiral') {
     if (cfg.video.spiral === 'fly') drawTunnel(ctx, score, t, st, lay);
+    else if (cfg.video.spiral === 'orbit') drawOrbit(ctx, score, t, st, lay);
     else drawSpiral(ctx, score, t, st, lay);
   }
   else {

@@ -180,6 +180,18 @@ function startApp() {
     writeForm();
     rebuild(true);
   });
+  $('#reroll-colors').addEventListener('click', () => {
+    const th = useMine && myTheme ? myTheme : state.theme;
+    th.colorSeed = 1 + Math.floor(Math.random() * 0x7ffffffe);
+    if (th.colorBy === 'none') th.colorBy = 'voice';
+    th.preset = 'custom';
+    if (useMine && myTheme) {
+      myTheme = { ...myTheme };
+      saveMyTheme();
+    }
+    writeForm();
+    rebuild(true);
+  });
   $('#save-my-theme').addEventListener('click', () => {
     myTheme = structuredClone(displayTheme());
     saveMyTheme();

@@ -327,8 +327,9 @@
             </label>
             <label data-spiral>Spiral motion
               <select data-path="video.spiral">
-                <option value="fly">Fly through — notes rush toward you</option>
-                <option value="inward">Curl inward — the past shrinks to the centre</option>
+                <option value="orbit">Orbit — circling; pitch is distance from the centre</option>
+                <option value="fly">Fly through — time is depth</option>
+                <option value="inward">Note clock — angle is the note, the past curls inward</option>
               </select>
             </label>
             <label>Font
@@ -350,12 +351,15 @@
               <label>Text<input data-path="theme.text" type="color" /></label>
             </div>
             <label>Colour lines by
-              <select data-path="theme.colorBy">
-                <option value="none">One colour</option>
-                <option value="voice">Voice (bass → top)</option>
-                <option value="pitch">Note (circle of fifths)</option>
-                <option value="register">Height (gradient)</option>
-              </select>
+              <span class="row">
+                <select data-path="theme.colorBy">
+                  <option value="none">One colour</option>
+                  <option value="voice">Voice (bass → top)</option>
+                  <option value="pitch">Note (circle of fifths)</option>
+                  <option value="register">Height (gradient)</option>
+                </select>
+                <button type="button" id="reroll-colors" title="Roll a new palette for the line colours">🎲</button>
+              </span>
             </label>
             <label>Line width <output></output>
               <input data-path="theme.lineWidth" type="range" min="0.4" max="3" step="0.05" />

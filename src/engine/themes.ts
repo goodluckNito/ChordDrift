@@ -21,6 +21,8 @@ export interface Theme {
   /** Line thickness multiplier. */
   lineWidth: number;
   colorBy: ColorBy;
+  /** Palette for coloured lines: 0 = the standard rainbow, anything else = a seeded palette (the 🎲 button). */
+  colorSeed: number;
   /** 0..1 glow around lines. */
   glow: number;
   /** Faint octave lines with note names. */
@@ -45,6 +47,7 @@ const base: Omit<Theme, 'preset' | 'background' | 'ink' | 'accent' | 'text'> = {
   font: 'inter',
   lineWidth: 1,
   colorBy: 'none',
+  colorSeed: 0,
   glow: 0,
   grid: false,
   hud: true,

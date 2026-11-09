@@ -99,7 +99,7 @@ Line thickness and dot size follow the level over time, in the video as well. **
 **Themes.** Presets: Paper, Sepia, Midnight, Neon, Blueprint, Terminal, Chromatic, Sunset and Hex. You can also choose your own:
 - **Colours:** background (optionally a gradient), lines, melody and text.
 - **Font:** seven to choose from, loaded only when picked.
-- **Line colouring:** one colour, per voice, per note (around the circle of fifths) or by height.
+- **Line colouring:** one colour, per voice, per note (around the circle of fifths) or by height. 🎲 rolls a new palette; it's saved with the theme.
 - **Extras:** line width, glow, an octave grid with note names, and switches for the Hz labels and HUD.
 
 Themes are saved in projects and share links and used in video exports. **My theme:**
@@ -109,9 +109,10 @@ Themes are saved in projects and share links and used in video exports. **My the
 
 **Formats.** Theme → Format sets the frame. **Auto** (the default) picks landscape on wide screens and portrait on tall ones, and switches when you rotate or resize. You can also fix it to Portrait 9:16, Landscape 16:9, Square, Portrait 4:5 or Landscape 4K. The layout adapts: text scales with the frame, and wide frames show more history. Exports and recordings use this size.
 
-**Spiral view.** Theme → View → Spiral wraps pitch around a spiral: one turn per octave with C at the top, so octaves line up and the current chord shows as a shape, named in the middle. **Spiral motion** has two settings:
+**Spiral view.** Theme → View → Spiral wraps pitch around a spiral: one turn per octave with C at the top, so octaves line up and the current chord shows as a shape, named in the middle. **Spiral motion** has three settings:
+- *Orbit* (default): one meaning per dimension. Rotation is time: one turn per bar with a chord rhythm, otherwise every 8 s. Distance from the centre is pitch, with octave rings like staff lines, and the past drifts inward. The present rides a rotating hand with the chord stacked along it. History becomes a spiral galaxy where each interval change is a step in an arm (smooth for a glide), so with a rhythm the changes line up into a mandala.
 - *Fly through* (default): depth is time, and you travel forward through it. Upcoming chords start small at the vanishing point and rush toward you; passed notes fly out past the edges. Held notes become slowly twisting helices, glides swing into their new intervals as they approach, and rings at every second and every chord change make the motion felt.
-- *Curl inward*: the past shrinks and rotates toward the centre.
+- *Note clock*: the angle is the note (C at the top, octaves aligned), and the past shrinks and rotates toward the centre.
 
 With release-and-swell changes, chords grow in and fade out on the spiral too. The arrival collapses everything into one point.
 
