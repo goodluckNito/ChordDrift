@@ -202,8 +202,11 @@ export class VoiceBank {
   private subChop: GainNode | null = null;
   /** Everything this bank plays goes through here, so stop() can silence it for sure. */
   private bus: GainNode;
-  /** Pluck mode: the shared strike envelope for the chord voices. */
+  /** Pluck mode: the shared strike envelope for the chord voices, and its tone (bright on the hit, darker as it rings). */
   private art: GainNode | null = null;
+  private pluckTone: BiquadFilterNode | null = null;
+  /** Pluck mode: makeup gain so low sustain gives louder strikes, not a quieter mix. */
+  private makeup = 1;
   /** Chop: the step gate for the chord voices (its time remap is applied to the voice curves). */
   private chop: GainNode | null = null;
   /** Sidechain: ducks the chord voices under the kick/snare. */
@@ -251,9 +254,16 @@ export class VoiceBank {
       chordOut = this.chop;
     }
     if (score.config.motion.transition === 'pluck') {
+      // Average level of a strike's envelope is roughly s + (1 − s)·0.35; make that up so plucks hit hard.
+      this.makeup = Math.min(3.2, Math.max(1, 1 / (a.sustain + (1 - a.sustain) * 0.35)));
+      this.pluckTone = ctx.createBiquadFilter();
+      this.pluckTone.type = 'lowpass';
+      this.pluckTone.Q.value = 0.8;
+      this.pluckTone.frequency.value = this.pluckCutoff(articulationAt(score, offset));
+      this.pluckTone.connect(chordOut);
       this.art = ctx.createGain();
-      this.art.gain.value = articulationAt(score, offset);
-      this.art.connect(chordOut);
+      this.art.gain.value = articulationAt(score, offset) * this.makeup;
+      this.art.connect(this.pluckTone);
       chordOut = this.art;
     }
     const voiceOut = chordOut;
@@ -332,6 +342,12 @@ export class VoiceBank {
       const stopAt = when + Math.max(0, endAt - offset) + 0.05;
       for (const o of this.oscs) o.stop(stopAt);
     }
+  }
+
+  /** Pluck tone: the filter opens fully on the strike and closes toward ~800 Hz as it decays. */
+  private pluckCutoff(level: number): number {
+    const top = Math.max(1500, this.score.config.audio.lowpass);
+    return 800 * Math.pow(top / 800, Math.max(0, Math.min(1, level)));
   }
 
   /** Score time up to which automation has been scheduled. */
@@ -463,8 +479,14 @@ export class VoiceBank {
       if (this.art) {
         const m = Math.round(CHUNK * ARTIC_RATE) + 1;
         const curve = new Float32Array(m);
-        for (let i = 0; i < m; i++) curve[i] = articulationAt(this.score, chopAt(this.score, wrap(t0 + (i / (m - 1)) * CHUNK)).s);
+        const tone = new Float32Array(m);
+        for (let i = 0; i < m; i++) {
+          const level = articulationAt(this.score, chopAt(this.score, wrap(t0 + (i / (m - 1)) * CHUNK)).s);
+          curve[i] = level * this.makeup;
+          tone[i] = this.pluckCutoff(level);
+        }
         setCurve(this.art.gain, curve, at, dur);
+        if (this.pluckTone) setCurve(this.pluckTone.frequency, tone, at, dur);
         if (this.subArt) setCurve(this.subArt.gain, curve, at, dur);
       }
       if (this.chop) {
