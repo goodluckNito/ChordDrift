@@ -23,3 +23,12 @@ describe('projects and share links', () => {
     expect(resolveConfig({ mode: 'chromatic' as never }).mode).toBe('voiceled');
   });
 });
+
+describe('themes', () => {
+  it('ships valid presets and keeps old melody colours', async () => {
+    const { THEME_PRESETS } = await import('../src/engine');
+    for (const [id, th] of Object.entries(THEME_PRESETS)) expect(resolveConfig({ theme: th }).theme, id).toEqual(th);
+    expect(resolveConfig({ video: { melodyColor: '#123456' } } as never).theme.accent).toBe('#123456');
+    expect(resolveConfig({ theme: { ink: 'not-a-colour', colorBy: 'nope' as never } }).theme.ink).toBe(THEME_PRESETS.paper.ink);
+  });
+});

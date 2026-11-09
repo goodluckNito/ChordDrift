@@ -246,8 +246,24 @@
             <label data-swell>Swell depth <output></output>
               <input data-path="audio.swellDepth" type="range" min="0.1" max="0.95" step="0.05" />
             </label>
+            <label>Articulation
+              <select data-path="audio.envelope">
+                <option value="sustain">Sustained</option>
+                <option value="pluck">Pluck — strike &amp; decay</option>
+              </select>
+            </label>
+            <label data-env>Attack (s) <output></output>
+              <input data-path="audio.attack" type="range" min="0.002" max="0.3" step="0.002" />
+            </label>
+            <label data-env>Decay (s) <output></output>
+              <input data-path="audio.decay" type="range" min="0.05" max="3" step="0.05" />
+            </label>
+            <label data-env>Sustain level <output></output>
+              <input data-path="audio.sustain" type="range" min="0" max="1" step="0.05" />
+            </label>
             <div class="row wide">
-              <button type="button" id="ambient" title="Slow glides, long holds, soft triangle tone, deep reverb, swells">Ambient preset</button>
+              <button type="button" id="ambient" title="Chords release as the next swells in, long holds, soft tone, deep reverb">Ambient</button>
+              <button type="button" id="pluck" title="Re-struck chords with a quick decay, short glides and a rhythm">Pluck</button>
               <button type="button" id="sound-reset" title="Put timing and sound back to the defaults">Default sound</button>
             </div>
             <label>Reverb <output></output>
@@ -270,6 +286,50 @@
               <input data-path="title" />
             </label>
           </fieldset>
+          <fieldset>
+            <legend>Theme</legend>
+            <label>Preset
+              <select id="theme-preset"></select>
+            </label>
+            <label>Font
+              <select data-path="theme.font">
+                <option value="inter">Inter</option>
+                <option value="space-grotesk">Space Grotesk</option>
+                <option value="ibm-plex-sans">IBM Plex Sans</option>
+                <option value="ibm-plex-mono">IBM Plex Mono</option>
+                <option value="jetbrains-mono">JetBrains Mono</option>
+                <option value="fraunces">Fraunces (serif)</option>
+                <option value="playfair">Playfair Display (serif)</option>
+              </select>
+            </label>
+            <div class="swatches wide">
+              <label>Background<input data-path="theme.background" type="color" /></label>
+              <label data-gradient>Bottom<input data-path="theme.background2" type="color" /></label>
+              <label>Lines<input data-path="theme.ink" type="color" /></label>
+              <label>Melody<input data-path="theme.accent" type="color" /></label>
+              <label>Text<input data-path="theme.text" type="color" /></label>
+            </div>
+            <label>Colour lines by
+              <select data-path="theme.colorBy">
+                <option value="none">One colour</option>
+                <option value="voice">Voice (bass → top)</option>
+                <option value="pitch">Note (circle of fifths)</option>
+                <option value="register">Height (gradient)</option>
+              </select>
+            </label>
+            <label>Line width <output></output>
+              <input data-path="theme.lineWidth" type="range" min="0.4" max="3" step="0.05" />
+            </label>
+            <label>Glow <output></output>
+              <input data-path="theme.glow" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <div class="checks wide">
+              <label class="check"><input data-path="theme.gradient" type="checkbox" /><span>Gradient background</span></label>
+              <label class="check"><input data-path="theme.grid" type="checkbox" /><span>Octave grid</span></label>
+              <label class="check"><input data-path="theme.labels" type="checkbox" /><span>Hz labels</span></label>
+              <label class="check"><input data-path="theme.hud" type="checkbox" /><span>HUD</span></label>
+            </div>
+          </fieldset>
         </form>
 
         <fieldset class="project">
@@ -278,7 +338,7 @@
             <span class="row">
               <select id="project-list"><option value="">—</option></select>
               <button type="button" id="project-load">Open</button>
-              <button type="button" id="project-delete" title="Delete saved project">✕</button>
+              <button type="button" id="project-delete" title="Delete the selected saved project from this browser">Delete</button>
             </span>
           </label>
           <div class="row wide">
@@ -287,7 +347,10 @@
             <button type="button" id="project-import">Import file</button>
             <input type="file" id="project-file" accept=".json,application/json" hidden />
           </div>
-          <button type="button" id="share" class="wide">Copy share link</button>
+          <div class="row wide">
+            <button type="button" id="share">Copy share link</button>
+            <button type="button" id="reset-all" title="Every setting back to its default (keeps the seed)">Reset all settings</button>
+          </div>
         </fieldset>
 
         <div class="actions">

@@ -264,3 +264,32 @@ export function soundingPitches(score: Score, t: number): number[] {
   if (k === 0) return pitchesAt(score, t);
   return score.chords[k].notes.slice();
 }
+
+/**
+ * Pluck articulation (0..1): every chord change re-strikes — a fast attack to
+ * full level, then an exponential decay toward the sustain level. It starts
+ * from the sustain level, so there is no click. The arrival swells back to
+ * full and holds. Returns 1 when the envelope is "sustain".
+ */
+export function articulationAt(score: Score, t: number): number {
+  const a = score.config.audio;
+  if (a.envelope !== 'pluck') return 1;
+  const s = a.sustain;
+  const tl = score.timeline;
+  if (t >= tl.arrivalStart) return s + (1 - s) * Math.min(1, (t - tl.arrivalStart) / 0.3);
+  const k = chordIndexAt(score, t);
+  const strike = k >= 0 ? score.chords[k].t : 0;
+  const x = t - strike;
+  const env = x < a.attack ? x / a.attack : Math.exp(-(x - a.attack) / a.decay);
+  return s + (1 - s) * env;
+}
+
+/** Combined dynamic level of a voice: swells × articulation (1 when both are off). */
+export function levelAt(score: Score, v: number, t: number): number {
+  return swellAt(score, v, t) * articulationAt(score, t);
+}
+
+/** True when lines should be drawn with varying thickness. */
+export function hasDynamics(score: Score): boolean {
+  return score.config.audio.swell !== 'off' || score.config.audio.envelope === 'pluck';
+}

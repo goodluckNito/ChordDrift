@@ -114,3 +114,22 @@ describe('release & swell-in transitions', () => {
     expect(end.g).toBe(1);
   });
 });
+
+describe('pluck articulation', () => {
+  it('re-strikes at each chord change and decays toward the sustain level', async () => {
+    const { articulationAt, PLUCK_PRESET } = await import('../src/engine');
+    const s = generateScore({ ...PLUCK_PRESET, seed: 2 });
+    const sus = s.config.audio.sustain;
+    for (const c of s.chords.slice(1, -1)) {
+      expect(articulationAt(s, c.t)).toBeCloseTo(sus, 5); // starts from sustain: no click
+      expect(articulationAt(s, c.t + s.config.audio.attack)).toBeCloseTo(1, 5); // full at the end of the attack
+      expect(articulationAt(s, c.t + 0.3)).toBeLessThan(0.7); // decaying
+    }
+    expect(articulationAt(s, s.timeline.arrivalEnd)).toBe(1); // the arrival rings
+  });
+  it('is off (level 1) for sustained chords', async () => {
+    const { articulationAt } = await import('../src/engine');
+    const s = generateScore({ seed: 2 });
+    expect(articulationAt(s, s.chords[2].t + 0.3)).toBe(1);
+  });
+});

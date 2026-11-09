@@ -5,6 +5,9 @@ import './style.css';
 import { LivePlayer, encodeWav, renderOffline } from './audio/synth';
 import {
   AMBIENT_PRESET,
+  PLUCK_PRESET,
+  THEME_LABELS,
+  THEME_PRESETS,
   DEFAULT_CONFIG,
   KEY_NAMES,
   RHYTHM_PRESETS,
@@ -26,7 +29,8 @@ import {
   type DeepPartial,
   type Score,
 } from './engine';
-import { frameCount, renderFrame } from './render/renderer';
+import { ensureFont } from './render/fonts';
+import { frameCount, renderFrame, themeBackground } from './render/renderer';
 import { decodeShare, encodeShare, exportProject, listProjects, parseProject, saveProject, deleteProject } from './project';
 
 const fontsReady = (async () => {
@@ -47,8 +51,9 @@ let exportDuration = 0;
 const api = {
   ready: fontsReady,
   /** Load a config. Endless pieces need a duration (default 60 s). */
-  load(partial: DeepPartial<ChordDriftConfig>, duration?: number) {
+  async load(partial: DeepPartial<ChordDriftConfig>, duration?: number) {
     exportScore = generateScore(partial);
+    await ensureFont(exportScore.config.theme.font);
     exportDuration = exportScore.endless ? duration ?? 60 : duration ?? exportScore.timeline.end;
     exportScore.extend(exportDuration);
     const { width, height, fps } = exportScore.config.video;
@@ -134,6 +139,16 @@ function startApp() {
     rebuild(true);
   });
 
+  const themeSelect = $<HTMLSelectElement>('#theme-preset');
+  themeSelect.innerHTML = Object.keys(THEME_PRESETS).map((id) => `<option value="${id}">${THEME_LABELS[id] ?? id}</option>`).join('') + '<option value="custom">Custom</option>';
+  themeSelect.addEventListener('change', () => {
+    const preset = THEME_PRESETS[themeSelect.value];
+    if (!preset) return;
+    state.theme = structuredClone(preset);
+    writeForm();
+    rebuild(true);
+  });
+
   const player = new LivePlayer();
   let state: ChordDriftConfig = resolveConfig();
   let score: Score;
@@ -172,6 +187,9 @@ function startApp() {
     for (const el of form.querySelectorAll<HTMLElement>('[data-melody]')) el.hidden = !state.melody.enabled;
     for (const el of form.querySelectorAll<HTMLElement>('[data-swell]')) el.hidden = state.audio.swell === 'off';
     for (const el of form.querySelectorAll<HTMLElement>('[data-transition]')) el.hidden = state.motion.transition !== el.dataset.transition;
+    for (const el of form.querySelectorAll<HTMLElement>('[data-env]')) el.hidden = state.audio.envelope !== 'pluck';
+    for (const el of form.querySelectorAll<HTMLElement>('[data-gradient]')) el.hidden = !state.theme.gradient;
+    themeSelect.value = state.theme.preset in THEME_PRESETS ? state.theme.preset : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-free]')) el.hidden = state.rhythm.chords.trim().length > 0;
     const presetIdx = RHYTHM_PRESETS.findIndex((p) => p.chords === state.rhythm.chords.trim());
     presetSelect.value = presetIdx >= 0 ? String(presetIdx) : 'custom';
@@ -183,6 +201,8 @@ function startApp() {
 
   // ---- Score ------------------------------------------------------------------
   function rebuild(keepTime: boolean) {
+    void ensureFont(state.theme.font);
+    canvas.style.background = themeBackground(state);
     const wasPlaying = player.playing;
     const t = keepTime ? currentTime() : 0;
     if (wasPlaying) player.pause();
@@ -292,6 +312,25 @@ function startApp() {
     rebuild(true);
     setStatus(`Froze ${tokens.length} chords. Edit any of them, or replace some with "?".`);
   });
+  const applyPatch = (p: DeepPartial<ChordDriftConfig>, message: string) => {
+    const merged = structuredClone(state) as unknown as Record<string, Record<string, unknown>>;
+    for (const [k, v] of Object.entries(p)) {
+      merged[k] = v && typeof v === 'object' && !Array.isArray(v) ? { ...merged[k], ...(v as Record<string, unknown>) } : (v as unknown as Record<string, unknown>);
+    }
+    state = resolveConfig(merged as DeepPartial<ChordDriftConfig>);
+    writeForm();
+    rebuild(true);
+    setStatus(message);
+  };
+  $('#pluck').addEventListener('click', () =>
+    applyPatch(PLUCK_PRESET, 'Pluck preset: each chord change strikes and decays, short glides, a tresillo rhythm. Try faster tempos or other rhythms.'),
+  );
+  $('#reset-all').addEventListener('click', () => {
+    if (!confirm('Reset every setting to its default? (The seed is kept.)')) return;
+    const seed = state.seed;
+    loadConfig({ seed });
+    setStatus('All settings back to defaults (same seed).');
+  });
   $('#ambient').addEventListener('click', () => {
     const p = AMBIENT_PRESET;
     state = resolveConfig({ ...state, timing: { ...state.timing, ...p.timing }, motion: { ...state.motion, ...p.motion }, audio: { ...state.audio, ...p.audio }, melody: { ...state.melody, ...p.melody }, rhythm: { ...state.rhythm, ...p.rhythm } } as DeepPartial<ChordDriftConfig>);
@@ -301,7 +340,7 @@ function startApp() {
   });
   $('#sound-reset').addEventListener('click', () => {
     const d = DEFAULT_CONFIG;
-    state = resolveConfig({ ...state, timing: structuredClone(d.timing), motion: structuredClone(d.motion), audio: structuredClone(d.audio), melody: { ...structuredClone(d.melody), enabled: state.melody.enabled } } as DeepPartial<ChordDriftConfig>);
+    state = resolveConfig({ ...state, timing: structuredClone(d.timing), motion: structuredClone(d.motion), audio: structuredClone(d.audio), rhythm: structuredClone(d.rhythm), melody: { ...structuredClone(d.melody), enabled: state.melody.enabled } } as DeepPartial<ChordDriftConfig>);
     writeForm();
     rebuild(true);
     setStatus('Timing and sound back to defaults.');
@@ -425,10 +464,11 @@ function startApp() {
     const el = e.target as Field;
     if (!el.dataset.path) return;
     readField(el);
+    if (el.dataset.path.startsWith('theme.')) state.theme.preset = 'custom';
     syncVisibility();
     const path = el.dataset.path;
     clearTimeout(debounce);
-    const delay = path === 'progression' || path.endsWith('rhythm') || path === 'rhythm.chords' ? 450 : 160;
+    const delay = path === 'progression' || path.endsWith('rhythm') || path === 'rhythm.chords' ? 450 : path.startsWith('theme.') ? 30 : 160;
     debounce = window.setTimeout(() => rebuild(path !== 'seed'), delay);
   });
   form.addEventListener('submit', (e) => e.preventDefault());

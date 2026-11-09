@@ -1,4 +1,4 @@
-import { layerAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
+import { layerAt, levelAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
 import type { Wave } from '../engine/config';
 import { stream } from '../engine/rng';
 import type { Score } from '../engine/score';
@@ -228,7 +228,7 @@ export class VoiceBank {
           let env = Math.min(1, t / 0.05); // 50 ms fade-in at the very start
           if (this.offset > 0) env *= Math.min(1, (t - this.offset) / 0.03); // de-click when starting mid-piece
           if (t > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (t - fadeOutStart) / fadeLen)));
-          gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env) * swellAt(this.score, v, t) * layerGain;
+          gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env) * levelAt(this.score, v, t) * layerGain;
         }
         setCurve(this.oscs[idx].frequency, freq, at, dur);
         setCurve(this.gains[idx].gain, gain, at, dur);

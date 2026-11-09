@@ -1,4 +1,5 @@
 import { SCALES } from './theory';
+import { FONT_NAMES, THEME_PRESETS, type Theme } from './themes';
 
 /**
  * scale    — key-locked: chords built from the selected scale
@@ -131,8 +132,17 @@ export interface ChordDriftConfig {
     swell: Swell;
     /** 0..1 how deep the swells dip. */
     swellDepth: number;
+    /** sustain = chords hold at full level · pluck = each chord change re-strikes and decays */
+    envelope: 'sustain' | 'pluck';
+    /** Pluck: attack time (s). */
+    attack: number;
+    /** Pluck: decay time constant toward the sustain level (s). */
+    decay: number;
+    /** Pluck: level the decay settles at, 0..1. */
+    sustain: number;
   };
-  video: { width: number; height: number; fps: number; historySeconds: number; nowPosition: number; melodyColor: string };
+  theme: Theme;
+  video: { width: number; height: number; fps: number; historySeconds: number; nowPosition: number };
 }
 
 export const DEFAULT_CONFIG: ChordDriftConfig = {
@@ -171,8 +181,9 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   motion: { easing: 'smootherstep', transition: 'glide' },
   rhythm: { tempo: 76, chords: '' },
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
-  audio: { wave: 'sine', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 7000, width: 0.6, gain: 0.9, swell: 'off', swellDepth: 0.65 },
-  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, melodyColor: '#c8442b' },
+  audio: { wave: 'sine', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 7000, width: 0.6, gain: 0.9, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
+  theme: { ...THEME_PRESETS.paper },
+  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75 },
 };
 
 export type DeepPartial<T> = {
@@ -217,6 +228,24 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.melody.level = Math.max(0, Math.min(1, Number(c.melody.level)));
   if (!['off', 'chord', 'voice', 'breath'].includes(c.audio.swell)) c.audio.swell = 'off';
   c.audio.swellDepth = Math.max(0, Math.min(0.95, Number(c.audio.swellDepth)));
+  if (c.audio.envelope !== 'pluck') c.audio.envelope = 'sustain';
+  c.audio.attack = Math.max(0.001, Math.min(1, Number(c.audio.attack) || 0.008));
+  c.audio.decay = Math.max(0.03, Math.min(10, Number(c.audio.decay) || 0.45));
+  c.audio.sustain = Math.max(0, Math.min(1, Number(c.audio.sustain)));
+  const hex = /^#[0-9a-f]{6}$/i;
+  const th = c.theme;
+  for (const k of ['background', 'background2', 'ink', 'accent', 'text'] as const) if (!hex.test(String(th[k]))) th[k] = THEME_PRESETS.paper[k];
+  if (!(th.font in FONT_NAMES)) th.font = 'inter';
+  if (!['none', 'voice', 'pitch', 'register'].includes(th.colorBy)) th.colorBy = 'none';
+  th.lineWidth = Math.max(0.3, Math.min(4, Number(th.lineWidth) || 1));
+  th.glow = Math.max(0, Math.min(1, Number(th.glow) || 0));
+  th.gradient = Boolean(th.gradient);
+  th.grid = Boolean(th.grid);
+  th.hud = th.hud !== false;
+  th.labels = th.labels !== false;
+  // Older projects stored the melody colour on video.
+  const legacy = (partial as { video?: { melodyColor?: string } }).video?.melodyColor;
+  if (legacy && hex.test(legacy) && !(partial as { theme?: unknown }).theme) th.accent = legacy;
   const waves: Wave[] = ['sine', 'triangle', 'sawtooth', 'square'];
   if (!waves.includes(c.audio.wave)) c.audio.wave = 'sine';
   if (!waves.includes(c.melody.wave)) c.melody.wave = 'triangle';
@@ -239,4 +268,12 @@ export const AMBIENT_PRESET: DeepPartial<ChordDriftConfig> = {
   audio: { wave: 'triangle', reverb: 0.8, detuneCents: 7, lowpass: 3200, swell: 'breath', swellDepth: 0.3 },
   melody: { density: 0.15, glide: 0.3, level: 0.4, wave: 'sine', register: 'top' },
   rhythm: { chords: '' },
+};
+
+/** "Pluck" button: re-struck chords with a quick decay, short glides, a rhythm that shows it off. */
+export const PLUCK_PRESET: DeepPartial<ChordDriftConfig> = {
+  timing: { glide: 0.14, stagger: 0.02 },
+  motion: { transition: 'glide' },
+  audio: { envelope: 'pluck', attack: 0.006, decay: 0.38, sustain: 0.12, wave: 'triangle', reverb: 0.3, lowpass: 6500, swell: 'off' },
+  rhythm: { tempo: 104, chords: 'q. q. q' },
 };

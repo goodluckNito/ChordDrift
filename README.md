@@ -80,6 +80,16 @@ For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half
 
 Line thickness and dot size follow the level over time, in the video as well. **Ambient preset** sets release-and-swell-in changes, long holds, a soft triangle tone, deep reverb with a longer tail, and gentle breathing. **Default sound** puts timing and sound back.
 
+**Articulation.** *Sustained* (default) holds each chord. *Pluck* re-strikes every chord change: a fast attack, then a decay to a low sustain level, so quick rhythms read as distinct hits. Attack, decay and sustain are adjustable, and the lines show each strike. **Pluck** sets it up with short glides and a tresillo rhythm.
+
+**Themes.** Presets: Paper, Sepia, Midnight, Neon, Blueprint, Terminal, Chromatic and Sunset. You can also choose your own:
+- **Colours:** background (optionally a gradient), lines, melody and text.
+- **Font:** seven to choose from, loaded only when picked.
+- **Line colouring:** one colour, per voice, per note (around the circle of fifths) or by height.
+- **Extras:** line width, glow, an octave grid with note names, and switches for the Hz labels and HUD.
+
+Themes are saved in projects and share links and used in video exports. **Reset all settings** returns everything to defaults but keeps the seed.
+
 **Titles.** The header, episode number and name are empty by default, and only what you fill in is drawn. If you set only a name, it takes the header's place.
 
 **Projects.** Save to the browser's project list, export or import `.chorddrift.json` files, or copy a share link: the URL holds the full config, so a link always reopens the exact piece.

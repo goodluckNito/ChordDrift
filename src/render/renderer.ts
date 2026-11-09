@@ -1,6 +1,9 @@
-import { chordIndexAt, chordLabelAt, frequencyStats, layerAt, melodyAt, pitchAt, smootherstep, soundingPitches, swellAt } from '../engine/motion';
+import type { ChordDriftConfig } from '../engine/config';
+import { chordIndexAt, chordLabelAt, frequencyStats, hasDynamics, layerAt, levelAt, melodyAt, pitchAt, smootherstep, soundingPitches } from '../engine/motion';
 import type { Score } from '../engine/score';
-import { midiToHz } from '../engine/theory';
+import type { ColorBy } from '../engine/themes';
+import { midiToHz, mod12 } from '../engine/theory';
+import { fontStack } from './fonts';
 
 /**
  * Pitch-versus-time plot with a moving camera. Everything is a pure function of
@@ -11,13 +14,56 @@ import { midiToHz } from '../engine/theory';
  * with the canvas size.
  */
 
-export const THEME = {
-  background: '#fafbf9',
-  ink: '#0b0b0b',
-  text: '#1a1a1a',
-  muted: '#3a3a3a',
-  font: "Inter, 'Helvetica Neue', Helvetica, Arial, 'Liberation Sans', sans-serif",
+/** Resolved drawing style for a frame, from the config's theme. */
+interface Style {
+  ink: string;
+  accent: string;
+  text: string;
+  muted: string;
+  font: string;
+  lw: number;
+  colorBy: ColorBy;
+  glow: number;
+  dark: boolean;
+}
+
+function rgbOf(hex: string): [number, number, number] {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+const luminance = (hex: string) => {
+  const [r, g, b] = rgbOf(hex);
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 };
+const withAlpha = (hex: string, a: number) => `rgba(${rgbOf(hex).join(',')},${a})`;
+
+function styleOf(cfg: ChordDriftConfig): Style {
+  const th = cfg.theme;
+  return {
+    ink: th.ink,
+    accent: th.accent,
+    text: th.text,
+    muted: withAlpha(th.text, 0.78),
+    font: fontStack(th.font),
+    lw: th.lineWidth,
+    colorBy: th.colorBy,
+    glow: th.glow,
+    dark: luminance(th.background) < 0.45,
+  };
+}
+
+/** The colour behind everything (for the page around the canvas). */
+export function themeBackground(cfg: ChordDriftConfig): string {
+  return cfg.theme.background;
+}
+
+const hsl = (h: number, dark: boolean) => `hsl(${((h % 360) + 360) % 360} 72% ${dark ? 66 : 44}%)`;
+/** A hue per pitch class, ordered around the circle of fifths so related notes have related colours. */
+const pitchColor = (p: number, st: Style) => hsl(mod12(Math.round(p) * 7) * 30, st.dark);
+/** A hue per voice: bass violet up to top red. */
+const voiceColor = (v: number, V: number, st: Style) => hsl(270 - (270 * v) / Math.max(1, V - 1), st.dark);
+/** Register colour at a height fraction 0 (bottom) … 1 (top). */
+const registerColor = (f: number, st: Style) => hsl(260 - 250 * Math.max(0, Math.min(1, f)), st.dark);
 
 const LAYOUT = {
   titleY: 0.092,
@@ -115,7 +161,7 @@ function firstEndingAfter<T>(items: T[], t: number, start: (x: T) => number, dur
 }
 
 function traceVoice(
-  ctx: CanvasRenderingContext2D,
+  ctx: CanvasPath,
   score: Score,
   v: number,
   tFrom: number,
@@ -148,7 +194,7 @@ interface RibbonPoint {
 }
 
 /** Add a variable-width stroke to the current path (filled later, so overlaps merge). */
-function ribbon(ctx: CanvasRenderingContext2D, pts: RibbonPoint[]) {
+function ribbon(ctx: CanvasPath, pts: RibbonPoint[]) {
   const n = pts.length;
   if (n < 2) return;
   const top: [number, number][] = [];
@@ -216,25 +262,22 @@ function samplePath(
  * the arrival keep their glides.
  */
 function traceCrossfades(
-  ctx: CanvasRenderingContext2D,
   score: Score,
   tFrom: number,
   tTo: number,
   xOf: (t: number) => number,
   yOf: (p: number) => number,
   u: number,
+  paint: Painter,
 ) {
   const chords = score.chords;
   const V = score.config.voices;
-  const half = 1.6 * u;
-  const dyn = score.config.audio.swell !== 'off';
-  ctx.fillStyle = THEME.ink;
-  ctx.beginPath();
+  const half = 1.6 * u * paint.style.lw;
   // Before the bloom everything is the opening unison.
   if (chords.length === 0 || tFrom < chords[0].t) {
     const end = Math.min(tTo, chords[0]?.t ?? tTo);
     if (end > tFrom) {
-      for (let v = 0; v < V; v++) ribbon(ctx, samplePath(score, v, tFrom, end, xOf, yOf, 8 * u, () => half));
+      for (let v = 0; v < V; v++) ribbon(paint.fill(v, score.startNote), samplePath(score, v, tFrom, end, xOf, yOf, 8 * u, () => half));
     }
   }
   const first = Math.max(0, chordIndexAt(score, tFrom) - 1);
@@ -254,19 +297,122 @@ function traceCrossfades(
     if (b <= a) continue;
     const glides = k === 0 || (last && b > score.timeline.arrivalStart);
     for (let v = 0; v < V; v++) {
-      const level = (t: number) => {
-        const g = layerAt(score, L, v, t).g;
-        return half * g * (dyn ? 0.3 + 0.7 * swellAt(score, v, t) : 1);
-      };
+      const level = (t: number) => half * layerAt(score, L, v, t).g * (0.3 + 0.7 * levelAt(score, v, t));
       const pitch = glides ? (t: number) => layerAt(score, L, v, t).p : () => c.notes[v];
-      ribbon(ctx, samplePath(score, v, a, b, xOf, yOf, glides ? 3 * u : 5 * u, level, pitch));
+      ribbon(paint.fill(v, c.notes[v]), samplePath(score, v, a, b, xOf, yOf, glides ? 3 * u : 5 * u, level, pitch));
     }
   }
-  ctx.fill();
+}
+
+/**
+ * Collects paths by colour so each colour is drawn once (cheap), then paints
+ * them with the theme's glow. Strokes are plain lines; fills are ribbons.
+ */
+class Painter {
+  private strokes = new Map<string | CanvasGradient, Path2D>();
+  private fills = new Map<string | CanvasGradient, Path2D>();
+  private register: CanvasGradient | null = null;
+
+  constructor(
+    private ctx: CanvasRenderingContext2D,
+    readonly style: Style,
+    private V: number,
+    private yTop: number,
+    private yBottom: number,
+  ) {}
+
+  /** Colour for voice v at pitch p under the theme's colouring rule. */
+  colorFor(v: number, p: number): string | CanvasGradient {
+    const st = this.style;
+    switch (st.colorBy) {
+      case 'voice':
+        return voiceColor(v, this.V, st);
+      case 'pitch':
+        return pitchColor(p, st);
+      case 'register':
+        if (!this.register) {
+          const g = this.ctx.createLinearGradient(0, this.yBottom, 0, this.yTop);
+          for (let i = 0; i <= 6; i++) g.addColorStop(i / 6, registerColor(i / 6, st));
+          this.register = g;
+        }
+        return this.register;
+      default:
+        return st.ink;
+    }
+  }
+
+  /** Solid colour for a dot at height y (gradients can't colour single dots meaningfully). */
+  dotColor(v: number, p: number, y: number): string {
+    const c = this.colorFor(v, p);
+    if (typeof c === 'string') return c;
+    return registerColor((this.yBottom - y) / (this.yBottom - this.yTop), this.style);
+  }
+
+  stroke(v: number, p: number, color = this.colorFor(v, p)): Path2D {
+    let path = this.strokes.get(color);
+    if (!path) this.strokes.set(color, (path = new Path2D()));
+    return path;
+  }
+
+  fill(v: number, p: number, color = this.colorFor(v, p)): Path2D {
+    let path = this.fills.get(color);
+    if (!path) this.fills.set(color, (path = new Path2D()));
+    return path;
+  }
+
+  paint(lineWidth: number) {
+    const ctx = this.ctx;
+    const glow = this.style.glow;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (glow > 0) {
+      // Glow: wide, faint copies underneath.
+      for (const [width, alpha] of [
+        [lineWidth * 6, 0.07],
+        [lineWidth * 3, 0.16],
+      ] as const) {
+        ctx.globalAlpha = alpha * glow;
+        ctx.lineWidth = width;
+        for (const [color, path] of [...this.strokes, ...this.fills]) {
+          ctx.strokeStyle = color;
+          ctx.stroke(path);
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.lineWidth = lineWidth;
+    for (const [color, path] of this.strokes) {
+      ctx.strokeStyle = color;
+      ctx.stroke(path);
+    }
+    for (const [color, path] of this.fills) {
+      ctx.fillStyle = color;
+      ctx.fill(path);
+    }
+    this.strokes.clear();
+    this.fills.clear();
+  }
+}
+
+/** Split a voice's path in [a, b] into held stretches and glides (for pitch colouring). */
+function voiceSegments(score: Score, v: number, a: number, b: number): { a: number; b: number; p0: number; p1: number }[] {
+  const out: { a: number; b: number; p0: number; p1: number }[] = [];
+  const moves = score.moves[v];
+  let t = a;
+  for (let i = firstEndingAfter(moves, a, (m) => m.t0, (m) => m.d); i < moves.length && moves[i].t0 < b; i++) {
+    const m = moves[i];
+    const s = Math.max(m.t0, a);
+    const e = Math.min(m.t0 + m.d, b);
+    if (s > t) out.push({ a: t, b: s, p0: pitchAt(score, v, t), p1: pitchAt(score, v, t) });
+    out.push({ a: s, b: e, p0: m.p0, p1: m.p1 });
+    t = e;
+  }
+  if (b > t) out.push({ a: t, b, p0: pitchAt(score, v, t), p1: pitchAt(score, v, t) });
+  return out;
 }
 
 function traceMelody(
-  ctx: CanvasRenderingContext2D,
+  ctx: CanvasPath,
   score: Score,
   tFrom: number,
   tTo: number,
@@ -316,9 +462,17 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const tl = score.timeline;
   const u = H / 1920; // type scale unit
 
+  const st = styleOf(cfg);
+  const th = cfg.theme;
+
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = THEME.background;
+  if (th.gradient) {
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, th.background);
+    bg.addColorStop(1, th.background2);
+    ctx.fillStyle = bg;
+  } else ctx.fillStyle = th.background;
   ctx.fillRect(0, 0, W, H);
 
   // ---- Camera ------------------------------------------------------------
@@ -354,42 +508,70 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   ctx.beginPath();
   ctx.rect(0, LAYOUT.clipTop * H, W, (LAYOUT.clipBottom - LAYOUT.clipTop) * H);
   ctx.clip();
-  ctx.strokeStyle = THEME.ink;
-  ctx.lineWidth = 3.2 * u;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+
+  if (th.grid) {
+    // Octave lines at every C in view, with note names.
+    ctx.strokeStyle = withAlpha(th.text, 0.14);
+    ctx.fillStyle = withAlpha(th.text, 0.45);
+    ctx.lineWidth = Math.max(1, 1.2 * u);
+    ctx.font = `400 ${15 * u}px ${st.font}`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    const lo = Math.min(loP, hiP);
+    const hi = Math.max(loP, hiP);
+    for (let n = Math.ceil(lo / 12) * 12; n <= hi; n += 12) {
+      const y = Math.round(yOf(n)) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(W, y);
+      ctx.stroke();
+      ctx.fillText(`C${n / 12 - 1}`, 12 * u, y - 3 * u);
+    }
+  }
+
+  const painter = new Painter(ctx, st, V, yHi, yLo);
+  const baseWidth = 3.2 * u * st.lw;
   if (tTo > tFrom) {
     // Lines are drawn from the score's glides: flat stretches are single
     // segments and only the curves are sampled, which keeps frames cheap on phones.
     const curveStep = 2.5 * u;
     if (cfg.motion.transition === 'swell') {
-      traceCrossfades(ctx, score, tFrom, tTo, xOf, yOf, u);
-    } else if (cfg.audio.swell === 'off' || z >= 1) {
-      ctx.beginPath();
-      for (let v = 0; v < V; v++) traceVoice(ctx, score, v, tFrom, tTo, xOf, yOf, curveStep);
-      ctx.stroke();
-    } else {
-      // With swells on, line thickness follows each voice's level over time —
-      // the history reads like crescendo/decrescendo hairpins.
-      ctx.fillStyle = THEME.ink;
-      ctx.beginPath();
-      const half = 1.6 * u;
+      traceCrossfades(score, tFrom, tTo, xOf, yOf, u, painter);
+    } else if (!hasDynamics(score) || z >= 1) {
       for (let v = 0; v < V; v++) {
-        const pts = samplePath(score, v, tFrom, tTo, xOf, yOf, 3 * u, (t) => half * (0.2 + 0.8 * swellAt(score, v, t)));
-        ribbon(ctx, pts);
+        if (st.colorBy === 'pitch') {
+          // Each held note in its own colour; glides blend between the two.
+          for (const seg of voiceSegments(score, v, tFrom, tTo)) {
+            let color: string | CanvasGradient = pitchColor(seg.p0, st);
+            if (seg.p0 !== seg.p1) {
+              const g = ctx.createLinearGradient(xOf(seg.a), 0, Math.max(xOf(seg.b), xOf(seg.a) + 1), 0);
+              g.addColorStop(0, pitchColor(seg.p0, st));
+              g.addColorStop(1, pitchColor(seg.p1, st));
+              color = g;
+            }
+            traceVoice(painter.stroke(v, seg.p0, color), score, v, seg.a, seg.b, xOf, yOf, curveStep);
+          }
+        } else traceVoice(painter.stroke(v, pitchAt(score, v, tTo)), score, v, tFrom, tTo, xOf, yOf, curveStep);
       }
-      ctx.fill();
+    } else {
+      // With swells or plucks, line thickness follows each voice's level over
+      // time — the history reads like hairpins, plucks like little strikes.
+      const half = 1.6 * u * st.lw;
+      for (let v = 0; v < V; v++) {
+        const segs = st.colorBy === 'pitch' ? voiceSegments(score, v, tFrom, tTo) : [{ a: tFrom, b: tTo, p0: pitchAt(score, v, tTo), p1: 0 }];
+        for (const seg of segs) {
+          const pts = samplePath(score, v, seg.a, seg.b, xOf, yOf, 3 * u, (t) => half * (0.2 + 0.8 * levelAt(score, v, t)));
+          ribbon(painter.fill(v, seg.p0), pts);
+        }
+      }
     }
+    painter.paint(baseWidth);
 
     // Melody: a separate line in the accent colour, broken during rests.
     if (score.melody.length) {
-      ctx.strokeStyle = cfg.video.melodyColor;
-      ctx.lineWidth = 3.6 * u;
-
-      ctx.beginPath();
-      traceMelody(ctx, score, tFrom, tTo, xOf, yOf, curveStep);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
+      const path = painter.stroke(-1, 0, st.accent);
+      traceMelody(path, score, tFrom, tTo, xOf, yOf, curveStep);
+      painter.paint(baseWidth * 1.12);
     }
   }
 
@@ -397,8 +579,8 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const pitches = soundingPitches(score, tNow);
   const freqs = soundingPitches(score, t).map(midiToHz);
   const dotX = xOf(tNow);
-  ctx.fillStyle = THEME.ink;
-  const swelling = cfg.audio.swell !== 'off' && z < 1;
+  const dynamic = hasDynamics(score) && z < 1;
+  const dotR = 7 * u * Math.max(0.7, Math.min(1.8, st.lw));
   if (cfg.motion.transition === 'swell') {
     // A dot for each sounding layer, sized and faded by its level.
     for (const L of [0, 1] as const) {
@@ -406,11 +588,13 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       if (g < 0.04) continue;
       const seen = new Set<number>();
       for (let v = 0; v < V; v++) {
-        const y = Math.round(yOf(layerAt(score, L, v, tNow).p) * 2) / 2;
+        const p = layerAt(score, L, v, tNow).p;
+        const y = Math.round(yOf(p) * 2) / 2;
         if (seen.has(y)) continue;
         seen.add(y);
+        ctx.fillStyle = painter.dotColor(v, p, y);
         ctx.beginPath();
-        ctx.arc(dotX, y, 7 * u * g, 0, Math.PI * 2);
+        ctx.arc(dotX, y, dotR * g, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -420,7 +604,8 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       const y = Math.round(yOf(p) * 2) / 2;
       if (dotYs.has(y)) return;
       dotYs.add(y);
-      const r = swelling ? 7 * u * (0.55 + 0.45 * swellAt(score, v, tNow)) : 7 * u;
+      const r = dynamic ? dotR * (0.55 + 0.45 * levelAt(score, v, tNow)) : dotR;
+      ctx.fillStyle = painter.dotColor(v, p, y);
       ctx.beginPath();
       ctx.arc(dotX, y, r, 0, Math.PI * 2);
       ctx.fill();
@@ -429,15 +614,15 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const lead = score.melody.length ? melodyAt(score, tNow) : null;
   const leadOn = lead && lead.g > 0.05 && tNow < tl.arrivalStart;
   if (leadOn) {
-    ctx.fillStyle = cfg.video.melodyColor;
+    ctx.fillStyle = st.accent;
     ctx.beginPath();
-    ctx.arc(dotX, yOf(lead!.p), 7 * u, 0, Math.PI * 2);
+    ctx.arc(dotX, yOf(lead!.p), dotR, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
 
   const labelAlpha = 1 - smootherstep(z * 2);
-  if (labelAlpha > 0.001) {
+  if (labelAlpha > 0.001 && th.labels) {
     // One label per distinct value (a unison shows a single label).
     const byText = new Map<string, number>();
     for (const p of pitches) {
@@ -445,13 +630,13 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       const y = yOf(p);
       byText.set(text, byText.has(text) ? (byText.get(text)! + y) / 2 : y);
     }
-    const labels = [...byText].map(([text, y]) => ({ text, y, ly: y, color: THEME.text }));
+    const labels = [...byText].map(([text, y]) => ({ text, y, ly: y, color: st.text }));
     if (leadOn) {
       const text = `${midiToHz(lead!.p).toFixed(2)} Hz`;
       const y = yOf(lead!.p);
       const same = labels.find((l) => l.text === text);
-      if (same) same.color = cfg.video.melodyColor;
-      else labels.push({ text, y, ly: y, color: cfg.video.melodyColor });
+      if (same) same.color = st.accent;
+      else labels.push({ text, y, ly: y, color: st.accent });
     }
     labels.sort((a, b) => a.y - b.y);
     // Min-gap pass: push labels apart vertically; dots stay where they are.
@@ -463,7 +648,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     for (let i = labels.length - 2; i >= 0; i--) labels[i].ly = Math.min(labels[i].ly, labels[i + 1].ly - gap);
 
     ctx.globalAlpha = labelAlpha;
-    ctx.font = `400 ${19 * u}px ${THEME.font}`;
+    ctx.font = `400 ${19 * u}px ${st.font}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     for (const l of labels) {
@@ -482,20 +667,20 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const big = header || subtitle;
   const small = header ? subtitle : '';
   if (big) {
-    ctx.fillStyle = THEME.ink;
+    ctx.fillStyle = st.text;
     let titleSize = 64 * u;
-    ctx.font = `700 ${titleSize}px ${THEME.font}`;
+    ctx.font = `700 ${titleSize}px ${st.font}`;
     const maxTitle = W * 0.86;
     const tw = ctx.measureText(big).width;
     if (tw > maxTitle) {
       titleSize *= maxTitle / tw;
-      ctx.font = `700 ${titleSize}px ${THEME.font}`;
+      ctx.font = `700 ${titleSize}px ${st.font}`;
     }
     ctx.fillText(big, W / 2, LAYOUT.titleY * H);
   }
   if (small) {
-    ctx.fillStyle = THEME.muted;
-    ctx.font = `500 ${29 * u}px ${THEME.font}`;
+    ctx.fillStyle = st.muted;
+    ctx.font = `500 ${29 * u}px ${st.font}`;
     ctx.fillText(small, W / 2, LAYOUT.subtitleY * H);
   }
 
@@ -503,8 +688,12 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const frame = opts.frame ?? Math.round(t * cfg.video.fps);
   const { sum, spread } = frequencyStats(freqs);
   const hudSize = 19 * u;
-  ctx.font = `400 ${hudSize}px ${THEME.font}`;
-  ctx.fillStyle = THEME.text;
+  if (!th.hud) {
+    ctx.restore();
+    return;
+  }
+  ctx.font = `400 ${hudSize}px ${st.font}`;
+  ctx.fillStyle = st.text;
   ctx.textBaseline = 'middle';
   const rowY = (i: number) => (LAYOUT.hudTop + LAYOUT.hudLine * i) * H;
   const left: [string, string][] = [
