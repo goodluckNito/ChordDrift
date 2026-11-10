@@ -53,9 +53,11 @@ export function drumTrim(kit: KitId, h: Pick<DrumHit, 'voice' | 'open'>): number
 
 /**
  * Where the drums sit (ungated K-weighted loudness of the drum bus, LUFS-style) at the
- * reference drum level: about 4 LU under a typical chord bed (around −15 LUFS).
+ * reference drum level: about 3.5 LU under a typical chord bed (around −15 LUFS).
  */
-const DRUM_TARGET = -21;
+// (Measured over eight word songs, −21 put the drums 0.6–4.9 LU under the chords, about 2.5 on
+// average; −22 centres them about 3.5 under.)
+const DRUM_TARGET = -22;
 /** The drum level the target corresponds to; the slider scales from here. */
 export const DRUM_REF_LEVEL = 0.65;
 
