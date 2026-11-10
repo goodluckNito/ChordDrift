@@ -23,6 +23,8 @@ export interface ViewStyle {
   /** A distinct colour per voice from the theme's palette (whatever the line colouring). */
   voiceColor: (v: number) => string;
   background: string;
+  /** The theme's lights colour (lit windows, comets). */
+  lights: string;
 }
 
 export interface ViewArea {

@@ -91,7 +91,7 @@ const SHORT: Record<string, string> = {
   enabled: 'on', pattern: 'pa', form: 'f', tempo: 't', chords: 'c', pluck: 'pl', density: 'de', level: 'lv', register: 'rg', glide: 'gl',
   wave: 'w', detuneCents: 'dt', reverb: 'rv', lowpass: 'lp', width: 'wd', height: 'ht', swell: 'sw', swellDepth: 'sd', attack: 'at', decay: 'dc',
   sustain: 'su', warmth: 'wm', bass: 'bs', sub: 'sb', tilt: 'tl', gain: 'gn', envelope: 'ev', transition: 'tr', easing: 'ez', inversion: 'iv',
-  background: 'bg', background2: 'bg2', gradient: 'gr', ink: 'i', accent: 'ac', text: 'tx', font: 'fo', lineWidth: 'lw', colorBy: 'cb',
+  background: 'bg', background2: 'bg2', gradient: 'gr', ink: 'i', accent: 'ac', text: 'tx', lights: 'li', font: 'fo', lineWidth: 'lw', colorBy: 'cb',
   palette: 'pt', colorSeed: 'cs', preset: 'pr', glow: 'gw', grid: 'gd', ripples: 'rp', hud: 'hu', labels: 'lb', kit: 'kt', kick: 'kk',
   snare: 'sr', hat: 'h', crash: 'cr', ride: 'rd', levels: 'lvs', double: 'db', duck: 'dk', depth: 'dh', release: 'rl', view: 'vw', spiral: 'sp',
   zoom: 'z', centerLabel: 'cl', fps: 'fp', hold: 'ho', bloom: 'bl', intro: 'in', arrival: 'ar', outro: 'ou', stagger: 'sg',

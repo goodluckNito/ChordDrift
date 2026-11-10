@@ -31,6 +31,8 @@ export interface Theme {
   accent: string;
   /** Labels, HUD and titles. */
   text: string;
+  /** Lights: lit windows and other glows in the picture views (night city, comets). */
+  lights: string;
   font: FontId;
   /** Line thickness multiplier. */
   lineWidth: number;
@@ -107,6 +109,7 @@ export const PALETTE_LABELS: Record<string, string> = {
 const base: Omit<Theme, 'preset' | 'background' | 'ink' | 'accent' | 'text'> = {
   background2: '#ffffff',
   gradient: false,
+  lights: '#ffbe60',
   font: 'inter',
   lineWidth: 1,
   colorBy: 'none',
@@ -293,6 +296,8 @@ export function randomTheme(r: () => number): Theme {
     ink,
     accent,
     text,
+    // Derived (no extra random draw, so word songs keep every other choice): warm, bright, near the theme's hue.
+    lights: hex((hue + 40) % 360, 90, dark ? 66 : 52),
     font: pick(Object.keys(FONT_NAMES) as FontId[]),
     colorBy,
     palette: pick(named),

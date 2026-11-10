@@ -1527,6 +1527,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       pcColor: (pc) => (st.colorBy === 'none' ? st.ink : pitchColor(pc, st)),
       voiceColor: (v) => voiceColor(v, cfg.voices, st),
       background: th.background,
+      lights: th.lights,
     };
     const area: ViewArea = {
       cx: W / 2,

@@ -200,61 +200,124 @@ function octRange(score: Score) {
   return { o0, o1, floors: o1 - o0 + 1 };
 }
 
-/** A little silhouette inside a lit window: someone's lamp, plant, cat, sofa… (picked per window). */
-function furniture(c: CanvasRenderingContext2D, kind: number, x: number, y: number, w: number, h: number) {
-  c.fillStyle = 'rgba(40,18,8,0.82)';
+/** The rooms behind lit windows, each with its own light. */
+const ROOMS = ['bedroom', 'bathroom', 'office', 'living', 'kitchen'] as const;
+type Room = (typeof ROOMS)[number];
+/** How each room's light differs from the theme's lights colour: [brightness, extra blue]. */
+const ROOM_LIGHT: Record<Room, [number, number]> = { bedroom: [0.72, 0], bathroom: [1, 0.35], office: [0.9, 0.2], living: [0.85, 0], kitchen: [1.05, 0.05] };
+
+/**
+ * Silhouettes of a room inside a lit window (x, y, w, h): a bedroom (bed, nightstand lamp,
+ * picture), a bathroom (tub, shower curtain, mirror), an office (desk, glowing monitor, someone
+ * working), a living room (sofa, TV glow, floor lamp, someone watching) or a kitchen (counter,
+ * cupboards, fridge, pendant lamp). `glow` is the screen colour for monitors and TVs.
+ */
+function drawRoom(c: CanvasRenderingContext2D, room: Room, x: number, y: number, w: number, h: number, t: number, seed: number) {
+  const ink = 'rgba(34,16,8,0.86)';
+  const X = (f: number) => x + f * w;
+  const Y = (f: number) => y + f * h;
+  const flip = seed % 2 === 1; // mirror half the rooms so neighbours differ
+  c.save();
+  if (flip) {
+    c.translate(x * 2 + w, 0);
+    c.scale(-1, 1);
+  }
+  c.fillStyle = ink;
   c.beginPath();
-  switch (kind % 7) {
-    case 0: // floor lamp
-      c.rect(x + w * 0.72, y + h * 0.35, w * 0.05, h * 0.65);
-      c.moveTo(x + w * 0.62, y + h * 0.38);
-      c.lineTo(x + w * 0.87, y + h * 0.38);
-      c.lineTo(x + w * 0.81, y + h * 0.18);
-      c.lineTo(x + w * 0.68, y + h * 0.18);
+  switch (room) {
+    case 'bedroom':
+      c.rect(X(0.08), Y(0.72), w * 0.62, h * 0.18); // bed
+      c.rect(X(0.08), Y(0.55), w * 0.06, h * 0.4); // headboard
+      c.ellipse(X(0.22), Y(0.69), w * 0.08, h * 0.05, 0, 0, Math.PI * 2); // pillow
+      c.rect(X(0.76), Y(0.74), w * 0.14, h * 0.26); // nightstand
+      c.rect(X(0.82), Y(0.56), w * 0.025, h * 0.18); // lamp stem
+      c.rect(X(0.34), Y(0.18), w * 0.24, h * 0.18); // picture frame
+      c.fill();
+      // the lamp shade, lit
+      c.fillStyle = 'rgba(255,240,200,0.9)';
+      c.beginPath();
+      c.moveTo(X(0.76), Y(0.56));
+      c.lineTo(X(0.93), Y(0.56));
+      c.lineTo(X(0.89), Y(0.44));
+      c.lineTo(X(0.8), Y(0.44));
+      c.fill();
       break;
-    case 1: // potted plant
-      c.rect(x + w * 0.18, y + h * 0.72, w * 0.2, h * 0.28);
-      c.ellipse(x + w * 0.22, y + h * 0.55, w * 0.07, h * 0.18, -0.5, 0, Math.PI * 2);
-      c.ellipse(x + w * 0.34, y + h * 0.52, w * 0.07, h * 0.2, 0.5, 0, Math.PI * 2);
-      c.ellipse(x + w * 0.28, y + h * 0.45, w * 0.05, h * 0.2, 0, 0, Math.PI * 2);
+    case 'bathroom':
+      c.roundRect(X(0.1), Y(0.7), w * 0.56, h * 0.18, h * 0.06); // tub
+      c.rect(X(0.14), Y(0.88), w * 0.04, h * 0.08);
+      c.rect(X(0.58), Y(0.88), w * 0.04, h * 0.08);
+      c.rect(X(0.08), Y(0.12), w * 0.6, h * 0.025); // curtain rail
+      c.moveTo(X(0.08), Y(0.14));
+      c.lineTo(X(0.26), Y(0.14));
+      c.quadraticCurveTo(X(0.2), Y(0.45), X(0.24), Y(0.7));
+      c.lineTo(X(0.08), Y(0.7));
+      c.rect(X(0.78), Y(0.62), w * 0.14, h * 0.38); // sink cabinet
+      c.fill();
+      c.fillStyle = 'rgba(220,240,255,0.55)'; // mirror
+      c.fillRect(X(0.77), Y(0.24), w * 0.16, h * 0.26);
       break;
-    case 2: // someone at the window
-      c.arc(x + w * 0.5, y + h * 0.45, Math.min(w, h) * 0.13, 0, Math.PI * 2);
-      c.roundRect(x + w * 0.3, y + h * 0.62, w * 0.4, h * 0.4, w * 0.15);
+    case 'office': {
+      c.rect(X(0.1), Y(0.66), w * 0.75, h * 0.05); // desk
+      c.rect(X(0.14), Y(0.71), w * 0.04, h * 0.29);
+      c.rect(X(0.77), Y(0.71), w * 0.04, h * 0.29);
+      c.rect(X(0.42), Y(0.58), w * 0.04, h * 0.08); // monitor stand
+      c.arc(X(0.62), Y(0.46), Math.min(w, h) * 0.1, 0, Math.PI * 2); // someone working
+      c.roundRect(X(0.5), Y(0.56), w * 0.25, h * 0.3, w * 0.08);
+      c.rect(X(0.06), Y(0.1), w * 0.3, h * 0.03); // shelf
+      c.rect(X(0.08), Y(0.02), w * 0.05, h * 0.08);
+      c.rect(X(0.15), Y(0.04), w * 0.04, h * 0.06);
+      c.fill();
+      // the monitor's glow, flickering a little
+      const f = 0.75 + 0.25 * Math.sin(t * 3.1 + seed);
+      c.fillStyle = `rgba(150,200,255,${0.85 * f})`;
+      c.fillRect(X(0.28), Y(0.38), w * 0.32, h * 0.2);
       break;
-    case 3: // sofa
-      c.roundRect(x + w * 0.1, y + h * 0.66, w * 0.8, h * 0.34, w * 0.05);
-      c.roundRect(x + w * 0.06, y + h * 0.58, w * 0.12, h * 0.42, w * 0.04);
-      c.roundRect(x + w * 0.82, y + h * 0.58, w * 0.12, h * 0.42, w * 0.04);
+    }
+    case 'living': {
+      c.roundRect(X(0.06), Y(0.7), w * 0.5, h * 0.2, h * 0.05); // sofa
+      c.roundRect(X(0.04), Y(0.62), w * 0.08, h * 0.32, h * 0.03);
+      c.roundRect(X(0.5), Y(0.62), w * 0.08, h * 0.32, h * 0.03);
+      c.arc(X(0.3), Y(0.6), Math.min(w, h) * 0.09, 0, Math.PI * 2); // someone watching
+      c.rect(X(0.68), Y(0.78), w * 0.26, h * 0.22); // TV stand
+      c.rect(X(0.92), Y(0.3), w * 0.025, h * 0.6); // floor lamp
+      c.fill();
+      const f = 0.6 + 0.4 * Math.abs(Math.sin(t * 2.3 + seed * 1.7));
+      c.fillStyle = `rgba(140,180,255,${0.9 * f})`; // TV
+      c.fillRect(X(0.66), Y(0.5), w * 0.3, h * 0.24);
+      c.fillStyle = 'rgba(255,235,190,0.85)';
+      c.beginPath();
+      c.arc(X(0.93), Y(0.28), Math.min(w, h) * 0.07, Math.PI, 0);
+      c.fill();
       break;
-    case 4: // cat on the sill
-      c.ellipse(x + w * 0.6, y + h * 0.9, w * 0.17, h * 0.1, 0, 0, Math.PI * 2);
-      c.arc(x + w * 0.42, y + h * 0.8, Math.min(w, h) * 0.08, 0, Math.PI * 2);
-      c.moveTo(x + w * 0.36, y + h * 0.76);
-      c.lineTo(x + w * 0.38, y + h * 0.66);
-      c.lineTo(x + w * 0.42, y + h * 0.74);
-      c.lineTo(x + w * 0.46, y + h * 0.66);
-      c.lineTo(x + w * 0.48, y + h * 0.76);
-      break;
-    case 5: // bookshelf
-      c.rect(x + w * 0.62, y + h * 0.15, w * 0.3, h * 0.85);
-      break;
-    default: // curtains half drawn
-      c.moveTo(x, y);
-      c.lineTo(x + w * 0.22, y);
-      c.quadraticCurveTo(x + w * 0.12, y + h * 0.6, x + w * 0.2, y + h);
-      c.lineTo(x, y + h);
-      c.moveTo(x + w, y);
-      c.lineTo(x + w * 0.8, y);
-      c.quadraticCurveTo(x + w * 0.9, y + h * 0.6, x + w * 0.82, y + h);
-      c.lineTo(x + w, y + h);
+    }
+    default: {
+      // kitchen
+      c.rect(X(0.0), Y(0.68), w * 0.7, h * 0.32); // counter
+      c.rect(X(0.0), Y(0.08), w * 0.7, h * 0.22); // cupboards
+      c.rect(X(0.76), Y(0.2), w * 0.2, h * 0.8); // fridge
+      c.rect(X(0.36), Y(0.0), w * 0.015, h * 0.36); // pendant cord
+      c.rect(X(0.2), Y(0.6), w * 0.08, h * 0.08); // a pot
+      c.fill();
+      c.fillStyle = 'rgba(255,245,215,0.9)';
+      c.beginPath();
+      c.arc(X(0.365), Y(0.4), Math.min(w, h) * 0.07, Math.PI, 0);
+      c.fill();
+      c.fillStyle = 'rgba(255,255,255,0.18)'; // cupboard door lines
+      c.fillRect(X(0.23), Y(0.1), w * 0.01, h * 0.18);
+      c.fillRect(X(0.46), Y(0.1), w * 0.01, h * 0.18);
+    }
   }
-  c.fill();
-  if (kind % 7 === 5) {
-    // books on the shelf
-    c.fillStyle = 'rgba(255,200,120,0.35)';
-    for (let i = 0; i < 3; i++) c.fillRect(x + w * 0.64, y + h * (0.28 + i * 0.24), w * 0.26, h * 0.04);
-  }
+  c.restore();
+}
+
+/** A room's light: the theme's lights colour, a little brighter, dimmer or bluer by room. */
+function roomLight(lights: string, room: Room, b: number): string {
+  const n = /^#[0-9a-f]{6}$/i.test(lights) ? parseInt(lights.slice(1), 16) : 0xffbe60;
+  const [k, blue] = ROOM_LIGHT[room];
+  const r = Math.min(255, ((n >> 16) & 255) * k * (1 - blue * 0.25));
+  const g = Math.min(255, ((n >> 8) & 255) * k * (1 + blue * 0.1));
+  const bl = Math.min(255, (n & 255) * k + blue * 160);
+  return `rgba(${Math.round(r)},${Math.round(g)},${Math.round(bl)},${b})`;
 }
 
 let cityBuf: { canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D } | null = null;
@@ -268,15 +331,20 @@ function cityCanvas(w: number, h: number) {
   return cityBuf;
 }
 
-function drawNeonCity(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea) {
+function drawNeonCity(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, band: ViewArea) {
+  // The skyline may rise above the band the other views use, and the water reach below it, so a
+  // tall frame isn't mostly empty sky.
+  const bh = band.bottom - band.top;
+  const a = { ...band, top: Math.max(band.top - bh * 0.45, band.top * 0.35), bottom: band.bottom + bh * 0.12 };
   const { u } = a;
   const W = a.width;
   const drum = drumPulse(score, t);
   const { o0, floors } = octRange(score);
   const margin = W * 0.05;
   const tw = (W - 2 * margin) / 12;
-  const ground = a.top + (a.bottom - a.top) * 0.7;
-  const floorH = Math.min(tw * 0.95, (ground - a.top - 40 * u) / (floors + 2.6));
+  const ground = a.top + (a.bottom - a.top) * 0.74;
+  // Taller floors in tall frames, so the city fills a portrait screen (and the rooms are bigger).
+  const floorH = Math.min(tw * 1.7, (ground - a.top - 40 * u) / (floors + 2.6));
   const extra = (pc: number) => Math.round(hash(pc, 7) * 2.4);
   const towerX = (pc: number) => margin + pc * tw;
   // Two windows a floor; a note lights one of them (which one is the building's habit).
@@ -284,8 +352,8 @@ function drawNeonCity(ctx: CanvasRenderingContext2D, score: Score, t: number, st
   const winRect = (pc: number, oct: number, s: number) => {
     const x = towerX(pc) + tw * 0.08;
     const w = tw * 0.84;
-    const ww = w * 0.27;
-    const wh = floorH * 0.42;
+    const ww = w * 0.33;
+    const wh = Math.min(floorH * 0.55, ww * 1.5);
     const y = ground - (oct - o0 + 0.5) * floorH;
     return { x: x + w * (s ? 0.6 : 0.13), y: y - wh / 2, w: ww, h: wh };
   };
@@ -296,7 +364,7 @@ function drawNeonCity(ctx: CanvasRenderingContext2D, score: Score, t: number, st
   const { lit, cars } = cityLights(score, t);
   const dark = luminanceOf(st.background) < 0.45;
   const body = dark ? '#0a0c1c' : alpha(st.ink, 0.9);
-  const amber = (b: number) => `rgba(255,190,96,${b})`;
+  const amber = (b: number) => alpha(st.lights, b);
   const H = ctx.canvas.height;
   // The skyline is drawn once into a buffer, then onto the frame and, rippled, into the water.
   const buf = cityCanvas(ctx.canvas.width, H);
@@ -355,10 +423,11 @@ function drawNeonCity(ctx: CanvasRenderingContext2D, score: Score, t: number, st
         c.fillStyle = dark ? 'rgba(70,80,140,0.2)' : alpha(st.background, 0.12);
         c.fillRect(r.x, r.y, r.w, r.h);
         if (on > 0.01) {
+          const room = ROOMS[Math.floor(hash(pc, oct, 3) * ROOMS.length)];
           c.save();
-          c.shadowColor = '#ffb347';
+          c.shadowColor = st.lights;
           c.shadowBlur = 18 * u * on;
-          c.fillStyle = amber(on);
+          c.fillStyle = roomLight(st.lights, room, on);
           c.fillRect(r.x, r.y, r.w, r.h);
           c.restore();
           c.save();
@@ -366,7 +435,7 @@ function drawNeonCity(ctx: CanvasRenderingContext2D, score: Score, t: number, st
           c.beginPath();
           c.rect(r.x, r.y, r.w, r.h);
           c.clip();
-          furniture(c, Math.floor(hash(pc, oct, 3) * 7), r.x, r.y, r.w, r.h);
+          drawRoom(c, room, r.x, r.y, r.w, r.h, t, pc * 7 + oct);
           c.restore();
         }
       }
@@ -436,9 +505,9 @@ function drawNeonCity(ctx: CanvasRenderingContext2D, score: Score, t: number, st
     }
     const h = at(f);
     ctx.save();
-    ctx.shadowColor = '#ffd27a';
+    ctx.shadowColor = st.lights;
     ctx.shadowBlur = 22 * u;
-    ctx.fillStyle = '#fff0cc';
+    ctx.fillStyle = '#fff6e0';
     ctx.beginPath();
     ctx.arc(h.x, h.y, 4.5 * u, 0, Math.PI * 2);
     ctx.fill();
@@ -463,7 +532,7 @@ function drawBlueprintCity(ctx: CanvasRenderingContext2D, score: Score, t: numbe
   const gxOf = (pc: number) => pc * 1.25 - 7;
   const gyOf = (pc: number) => -pc * 0.15;
   const line = st.text;
-  const glowC = st.accent;
+  const glowC = st.lights;
 
   ctx.save();
   // The drawing grid, brightening with the kick.
