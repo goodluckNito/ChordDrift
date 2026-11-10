@@ -1,8 +1,7 @@
 /**
  * Less usual pictures of the music, each moving with the voices and pushed around by the drums:
  *
- *   Murmuration   one flock led by the voices: a ribbon of birds strung through them, stretching,
- *                 bunching and turning with the chord.
+ *   Tornado       a vortex in a bottle; each voice a band of glitter swirling at its pitch's height.
  *
  * Pure functions of (score, t) like every other view (marbling caches its work, but replays it
  * exactly when time jumps backwards).
@@ -24,111 +23,151 @@ function hash(...xs: number[]): number {
 }
 
 // ---------------------------------------------------------------------------
-// Murmuration
+// Tornado in a bottle
 // ---------------------------------------------------------------------------
 
 /**
- * One flock, led by the voices. The leaders sit at their notes' heights, strung across the sky in
- * order from the bass up, and the flock is a ribbon of birds through them: it stretches between the
- * lowest and highest voices, bunches where voices cluster (the same number of birds between each
- * pair of neighbours, so close voices make dense knots), and draws into one ball on a unison. The
- * leaders follow their notes slowly, with weight, and birds trail behind them, so a chord change
- * is a sweeping turn of the whole flock. Kicks make it pulse; snares send a ripple along it.
+ * The toy: a clear bottle with a vortex spinning down its middle, narrow at the bottom and wide at
+ * the top. Every voice is a band of glitter swirling round the funnel at its pitch's height
+ * (seen in perspective: particles at the front bright and large, at the back dim), spinning faster
+ * where the funnel is narrow. So the chord is the column's profile: a wide voicing a tall, gappy
+ * column, a close one a dense knot, a unison a single swirling ring. Bands follow their notes with
+ * weight and glitter trails behind, streaming between heights on a glide. Kicks surge the spin,
+ * snares fling the glitter outward, hats make it sparkle.
  */
-export function drawMurmuration(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false) {
-  const { u } = a;
-  const W = a.width;
-  const top = a.top + 40 * u;
-  const bottom = a.bottom - 60 * u;
+export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false) {
+  const { cx, u } = a;
+  const drum = drumPulse(score, t);
   const { lo, span } = skyRange(score);
   const V = score.config.voices;
-  const drum = drumPulse(score, t);
-  const BIRDS = lite ? 600 : 1500;
-  // A leader's height follows its note with weight: an average of where the note was over the
-  // last couple of seconds, recent moments counting most.
-  const smoothP = (v: number, time: number) => {
+  // The bottle.
+  const H = (a.bottom - a.top) * 0.92;
+  const top = a.top + (a.bottom - a.top - H) / 2;
+  const bot = top + H;
+  const halfW = Math.min(a.width * 0.3, H * 0.28);
+  const tilt = 0.24; // how much we look down on the swirl
+  const inside0 = top + halfW * tilt + 16 * u;
+  const inside1 = bot - halfW * tilt - 10 * u;
+  /** Funnel radius at height fraction f (0 bottom … 1 top). */
+  const funnel = (f: number) => halfW * (0.1 + 0.78 * Math.pow(Math.max(0, f), 0.75));
+  const yOf = (f: number) => inside1 - f * (inside1 - inside0);
+  // A band's height follows its note with weight.
+  const smoothF = (v: number, time: number) => {
     let s = 0;
     let w = 0;
-    for (let i = 0; i < 10; i++) {
-      const age = i * 0.18;
-      const k = Math.exp(-age / 0.55);
+    for (let i = 0; i < 9; i++) {
+      const age = i * 0.15;
+      const k = Math.exp(-age / 0.45);
       s += pitchAt(score, v, time - age) * k;
       w += k;
     }
-    return s / w;
+    return Math.max(0.03, Math.min(0.97, 0.06 + 0.9 * ((s / w - lo) / span)));
   };
-  // How wide the chord is (smoothed too): a wide chord strings the flock across the sky, a unison
-  // draws it into one ball.
-  const width = (time: number) => {
-    let s = 0;
-    for (let i = 0; i < 6; i++) {
-      const ps = Array.from({ length: V }, (_, v) => pitchAt(score, v, time - i * 0.25));
-      s += Math.max(...ps) - Math.min(...ps);
-    }
-    return Math.min(1, s / 6 / 24);
-  };
-  const leader = (v: number, time: number, spread: number) => {
-    const p = smoothP(v, time);
-    const f = V > 1 ? v / (V - 1) - 0.5 : 0;
-    // Strung across the sky from the bass up, the string itself slowly swaying.
-    const x = W / 2 + W * 0.62 * spread * f + W * 0.12 * Math.sin(0.11 * time + f * 2.4) + W * 0.05 * Math.sin(0.23 * time - f * 4);
-    const y = bottom - ((p - lo) / span) * (bottom - top);
-    return { x, y };
-  };
-  // Leaders at a few lags, so trailing birds follow where the flock was.
-  const LAGS = 6;
-  const lagStep = 0.12;
-  const leaders = Array.from({ length: LAGS }, (_, j) => {
-    const spread = width(t - j * lagStep);
-    return Array.from({ length: V }, (_, v) => leader(v, t - j * lagStep, spread));
-  });
-  const pulse = 1 + 0.5 * drum.kick;
-  const rippleAge = drum.snare > 0.02 ? Math.max(0, t - drum.snareAt) : -1;
+  const PER = lite ? 45 : 110;
+  const LAGS = 5;
+  const lagStep = 0.1;
+  const fAt = Array.from({ length: LAGS }, (_, j) => Array.from({ length: V }, (_, v) => smoothF(v, t - j * lagStep)));
+  const spinBoost = 1 + 0.9 * drum.kick;
+  const fling = 1 + 0.6 * drum.snare;
 
   ctx.save();
-  ctx.strokeStyle = alpha(st.ink, 0.7);
-  ctx.lineWidth = Math.max(1, 1.3 * u);
-  ctx.lineCap = 'round';
+  // Back of the glass and the liquid's tint.
+  const liquid = ctx.createLinearGradient(cx - halfW, 0, cx + halfW, 0);
+  liquid.addColorStop(0, alpha(st.ink, 0.05));
+  liquid.addColorStop(0.5, alpha(st.ink, 0.015));
+  liquid.addColorStop(1, alpha(st.ink, 0.06));
+  ctx.fillStyle = liquid;
+  ctx.fillRect(cx - halfW, top + halfW * tilt, halfW * 2, H - 2 * halfW * tilt);
+  ctx.strokeStyle = alpha(st.text, 0.18);
+  ctx.lineWidth = Math.max(1, 1.2 * u);
   ctx.beginPath();
-  for (let b = 0; b < BIRDS; b++) {
-    // A place along the ribbon (between two neighbouring voices) and across it.
-    const along = hash(b, 1) * (V - 1);
-    const i0 = Math.min(V - 2, Math.floor(along));
-    const f = along - i0;
-    const lag = Math.min(LAGS - 1.001, hash(b, 2) * hash(b, 3) * (LAGS - 1));
-    const j0 = Math.floor(lag);
-    const lf = lag - j0;
-    const at = (j: number) => {
-      const L = leaders[j];
-      const p0 = L[Math.max(0, i0)];
-      const p1 = L[Math.min(V - 1, i0 + 1)];
-      return { x: p0.x + (p1.x - p0.x) * f, y: p0.y + (p1.y - p0.y) * f, dx: p1.x - p0.x, dy: p1.y - p0.y };
-    };
-    const A = at(j0);
-    const B = at(j0 + 1);
-    const x0 = A.x + (B.x - A.x) * lf;
-    const y0 = A.y + (B.y - A.y) * lf;
-    // Across the ribbon: thick in the middle, thinning to the edges; waves of density run along it.
-    const len = Math.hypot(A.dx, A.dy);
-    const nx = len > 1e-3 ? -A.dy / len : 0;
-    const ny = len > 1e-3 ? A.dx / len : 1;
-    const g = (hash(b, 4) + hash(b, 5) + hash(b, 6)) / 1.5 - 1;
-    // Along the ribbon too, so knots and the ball have body (and a unison isn't a line).
-    const g2 = (hash(b, 7) + hash(b, 8) + hash(b, 9)) / 1.5 - 1;
-    const wave = Math.sin(along * 2.2 - t * 1.4) * 0.5 + 0.5;
-    const ripple = rippleAge >= 0 ? Math.exp(-(((along / (V - 1)) - rippleAge * 1.5) ** 2) * 30) * drum.snare : 0;
-    const thick = W * (0.03 + 0.03 * wave + 0.04 * ripple) * pulse;
-    // A little wander of each bird, so the flock shimmers.
-    const wx = Math.sin(t * 1.7 + b * 1.3) * 3 * u;
-    const wy = Math.cos(t * 1.3 + b * 2.1) * 3 * u;
-    const x = x0 + nx * g * thick + ny * g2 * thick * 0.8 + wx;
-    const y = y0 + ny * g * thick * 0.75 - nx * g2 * thick * 0.6 + wy;
-    const hd = Math.atan2(A.dy, A.dx) + 0.6 * Math.sin(b + t);
-    const l = 2 * u;
-    ctx.moveTo(x - Math.cos(hd) * l, y - Math.sin(hd) * l);
-    ctx.lineTo(x + Math.cos(hd) * l, y + Math.sin(hd) * l);
+  ctx.ellipse(cx, bot - halfW * tilt, halfW, halfW * tilt, 0, Math.PI, Math.PI * 2);
+  ctx.stroke();
+  // The funnel itself: faint spiralling threads round the core.
+  ctx.strokeStyle = alpha(st.text, 0.12);
+  for (let k = 0; k < 5; k++) {
+    ctx.beginPath();
+    for (let i = 0; i <= 80; i++) {
+      const f = i / 80;
+      const r = funnel(f) * 0.55;
+      const th = f * 14 + t * 2.2 * spinBoost + (k / 5) * Math.PI * 2;
+      const x = cx + Math.cos(th) * r;
+      const y = yOf(f) + Math.sin(th) * r * tilt;
+      if (i) ctx.lineTo(x, y);
+      else ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+  }
+  // Glitter: back half first (behind the funnel), then the front.
+  const draw = (front: boolean) => {
+    for (let v = 0; v < V; v++) {
+      const level = levelAt(score, v, t);
+      if (level < 0.03) continue;
+      ctx.fillStyle = st.voiceColor(v);
+      for (let b = 0; b < PER; b++) {
+        const lag = Math.min(LAGS - 1.001, hash(v, b, 1) * hash(v, b, 2) * (LAGS - 1));
+        const j0 = Math.floor(lag);
+        const lf = lag - j0;
+        // Height within the band: thick in the middle, thinning out.
+        const spread = ((hash(v, b, 3) + hash(v, b, 4) + hash(v, b, 5)) / 1.5 - 1) * 0.035;
+        const f = fAt[j0][v] + (fAt[j0 + 1][v] - fAt[j0][v]) * lf + spread;
+        const rr = funnel(f) * (0.62 + 0.5 * hash(v, b, 6)) * (1 + 0.35 * drum.snare * hash(v, b, 7)) * fling;
+        // Faster near the narrow bottom (angular speed grows as the radius shrinks).
+        const omega = ((1.4 * halfW) / Math.max(rr, halfW * 0.08)) * 0.55 * spinBoost;
+        const th = hash(v, b, 8) * Math.PI * 2 + t * omega;
+        const depth = Math.sin(th);
+        if (depth >= 0 !== front) continue;
+        const x = cx + Math.cos(th) * rr;
+        const y = yOf(f) + depth * rr * tilt;
+        // Glitter catches the light as it turns toward you; hats make it all flash.
+        const sparkle = Math.max(0, Math.cos(th * 3 + b)) ** 8 + drum.hat * hash(v, b, Math.floor(t * 10));
+        const size = (front ? 2.4 : 1.6) * u * (0.7 + 0.6 * hash(v, b, 9)) * (0.6 + 0.4 * level);
+        ctx.globalAlpha = Math.min(1, (front ? 0.85 : 0.35) * (0.5 + 0.5 * level) + 0.6 * sparkle);
+        ctx.fillRect(x - size, y - size * 0.6, size * 2, size * 1.2);
+      }
+    }
+    ctx.globalAlpha = 1;
+  };
+  draw(false);
+  // The vortex core: a thin bright line down the middle where the air is pulled through.
+  const core = ctx.createLinearGradient(0, inside0, 0, inside1);
+  core.addColorStop(0, alpha(st.text, 0.04));
+  core.addColorStop(1, alpha(st.text, 0.3));
+  ctx.strokeStyle = core;
+  ctx.lineWidth = Math.max(1, 2 * u);
+  ctx.beginPath();
+  for (let i = 0; i <= 40; i++) {
+    const f = i / 40;
+    const x = cx + Math.sin(f * 9 - t * 3) * funnel(f) * 0.08;
+    if (i) ctx.lineTo(x, yOf(f));
+    else ctx.moveTo(x, yOf(f));
   }
   ctx.stroke();
+  draw(true);
+  // Front of the glass: edges, cap and highlights.
+  ctx.strokeStyle = alpha(st.text, 0.35);
+  ctx.lineWidth = Math.max(1.5, 2 * u);
+  ctx.beginPath();
+  ctx.moveTo(cx - halfW, top + halfW * tilt);
+  ctx.lineTo(cx - halfW, bot - halfW * tilt);
+  ctx.moveTo(cx + halfW, top + halfW * tilt);
+  ctx.lineTo(cx + halfW, bot - halfW * tilt);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(cx, top + halfW * tilt, halfW, halfW * tilt, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(cx, bot - halfW * tilt, halfW, halfW * tilt, 0, 0, Math.PI);
+  ctx.stroke();
+  const shine = ctx.createLinearGradient(cx - halfW, 0, cx + halfW, 0);
+  shine.addColorStop(0.06, 'rgba(255,255,255,0)');
+  shine.addColorStop(0.12, 'rgba(255,255,255,0.16)');
+  shine.addColorStop(0.18, 'rgba(255,255,255,0)');
+  shine.addColorStop(0.86, 'rgba(255,255,255,0)');
+  shine.addColorStop(0.9, 'rgba(255,255,255,0.08)');
+  shine.addColorStop(0.94, 'rgba(255,255,255,0)');
+  ctx.fillStyle = shine;
+  ctx.fillRect(cx - halfW, top + halfW * tilt, halfW * 2, H - 2 * halfW * tilt);
   ctx.restore();
 }
 
