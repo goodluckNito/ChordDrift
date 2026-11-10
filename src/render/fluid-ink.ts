@@ -198,7 +198,7 @@ function stepSim(s: Sim, score: Score, time: number) {
     const level = levelAt(score, vc, time);
     if (level < 0.03) continue;
     const p = pitchAt(score, vc, time);
-    const x = 1 + ((p - lo) / span) * (nx - 1);
+    const x = 1 + (0.1 + 0.8 * Math.max(0, Math.min(1, (p - lo) / span))) * (nx - 1);
     const y = ny - 3;
     const wob = Math.sin(time * 1.3 + vc * 2.1) * 0.25;
     // The ink's colour is its note's (round the circle of fifths), so each chord pours its own colours.

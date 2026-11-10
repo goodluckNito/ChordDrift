@@ -338,10 +338,11 @@ function stepSim(S: GLState, score: Score, time: number) {
     const level = levelAt(score, v, time);
     if (level < 0.03) continue;
     const p = pitchAt(score, v, time);
-    const x = 0.03 + 0.94 * Math.max(0, Math.min(1, (p - lo) / span));
+    // Kept in from the walls: a nozzle right at the edge pours half its ink out of the water.
+    const x = 0.1 + 0.8 * Math.max(0, Math.min(1, (p - lo) / span));
     const wob = Math.sin(time * 1.3 + v * 2.1) * 0.25;
     vPts.push([x, 0.05]);
-    vVals.push([wob * 30, 260 * level, 0, 0.0009]);
+    vVals.push([wob * 30, 210 * level, 0, 0.0009]);
     const col = noteInk(p);
     dPts.push([x, 0.05]);
     dVals.push([col[0] * 0.011 * level, col[1] * 0.011 * level, col[2] * 0.011 * level, 0.0006]);
@@ -369,7 +370,7 @@ function stepSim(S: GLState, score: Score, time: number) {
 
   const vt = [1 / S.vel.read.w, 1 / S.vel.read.h];
   pass(S, S.progs.curl, S.curlT, { vel: S.vel.read }, { texel: vt });
-  pass(S, S.progs.vorticity, S.vel.write, { vel: S.vel.read, curl: S.curlT }, { texel: vt, strength: 28, dt: DT });
+  pass(S, S.progs.vorticity, S.vel.write, { vel: S.vel.read, curl: S.curlT }, { texel: vt, strength: 14, dt: DT });
   S.vel.swap();
   pass(S, S.progs.divergence, S.div, { vel: S.vel.read }, { texel: vt });
   pass(S, S.progs.scale, S.pressure.write, { src: S.pressure.read }, { k: 0.8 });
@@ -380,7 +381,7 @@ function stepSim(S: GLState, score: Score, time: number) {
   }
   pass(S, S.progs.gradient, S.vel.write, { pressure: S.pressure.read, vel: S.vel.read }, { texel: vt });
   S.vel.swap();
-  pass(S, S.progs.advect, S.vel.write, { vel: S.vel.read, src: S.vel.read }, { texel: vt, velTexel: vt, dt: DT, decay: 0.995, walls: 1 });
+  pass(S, S.progs.advect, S.vel.write, { vel: S.vel.read, src: S.vel.read }, { texel: vt, velTexel: vt, dt: DT, decay: 0.988, walls: 1 });
   S.vel.swap();
   pass(S, S.progs.advect, S.dye.write, { vel: S.vel.read, src: S.dye.read }, { texel: [1 / S.dye.read.w, 1 / S.dye.read.h], dt: DT, decay: Math.exp(-DT / 14), walls: 0, velTexel: vt });
   S.dye.swap();

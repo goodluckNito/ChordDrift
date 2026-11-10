@@ -9,7 +9,7 @@
 import { levelAt, pitchAt } from '../engine/motion';
 import type { Score } from '../engine/score';
 import { mod12 } from '../engine/theory';
-import { alpha, chordAt, drumPulse, skyRange, type ViewArea, type ViewStyle } from './harmony-views';
+import { alpha, chordAt, drumPulse, nameOf, skyRange, type ViewArea, type ViewStyle } from './harmony-views';
 
 /** A stable pseudo-random number in [0, 1) from a few integers. */
 function hash(...xs: number[]): number {
@@ -87,7 +87,12 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
     return { v: best, w: Math.min(1, bw * 1.6) };
   };
   // The funnel bends and sways (more toward the top), and the kick shoves it.
-  const axis = (f: number) => cx + halfW * (0.22 * Math.sin(f * 3.2 + t * 0.6) + 0.1 * Math.sin(f * 7 - t * 1.1)) * f * (1 + 0.6 * drum.kick);
+  // The sway is limited by the room left beside the funnel at that height, so it never leaves the glass.
+  const axis = (f: number) => {
+    const room = Math.max(0, halfW * 0.9 - radiusAt(f));
+    const sway = (0.6 * Math.sin(f * 3.2 + t * 0.6) + 0.3 * Math.sin(f * 7 - t * 1.1)) * (0.4 + 0.6 * f) * (1 + 0.5 * drum.kick);
+    return cx + room * Math.max(-1, Math.min(1, sway));
+  };
   const spin = 1 + 0.8 * drum.kick;
 
   ctx.save();
@@ -133,7 +138,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
         f = Math.max(0.01, Math.min(0.99, bv.f + g * W0 * 1.4 + 0.012 * Math.sin(t * 2 + b)));
         if (bv.amp < 0.03 && hash(b, 11) < 0.7) continue;
       }
-      const rr = radiusAt(f) * (0.55 + 0.5 * Math.sqrt(hash(b, 3))) * (1 + 0.4 * drum.snare * hash(b, 4));
+      const rr = Math.min(halfW * 0.93 - Math.abs(axis(f) - cx), radiusAt(f) * (0.55 + 0.5 * Math.sqrt(hash(b, 3))) * (1 + 0.4 * drum.snare * hash(b, 4)));
       const omega = ((1.2 * halfW) / Math.max(rr, halfW * 0.06)) * 0.5 * spin;
       const th = hash(b, 5) * Math.PI * 2 + t * omega;
       const depth = Math.sin(th);
@@ -142,15 +147,39 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       const y = yOf(f) + depth * rr * tilt;
       const tint = tintAt(f);
       const sparkle = Math.max(0, Math.cos(th * 3 + b)) ** 8 + drum.hat * hash(b, Math.floor(t * 10));
-      const size = (front ? 2.3 : 1.5) * u * (0.7 + 0.6 * hash(b, 6));
+      // Glitter in a voice's band is bigger and brighter; the rest is fine dust.
+      const size = (front ? 2.3 : 1.5) * u * (0.6 + 0.6 * hash(b, 6)) * (0.8 + 0.7 * tint.w);
       ctx.fillStyle = tint.v >= 0 && hash(b, 7) < 0.25 + 0.75 * tint.w ? st.voiceColor(tint.v) : st.ink;
-      ctx.globalAlpha = Math.min(1, (front ? 0.7 : 0.25) + 0.25 * tint.w + 0.6 * sparkle);
+      ctx.globalAlpha = Math.min(1, (front ? 0.45 : 0.15) + 0.5 * tint.w + 0.6 * sparkle);
       ctx.fillRect(x - size, y - size * 0.6, size * 2, size * 1.2);
     }
     ctx.globalAlpha = 1;
   };
   draw(false);
   draw(true);
+  // Markings on the glass, like a measuring cylinder: each voice's note at its height, in its colour,
+  // sliding as the voice moves, so you can see which band is which note.
+  ctx.font = `600 ${13 * a.tu}px ${st.font}`;
+  ctx.textBaseline = 'middle';
+  const now = chordAt(score, t);
+  const placed: number[] = [];
+  for (const b of [...bulges].sort((x, y) => y.amp - x.amp)) {
+    if (b.amp < 0.05) continue;
+    const y = yOf(b.f);
+    if (placed.some((py) => Math.abs(py - y) < 14 * a.tu)) continue; // a note already marked there
+    placed.push(y);
+    const right = placed.length % 2 === 0;
+    const x0 = right ? cx + halfW : cx - halfW;
+    ctx.strokeStyle = st.voiceColor(b.v);
+    ctx.lineWidth = Math.max(1, 2 * u);
+    ctx.beginPath();
+    ctx.moveTo(x0, y);
+    ctx.lineTo(x0 + (right ? -10 : 10) * u, y);
+    ctx.stroke();
+    ctx.fillStyle = st.voiceColor(b.v);
+    ctx.textAlign = right ? 'left' : 'right';
+    ctx.fillText(nameOf(score, mod12(Math.round(pitchAt(score, b.v, t))), now.c), x0 + (right ? 8 : -8) * u, y);
+  }
   // Front of the glass: edges, cap and highlights.
   ctx.strokeStyle = alpha(st.text, 0.35);
   ctx.lineWidth = Math.max(1.5, 2 * u);
