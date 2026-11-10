@@ -97,6 +97,9 @@
             <label title="How strongly chords lean into resolutions: falling fifths, dominants (and sus dominants) resolving, ii–V chains. Works with styles too. 0 = only smoothness and the generator (or style) decide.">Resolution pull <output></output>
               <input data-path="resolution" type="range" min="0" max="1" step="0.05" />
             </label>
+            <label title="Chance of a chromatic passing chord between roots a whole step apart: a diminished 7th stepping up, a dominant 7th stepping down (A → A#dim7 → B, G# → G7 → F#). Not used in written progressions.">Passing chords <output></output>
+              <input data-path="passing" type="range" min="0" max="1" step="0.05" />
+            </label>
             <label>Inversion chance <output></output>
               <input data-path="voicing.inversion" type="range" min="0" max="1" step="0.05" />
             </label>

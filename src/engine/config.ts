@@ -89,6 +89,8 @@ export interface ChordDriftConfig {
   chordCount: [number, number];
   /** 0 = pure random walk; higher = strongly prefer chords that share tones with the last one. */
   smoothness: number;
+  /** 0..1: chance of a chromatic passing chord when the bass moves a whole step (A → A♯dim7 → B). */
+  passing: number;
   /** 0..1: pull toward strong resolutions (falling fifths, dominants and sus dominants resolving, ii–V). */
   resolution: number;
   range: { bass: [number, number]; upper: [number, number] };
@@ -232,6 +234,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   chordCount: [8, 12],
   smoothness: 1,
   resolution: 0.35,
+  passing: 0.25,
   range: { bass: [36, 47], upper: [45, 79] },
   startNote: 'fifth',
   endNote: 'tonic+1oct',
@@ -295,6 +298,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   const c = deepMerge(structuredClone(DEFAULT_CONFIG), partial);
   c.voices = Math.max(2, Math.min(48, Math.round(c.voices)));
   c.driftProbability = Math.max(0, Math.min(1, c.driftProbability));
+  c.passing = Math.max(0, Math.min(1, Number(c.passing ?? 0.25)));
   c.resolution = Math.max(0, Math.min(1, Number(c.resolution ?? 0.35)));
   c.smoothness = Math.max(0, c.smoothness);
   const [lo, hi] = c.chordCount;

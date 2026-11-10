@@ -9,7 +9,7 @@ import { DEGREE_OFFSETS, SCALES, mod12, parseNote, parsePc, pcName, scaleSteps, 
 import { STYLES, type StyleId } from './styles';
 import { parseSongForm, type SongSection } from './song';
 import { parseChop, type ChopPattern } from './chop';
-import { chordName } from './chords';
+import { chordName, romanName } from './chords';
 import { spreadTemplate, voiceChord, voiceLeadingCost, type VoicingRules } from './voicing';
 
 /** One glide of one voice, in MIDI pitch space. */
@@ -168,6 +168,11 @@ class ScoreBuilder {
     endings: ({ text: string; specs: ChordSpec[] | null } | null)[];
   } | null = null;
   private songTonic = 0;
+  /** addChord calls so far (chords from the plan; passing chords are extra). */
+  private step = 0;
+  private passingRng: Rng;
+  /** A written progression: play exactly its chords. */
+  private written = false;
   /** Index into the chord rhythm (collapses don't use a slot of it). */
   private rhythmIndex = 0;
 
@@ -189,6 +194,7 @@ class ScoreBuilder {
     const melodyRhythm = parseRhythm(cfg.melody.rhythm);
     const gridStart = cfg.timing.intro + cfg.timing.bloom;
     const tokens: ProgressionToken[] = parsed.tokens;
+    this.written = tokens.length > 0;
     const lengthRng = stream(seed, 'length');
     const randomCount = randInt(lengthRng, cfg.chordCount[0], cfg.chordCount[1]);
     this.total = cfg.endless ? null : tokens.length ? tokens.length : randomCount;
@@ -273,6 +279,7 @@ class ScoreBuilder {
     this.timeRng = stream(seed, 'timing');
     this.staggerRng = stream(seed, 'stagger');
     this.inversionRng = stream(seed, 'inversion');
+    this.passingRng = stream(seed, 'passing');
     this.current = new Array<number>(V).fill(startNote);
     this.nextChange = cfg.timing.intro;
 
@@ -390,7 +397,8 @@ class ScoreBuilder {
     const { cfg, rules, score } = this;
     const T = cfg.timing;
     const V = cfg.voices;
-    const k = score.chords.length;
+    // Position in the plan (song items, style plans, written tokens): passing chords don't count.
+    const k = this.step++;
     const song = this.song;
     const item = song ? song.items[k] : null;
     const unison = item?.kind === 'unison';
@@ -480,6 +488,56 @@ class ScoreBuilder {
     // Plucked over a strike pattern with free timing, a change waits for the next strike, so it
     // lands on the pulse instead of cutting into a ringing note.
     const t = pluckGrid ? this.nextStrikeAt(this.nextChange) : this.nextChange;
+
+    // Passing chord: when the bass is about to move a whole step, slip the chord on the half step
+    // between into the second half of the current one (A → A♯dim7 → B; G♯m → G7 → F♯m).
+    const before = score.chords[score.chords.length - 1];
+    // (Not in written progressions: those chords are exactly what was asked for.)
+    if (!unison && !reBloom && k > 1 && before && !before.unison && !this.written) {
+      const roll = this.passingRng();
+      const step = mod12(spec.root - before.root);
+      if (roll < cfg.passing && (step === 2 || step === 10)) {
+        const gap = t - before.t;
+        const half = this.durations || song ? Math.floor(gap / score.beat / 2 + 1e-6) * score.beat : gap * 0.5;
+        const at = t - half;
+        if (half >= Math.min(score.beat, 1.0) - 1e-6 && at - before.t >= half - 1e-6) {
+          const up = step === 2;
+          const pass: ChordSpec = {
+            root: mod12(before.root + (up ? 1 : -1)),
+            intervals: up ? [0, 3, 6, 9] : [0, 4, 7, 10],
+            tonic: before.tonic,
+            scale: before.scale,
+            name: '',
+            roman: '',
+            origin: 'passing',
+          };
+          pass.name = chordName(pass, pass.tonic, pass.scale);
+          pass.roman = romanName(pass, pass.tonic);
+          const pnotes = voiceChord(pass, this.current, rules, null);
+          let pspan = 0;
+          // (Release & swell in crossfades chords instead of gliding them; see layerAt.)
+          const glide = cfg.motion.transition !== 'swell';
+          for (let v = 0; v < V && glide; v++) {
+            if (pnotes[v] === this.current[v]) continue;
+            // A voice joins once its own previous glide has finished (moves must not overlap).
+            const last = score.moves[v][score.moves[v].length - 1];
+            const start = Math.max(at, last ? last.t0 + last.d : 0);
+            const d = Math.max(0.05, Math.min(T.glide * 0.6, half * 0.5, t - start - 0.05));
+            if (t - start < 0.15) {
+              pnotes[v] = this.current[v]; // no room: this voice holds through the passing chord
+              continue;
+            }
+            score.moves[v].push({ t0: start, d, p0: this.current[v], p1: pnotes[v] });
+            pspan = Math.max(pspan, start + d - at);
+          }
+          score.chords.push({ ...pass, index: score.chords.length, notes: pnotes, t: at, settled: at + pspan, section: before.section });
+          score.labels.push({ t: at, text: pass.name });
+          this.current = pnotes;
+          // The next chord now leads on from the passing chord.
+          notes = voiceChord(spec, pnotes, rules, this.voicingRng);
+        }
+      }
+    }
     const bloom = k === 0;
     // With a chord rhythm, each chord owns a fixed slot; glides must finish inside it.
     // A collapse takes whole bars (it doesn't use a slot of the chord rhythm), so the grid stays on the bar.
@@ -522,7 +580,7 @@ class ScoreBuilder {
       // Keep the stagger stream in step so switching transition modes doesn't change later randomness.
       for (let v = 0; v < V; v++) this.staggerRng();
     }
-    const chord: ScoreChord = { ...spec, index: k, notes, t, settled: t + span };
+    const chord: ScoreChord = { ...spec, index: score.chords.length, notes, t, settled: t + span };
     if (song && item) {
       chord.section = item.section;
       if (unison) chord.unison = true;

@@ -5,7 +5,7 @@ import { STYLES, StylePlanner, type PlanItem } from './styles';
 import { pick, weighted, type Rng } from './rng';
 import { PARALLEL_SCALES, SCALES, mod12, romanFor, scalePcs, scaleSteps, tonicName } from './theory';
 
-export type ChordOrigin = 'scale' | 'altered' | 'secondary' | 'borrowed' | 'mediant' | 'pivot' | 'modulation' | 'voiceled' | 'free' | 'cadence' | 'written';
+export type ChordOrigin = 'passing' | 'scale' | 'altered' | 'secondary' | 'borrowed' | 'mediant' | 'pivot' | 'modulation' | 'voiceled' | 'free' | 'cadence' | 'written';
 
 export interface ChordSpec extends Chord {
   /** Tonic and scale the chord was heard in (changes after a pivot). */

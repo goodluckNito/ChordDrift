@@ -17,7 +17,7 @@ describe('song form', () => {
 });
 
 describe('song mode', () => {
-  const cfg = (form: string, extra = {}) => resolveConfig({ seed: 11, key: 'C', song: { enabled: true, form }, ...extra });
+  const cfg = (form: string, extra = {}) => resolveConfig({ seed: 11, key: 'C', passing: 0, song: { enabled: true, form }, ...extra });
 
   it('repeats a part with the same chords, transposed when shifted', () => {
     const s = generateScore(cfg('A > B > A > A+2'));

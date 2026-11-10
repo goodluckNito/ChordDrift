@@ -39,7 +39,7 @@ describe('chord rhythm', () => {
     for (const m of s.moves) for (let i = 1; i < m.length; i++) expect(m[i].t0).toBeGreaterThanOrEqual(m[i - 1].t0 + m[i - 1].d - 1e-9);
   });
   it('defaults to random beat-synced lengths (whole, half, quarter); empty is free timing', () => {
-    const s = generateScore({ seed: 2 });
+    const s = generateScore({ seed: 2, passing: 0 });
     const lengths = s.chords.slice(1, -1).map((c, i) => Math.round(((s.chords[i + 2].t - c.t) / s.beat) * 1000) / 1000);
     for (const b of lengths) expect([1, 2, 4]).toContain(b);
     expect(new Set(lengths).size).toBeGreaterThan(1);

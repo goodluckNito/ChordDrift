@@ -88,6 +88,8 @@ For example, `q. e+h` is a Charleston, `q. q. q` a tresillo, and `ht ht ht` half
 
 **Resolution pull.** Key & harmony → *Resolution pull* (default 0.35) leans the generator toward strong resolutions: a dominant (7, 9, 13, or a 7sus4 / 9sus4) resolving down a fifth, falling-fifth chains (ii–V–I), and chords that set up the tonic. It also keeps the tonic's dominant and, after any dominant, its resolution among the candidates. It's exponential, so it holds its own against high smoothness, which otherwise picks whatever moves the voices least. It works with styles too, leaning their generated phrases the same way (a style keeps its own character and cadences). At 0 only smoothness and the generator (or the style) decide.
 
+**Passing chords.** Key & harmony → *Passing chords* (default 0.25) is the chance that two chords whose roots are a whole step apart get a chromatic chord between them, taking the second half of the first chord's length: a diminished 7th when the bass climbs (A → A♯dim7 → B), a dominant 7th when it falls (G♯ → G7 → F♯). Written progressions are left exactly as written.
+
 **Scales and styles.** A style works from your key's tonic. The scale decides whether its phrases are major or minor and colours plain numerals, but the style's own moves (♭VI, ♭II, borrowed and altered chords) step outside the scale when they need to; Occult is always minor.
 
 **Inversion chance.** Key & harmony → *Inversion chance* is per chord: a chord that rolls it puts its 3rd, 5th (or 7th) in the bass instead of its root (C/E, C/G), and the voices are led to it as smoothly as to any other chord, so the bass line moves by step more often instead of leaping. It uses its own random stream, so turning it up changes nothing else about the piece.
