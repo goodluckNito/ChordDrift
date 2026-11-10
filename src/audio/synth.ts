@@ -1,5 +1,6 @@
 import { articulationAt, chopAt, drumHits, duckAt, duckEnvelope, energyAt, layerAt, melodyAt, pitchAt, swellAt } from '../engine/motion';
 import { playHit } from './drums';
+import { drumBusGain, drumTrim } from './mix';
 import type { Wave } from '../engine/config';
 import { stream } from '../engine/rng';
 import type { Score } from '../engine/score';
@@ -204,6 +205,14 @@ const CHUNK = 0.5;
  * code serves a finite piece, an endless one (scheduled just ahead of the
  * playhead), and offline export (all chunks scheduled up front).
  */
+/** For mix tuning (offline renders only): play one part on its own. */
+export type Stem = 'chords' | 'sub' | 'drums' | 'melody';
+let soloStem: Stem | null = null;
+export function setSoloStem(s: Stem | null): void {
+  soloStem = s;
+}
+const muted = (s: Stem) => soloStem !== null && soloStem !== s;
+
 export class VoiceBank {
   private oscs: OscillatorNode[] = [];
   private gains: GainNode[] = [];
@@ -284,12 +293,14 @@ export class VoiceBank {
     if (score.drums) {
       // Drums skip the chords' tone filter but share the limiter and reverb; the bank's bus gates them.
       this.drumBus = ctx.createGain();
-      // Drums sit under the chords (they used to match the whole chord mix, which buried it on small speakers).
-      this.drumBus.gain.value = d.level * 0.55;
+      // Set from the song's own pattern so the drums sit a fixed distance under the chords (see mix.ts).
+      this.drumBus.gain.value = drumBusGain(score);
       const gate = ctx.createGain();
       this.drumBus.connect(gate).connect(master.direct);
       this.drumSend = ctx.createGain();
-      this.drumSend.gain.value = d.reverb * 0.6;
+      // The send taps the hits before the bus, so it follows the bus level (same ratio as before).
+      this.drumSend.gain.value = d.reverb * 1.1 * this.drumBus.gain.value;
+      if (muted('drums')) this.drumBus.gain.value = this.drumSend.gain.value = 0;
       this.drumSend.connect(master.reverbSend);
       this.drumGate = gate;
     }
@@ -305,7 +316,8 @@ export class VoiceBank {
         g.gain.value = 0;
         const pan = ctx.createStereoPanner();
         pan.pan.value = score.pan[v];
-        osc.connect(g).connect(pan).connect(voiceOut);
+        osc.connect(g).connect(pan);
+        if (!muted('chords')) pan.connect(voiceOut);
         osc.start(when);
         this.oscs.push(osc);
         this.gains.push(g);
@@ -315,6 +327,7 @@ export class VoiceBank {
       // Dry (no reverb, no tone filter): reverb on a sub is mud, and it kept the limiter clamped.
       const subBus = ctx.createGain();
       subBus.connect(master.direct);
+      if (muted('sub')) subBus.gain.value = 0;
       this.drySubs.push(subBus);
       let subOut: AudioNode = subBus;
       if (score.chop && score.config.chop.chords) {
@@ -355,7 +368,8 @@ export class VoiceBank {
         this.leadChop.connect(this.bus);
         leadOut = this.leadChop;
       }
-      osc.connect(g).connect(leadOut);
+      if (muted('melody')) osc.connect(g);
+      else osc.connect(g).connect(leadOut);
       osc.start(when);
       this.oscs.push(osc);
       this.lead = { osc, gain: g };
@@ -389,7 +403,8 @@ export class VoiceBank {
     // for the worst case — the unison, all voices on one note — made ordinary chords ~7 dB too quiet.
     // Voices sharing a note now back off by 1/√(how many share it), so unisons don't spike either.
     const baseGain = (0.75 / Math.sqrt(V)) * WAVE_GAIN[cfg.audio.wave];
-    const leadGain = 0.7 * cfg.melody.level * WAVE_GAIN[cfg.melody.wave];
+    // Measured across songs, a lead at level 0.5 sat ~3 LU under the chords; this puts it ~5 under.
+    const leadGain = 0.56 * cfg.melody.level * WAVE_GAIN[cfg.melody.wave];
     const n = Math.round(CHUNK * CONTROL_RATE) + 1;
     const live = !(this.ctx instanceof OfflineAudioContext);
     while (this.scheduledUntil < Math.min(until, this.endAt)) {
@@ -512,7 +527,7 @@ export class VoiceBank {
             const when = this.when + (h.t + rawOff - this.offset);
             if (live && when < this.ctx.currentTime + 0.005) continue;
             const send = cfgD.reverb > 0 && (!cfgD.reverbSnareOnly || h.voice === 'snare') ? this.drumSend : null;
-            playHit(this.ctx, cfgD.kit, h, cfgD.levels[h.voice], this.drumBus, send, when);
+            playHit(this.ctx, cfgD.kit, h, cfgD.levels[h.voice], this.drumBus, send, when, drumTrim(cfgD.kit, h));
           }
         }
       }

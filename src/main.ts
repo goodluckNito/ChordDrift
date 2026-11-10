@@ -2,7 +2,9 @@ import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
 import '@fontsource/inter/700.css';
 import './style.css';
-import { LivePlayer, encodeWav, renderOffline } from './audio/synth';
+import { LivePlayer, encodeWav, renderOffline, setSoloStem, type Stem } from './audio/synth';
+import { playHit } from './audio/drums';
+import type { DrumVoice, KitId } from './engine/drums';
 import {
   AMBIENT_PRESET,
   DARK_PRESET,
@@ -104,6 +106,82 @@ const api = {
     ctx.getImageData(0, 0, 1, 1); // wait for the GPU to finish
     return (performance.now() - t0) / frames;
   },
+  /**
+   * Loudness (LUFS-style: K-weighted, 400 ms blocks, gated) of the loaded piece, or of one part
+   * on its own, over [from, to). For mix tuning.
+   */
+  async loudness(stem: Stem | null = null, from = 0, to = exportDuration): Promise<{ lufs: number; peak: number }> {
+    if (!exportScore) throw new Error('call load() first');
+    setSoloStem(stem);
+    let buf: AudioBuffer;
+    try {
+      buf = await renderOffline(exportScore, to);
+    } finally {
+      setSoloStem(null);
+    }
+    // K-weighting: a high shelf (+4 dB above ~1.5 kHz) and a high-pass at ~38 Hz.
+    const off = new OfflineAudioContext(buf.numberOfChannels, buf.length, buf.sampleRate);
+    const src = off.createBufferSource();
+    src.buffer = buf;
+    const shelf = off.createBiquadFilter();
+    shelf.type = 'highshelf';
+    shelf.frequency.value = 1500;
+    shelf.gain.value = 4;
+    const hp = off.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 38;
+    hp.Q.value = 0.5;
+    src.connect(shelf).connect(hp).connect(off.destination);
+    src.start();
+    const k = await off.startRendering();
+    const sr = k.sampleRate;
+    const block = Math.round(0.4 * sr);
+    const hop = Math.round(0.1 * sr);
+    const start = Math.floor(from * sr);
+    const blocks: number[] = [];
+    let peak = 0;
+    for (let c = 0; c < buf.numberOfChannels; c++) for (const x of buf.getChannelData(c).subarray(start)) peak = Math.max(peak, Math.abs(x));
+    for (let i = start; i + block <= k.length; i += hop) {
+      let ms = 0;
+      for (let c = 0; c < k.numberOfChannels; c++) {
+        const d = k.getChannelData(c);
+        for (let j = i; j < i + block; j++) ms += d[j] * d[j];
+      }
+      blocks.push(ms / block);
+    }
+    const lufsOf = (ms: number) => -0.691 + 10 * Math.log10(ms + 1e-12);
+    const abs = blocks.filter((m) => lufsOf(m) > -70);
+    const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
+    const rel = lufsOf(mean(abs)) - 10;
+    return { lufs: lufsOf(mean(abs.filter((m) => lufsOf(m) > rel))), peak: 20 * Math.log10(peak + 1e-12) };
+  },
+  /** K-weighted energy of one drum hit at full level (for the drum loudness table in audio/mix.ts). */
+  async hitEnergy(kit: KitId, voice: DrumVoice, open = false): Promise<{ energy: number; punch: number }> {
+    const sr = 48000;
+    const off = new OfflineAudioContext(1, sr * 3, sr);
+    const shelf = off.createBiquadFilter();
+    shelf.type = 'highshelf';
+    shelf.frequency.value = 1500;
+    shelf.gain.value = 4;
+    const hp = off.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 38;
+    hp.Q.value = 0.5;
+    shelf.connect(hp).connect(off.destination);
+    // At a typical playing level (driven kits distort less when played softer), normalised back to full scale.
+    const A = 0.7;
+    playHit(off, kit, { t: 0, voice, vel: A, open }, 1, shelf, null, 0.01);
+    const d = (await off.startRendering()).getChannelData(0);
+    let e = 0;
+    let p = 0;
+    const end = Math.round(0.26 * sr);
+    for (let i = 0; i < d.length; i++) {
+      e += d[i] * d[i];
+      if (i < end) p += d[i] * d[i];
+    }
+    // energy: the whole hit (for how loud a pattern adds up); punch: its first 250 ms (how loud one hit sounds).
+    return { energy: e / sr / (A * A), punch: p / sr / 0.25 / (A * A) };
+  },
   async wav(): Promise<string> {
     if (!exportScore) throw new Error('call load() first');
     const bytes = new Uint8Array(encodeWav(await renderOffline(exportScore, exportDuration)));
@@ -136,9 +214,29 @@ const LOOP_SVG = '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="t
 const DICE_SVG =
   '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="15.5" cy="8.5" r="1.5" fill="currentColor"/><circle cx="8.5" cy="15.5" r="1.5" fill="currentColor"/></svg>';
 
-/** Word lists for the 🎲 song: two words make a short, readable link. */
-const WORDS_A = ['velvet', 'hollow', 'amber', 'quiet', 'neon', 'paper', 'glass', 'violet', 'rusted', 'distant', 'midnight', 'salt', 'silver', 'drowned', 'golden', 'faded', 'electric', 'winter', 'secret', 'lunar', 'crimson', 'soft', 'broken', 'tidal', 'feral', 'pale', 'burning', 'empty', 'cobalt', 'static'];
-const WORDS_B = ['harbor', 'cathedral', 'orchard', 'signal', 'meridian', 'lantern', 'canyon', 'chapel', 'garden', 'machine', 'river', 'satellite', 'ember', 'fountain', 'mirror', 'tundra', 'arcade', 'lighthouse', 'reef', 'cloud', 'prayer', 'engine', 'meadow', 'comet', 'hallway', 'motel', 'forest', 'basilica', 'radio', 'tide'];
+/** Word lists for the 🎲 song: two words make a short, readable link. (Adding words never changes an existing link: the link is the words.) */
+const WORDS_A = [
+  'velvet', 'hollow', 'amber', 'quiet', 'neon', 'paper', 'glass', 'violet', 'rusted', 'distant', 'midnight', 'salt',
+  'silver', 'drowned', 'golden', 'faded', 'electric', 'winter', 'secret', 'lunar', 'crimson', 'soft', 'broken', 'tidal',
+  'feral', 'pale', 'burning', 'empty', 'cobalt', 'static', 'ashen', 'autumn', 'bitter', 'blue', 'borrowed', 'bright',
+  'buried', 'candle', 'cedar', 'chrome', 'coastal', 'copper', 'coral', 'cosmic', 'dusty', 'dreaming', 'early', 'emerald',
+  'endless', 'fallen', 'fever', 'floating', 'foggy', 'forgotten', 'frozen', 'gentle', 'ghost', 'gilded', 'hidden', 'honey',
+  'humming', 'indigo', 'iron', 'ivory', 'jade', 'last', 'late', 'lost', 'marble', 'molten', 'mossy', 'northern',
+  'ocean', 'opal', 'orange', 'painted', 'phantom', 'quartz', 'rainy', 'restless', 'rose', 'ruby', 'sacred', 'sapphire',
+  'scarlet', 'shallow', 'silent', 'slow', 'solar', 'southern', 'spectral', 'stray', 'sunken', 'sunlit', 'tender', 'thunder',
+  'twilight', 'velour', 'wandering', 'wild', 'wired', 'woven', 'yellow', 'young',
+];
+const WORDS_B = [
+  'harbor', 'cathedral', 'orchard', 'signal', 'meridian', 'lantern', 'canyon', 'chapel', 'garden', 'machine', 'river', 'satellite',
+  'ember', 'fountain', 'mirror', 'tundra', 'arcade', 'lighthouse', 'reef', 'cloud', 'prayer', 'engine', 'meadow', 'comet',
+  'hallway', 'motel', 'forest', 'basilica', 'radio', 'tide', 'atlas', 'aurora', 'avenue', 'balcony', 'beacon', 'bridge',
+  'carousel', 'cassette', 'cavern', 'circuit', 'citadel', 'compass', 'corridor', 'crater', 'crown', 'delta', 'desert', 'dynamo',
+  'echo', 'eclipse', 'festival', 'field', 'glacier', 'gospel', 'greenhouse', 'grotto', 'highway', 'horizon', 'island', 'jukebox',
+  'kingdom', 'labyrinth', 'lagoon', 'library', 'lullaby', 'mansion', 'marina', 'monastery', 'monsoon', 'moth', 'nebula', 'oasis',
+  'observatory', 'orbit', 'palace', 'parade', 'pavilion', 'pier', 'planetarium', 'prism', 'pylon', 'quarry', 'rooftop', 'ruin',
+  'sanctuary', 'skyline', 'spire', 'station', 'steeple', 'summit', 'swamp', 'temple', 'terminal', 'theater', 'thicket', 'tower',
+  'tram', 'valley', 'vault', 'vineyard', 'volcano', 'waltz', 'waterfall', 'window',
+];
 
 function startApp() {
   let loopReroll = false;
@@ -762,9 +860,26 @@ function startApp() {
     e.preventDefault();
     makeSong($<HTMLInputElement>('#words').value);
   });
+  let recentWords: string[] = [];
+  try {
+    recentWords = (localStorage.getItem('chord-drift.recent-words') ?? '').split(' ').filter(Boolean);
+  } catch {
+    /* ignore */
+  }
   $('#surprise').addEventListener('click', () => {
     const r = () => randomSeed() / 4294967296;
-    const word = (xs: string[]) => xs[Math.floor(r() * xs.length)];
+    // Skip words used in the last few rolls, so the dice doesn't keep landing on the same ones.
+    const word = (xs: string[]) => {
+      const fresh = xs.filter((w) => !recentWords.includes(w));
+      const w = (fresh.length ? fresh : xs)[Math.floor(r() * (fresh.length || xs.length))];
+      recentWords = [...recentWords.slice(-29), w];
+      try {
+        localStorage.setItem('chord-drift.recent-words', recentWords.join(' '));
+      } catch {
+        /* ignore */
+      }
+      return w;
+    };
     makeSong(`${word(WORDS_A)} ${word(WORDS_B)}`);
   });
 

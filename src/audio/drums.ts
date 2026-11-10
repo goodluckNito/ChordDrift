@@ -126,7 +126,8 @@ function metal(ctx: BaseAudioContext, when: number, dur: number, base: number): 
  * hit.rate < 1 plays it slowed (lower, longer: tape stop); hit.rev plays it backwards,
  * ending on its attack at `when`.
  */
-export function playHit(ctx: BaseAudioContext, kitId: KitId, hit: DrumHit, level: number, out: AudioNode, send: AudioNode | null, when: number) {
+/** `trim` scales the finished hit (after any drive), so it changes loudness without changing the sound. */
+export function playHit(ctx: BaseAudioContext, kitId: KitId, hit: DrumHit, level: number, out: AudioNode, send: AudioNode | null, when: number, trim = 1) {
   const kit = KITS[kitId];
   const vel = hit.vel * level;
   if (vel <= 0) return;
@@ -137,6 +138,7 @@ export function playHit(ctx: BaseAudioContext, kitId: KitId, hit: DrumHit, level
   const startOf = (dur: number) => (rev ? when - dur : when);
   const E = (at: number, peak: number, decay: number, attack = 0.001) => env(ctx, rev ? when : at, peak, decay, attack, rev);
   const dest = ctx.createGain();
+  dest.gain.value = trim;
   dest.connect(out);
   if (send) dest.connect(send);
 
