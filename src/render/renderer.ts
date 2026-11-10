@@ -5,7 +5,7 @@ import { PALETTES, type ColorBy, type Theme } from '../engine/themes';
 import { midiToHz, mod12 } from '../engine/theory';
 import { fontStack } from './fonts';
 import { mulberry32 } from '../engine/rng';
-import { drawConstellation, drawFifths, drawTonnetz, type ViewArea, type ViewStyle } from './harmony-views';
+import { drawChladni, drawCompass, drawConstellation, drawFifths, type ViewArea, type ViewStyle } from './harmony-views';
 
 /**
  * Pitch-versus-time plot with a moving camera. Everything is a pure function of
@@ -1456,7 +1456,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   }
 
   const freqs = soundingPitches(score, t).map(midiToHz);
-  const harmonyView = cfg.video.view === 'tonnetz' || cfg.video.view === 'fifths' || cfg.video.view === 'constellation';
+  const harmonyView = ['chladni', 'fifths', 'constellation', 'compass'].includes(cfg.video.view);
   if (harmonyView) {
     const vs: ViewStyle = { ink: st.ink, accent: st.accent, text: th.text, font: st.font, lw: st.lw, pcColor: (pc) => (st.colorBy === 'none' ? st.ink : pitchColor(pc, st)) };
     const area: ViewArea = {
@@ -1466,7 +1466,8 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       u,
       tu,
     };
-    if (cfg.video.view === 'tonnetz') drawTonnetz(ctx, score, t, vs, area);
+    if (cfg.video.view === 'chladni') drawChladni(ctx, score, t, vs, area, lite);
+    else if (cfg.video.view === 'compass') drawCompass(ctx, score, t, vs, area);
     else if (cfg.video.view === 'fifths') drawFifths(ctx, score, t, vs, area);
     else drawConstellation(ctx, score, t, vs, area);
   } else if (cfg.video.view === 'waterfall') drawWaterfall(ctx, score, t, st, lay);

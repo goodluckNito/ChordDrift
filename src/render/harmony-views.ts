@@ -1,8 +1,10 @@
 /**
  * Harmony views: pictures of the chords as structures rather than lines over time.
  *
- *   Tonnetz        the triangular lattice of notes (fifths across, thirds on the diagonals);
- *                  the chord is a shape on it and the progression is a walk through it
+ *   Chladni plate  each voice drives a standing wave on a plate; sand gathers on the nodal
+ *                  lines, and glides melt one pattern into the next
+ *   Compass        the voices as arrows on the circle of fifths, chained tip to tail: where the
+ *                  chain ends is the chord's pull, and its tip leaves a trail
  *   Circle of 5ths every chord change is an arc between roots on the circle of fifths;
  *                  repeated moves thicken into a web of the piece's habits
  *   Constellation  the voiced chord as stars (angle = note, distance = register), joined
@@ -12,7 +14,7 @@
  */
 import { chordIndexAt, levelAt, smootherstep, soundingPitches } from '../engine/motion';
 import type { Score, ScoreChord } from '../engine/score';
-import { mod12, spellPc } from '../engine/theory';
+import { mod12, scaleSteps, spellPc } from '../engine/theory';
 
 export interface ViewStyle {
   ink: string;
@@ -51,183 +53,6 @@ function chordAt(score: Score, t: number): { k: number; c: ScoreChord | null; pr
 
 const pcsOf = (c: ScoreChord) => [...new Set(c.notes.map((n) => mod12(n)))];
 const nameOf = (score: Score, pc: number, c?: ScoreChord | null) => spellPc(pc, c?.tonic ?? score.keyPc, c?.scale ?? score.config.scale);
-
-// ---------------------------------------------------------------------------
-// Tonnetz
-// ---------------------------------------------------------------------------
-
-/** Lattice: (i, j) holds pitch class 7i + 4j; i steps a fifth to the right, j a major third up-right. */
-const latticePc = (i: number, j: number) => mod12(7 * i + 4 * j);
-const latticeXY = (i: number, j: number) => ({ x: i + j / 2, y: (-j * Math.sqrt(3)) / 2 });
-
-interface Placement {
-  nodes: { i: number; j: number; pc: number }[];
-  cx: number;
-  cy: number;
-}
-
-const placementCache = new WeakMap<Score, Placement[]>();
-
-/** Where each chord sits on the lattice: its root near the last chord, its other notes as close to the root as they come. */
-function placements(score: Score, upto: number): Placement[] {
-  let list = placementCache.get(score);
-  if (!list) placementCache.set(score, (list = []));
-  let at = list.length ? { x: list[list.length - 1].cx, y: list[list.length - 1].cy } : latticeXY(0, 0);
-  const nearest = (pc: number, p: { x: number; y: number }) => {
-    let best = { i: 0, j: 0, d: Infinity };
-    const j0 = Math.round((-p.y * 2) / Math.sqrt(3));
-    const i0 = Math.round(p.x - j0 / 2);
-    for (let j = j0 - 4; j <= j0 + 4; j++) {
-      for (let i = i0 - 7; i <= i0 + 7; i++) {
-        if (latticePc(i, j) !== pc) continue;
-        const q = latticeXY(i, j);
-        const d = (q.x - p.x) ** 2 + (q.y - p.y) ** 2;
-        if (d < best.d) best = { i, j, d };
-      }
-    }
-    return best;
-  };
-  for (let k = list.length; k <= upto && k < score.chords.length; k++) {
-    const c = score.chords[k];
-    const root = nearest(mod12(c.root), at);
-    const rootXY = latticeXY(root.i, root.j);
-    const nodes = pcsOf(c).map((pc) => {
-      const n = pc === mod12(c.root) ? root : nearest(pc, rootXY);
-      return { i: n.i, j: n.j, pc };
-    });
-    const cx = nodes.reduce((a, n) => a + latticeXY(n.i, n.j).x, 0) / nodes.length;
-    const cy = nodes.reduce((a, n) => a + latticeXY(n.i, n.j).y, 0) / nodes.length;
-    list.push({ nodes, cx, cy });
-    at = { x: cx, y: cy };
-  }
-  return list;
-}
-
-/** Convex hull (monotone chain) of a few points, for the chord's shape. */
-function hull(pts: { x: number; y: number }[]): { x: number; y: number }[] {
-  const p = [...pts].sort((a, b) => a.x - b.x || a.y - b.y);
-  if (p.length < 3) return p;
-  const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-  const lower: typeof p = [];
-  for (const q of p) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop();
-    lower.push(q);
-  }
-  const upper: typeof p = [];
-  for (const q of [...p].reverse()) {
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop();
-    upper.push(q);
-  }
-  return [...lower.slice(0, -1), ...upper.slice(0, -1)];
-}
-
-export function drawTonnetz(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea) {
-  const { u, tu } = a;
-  const now = chordAt(score, t);
-  const k = Math.max(0, now.k);
-  const places = placements(score, k);
-  const cur = places[k];
-  const prev = k > 0 ? places[k - 1] : null;
-  // Camera: glides from the last chord's centre to this one's during the change.
-  const camX = cur ? (prev ? prev.cx + (cur.cx - prev.cx) * now.x : cur.cx) : 0;
-  const camY = cur ? (prev ? prev.cy + (cur.cy - prev.cy) * now.x : cur.cy) : 0;
-  const s = a.R / 2.6; // node spacing
-  const P = (x: number, y: number) => ({ x: a.cx + (x - camX) * s, y: a.cy + (y - camY) * s });
-  const node = (i: number, j: number) => {
-    const q = latticeXY(i, j);
-    return P(q.x, q.y);
-  };
-
-  ctx.save();
-  // The lattice: faint triangles and every node's name.
-  const span = Math.ceil((Math.max(ctx.canvas.width, ctx.canvas.height) / s) * 0.75) + 2;
-  const jc = Math.round((-camY * 2) / Math.sqrt(3));
-  const ic = Math.round(camX - jc / 2);
-  ctx.strokeStyle = alpha(st.text, 0.12);
-  ctx.lineWidth = Math.max(1, u);
-  ctx.beginPath();
-  for (let j = jc - span; j <= jc + span; j++) {
-    for (let i = ic - span; i <= ic + span; i++) {
-      const p0 = node(i, j);
-      for (const [di, dj] of [
-        [1, 0],
-        [0, 1],
-        [-1, 1],
-      ]) {
-        const p1 = node(i + di, j + dj);
-        ctx.moveTo(p0.x, p0.y);
-        ctx.lineTo(p1.x, p1.y);
-      }
-    }
-  }
-  ctx.stroke();
-  ctx.font = `500 ${15 * tu}px ${st.font}`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = alpha(st.text, 0.4);
-  for (let j = jc - span; j <= jc + span; j++) {
-    for (let i = ic - span; i <= ic + span; i++) {
-      const p = node(i, j);
-      if (p.x < -40 || p.y < -40 || p.x > ctx.canvas.width + 40 || p.y > ctx.canvas.height + 40) continue;
-      ctx.fillText(nameOf(score, latticePc(i, j), now.c), p.x, p.y);
-    }
-  }
-
-  // The walk: chord centres so far, fading into the past.
-  const from = Math.max(0, k - 24);
-  for (let n = from + 1; n <= k; n++) {
-    const p0 = places[n - 1];
-    const p1 = places[n];
-    const end = n === k ? now.x : 1;
-    const q0 = P(p0.cx, p0.cy);
-    const q1 = P(p0.cx + (p1.cx - p0.cx) * end, p0.cy + (p1.cy - p0.cy) * end);
-    ctx.strokeStyle = alpha(st.accent, 0.15 + 0.55 * ((n - from) / (k - from + 1)));
-    ctx.lineWidth = Math.max(1, 2.2 * u * st.lw);
-    ctx.beginPath();
-    ctx.moveTo(q0.x, q0.y);
-    ctx.lineTo(q1.x, q1.y);
-    ctx.stroke();
-  }
-
-  // Chord shapes: the last one fading out, the current one filling in.
-  const shape = (pl: Placement, fill: number, line: number, color: string) => {
-    const pts = hull(pl.nodes.map((n) => node(n.i, n.j)));
-    if (pts.length < 2) return;
-    ctx.beginPath();
-    pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-    ctx.closePath();
-    ctx.fillStyle = alpha(color, fill);
-    ctx.fill();
-    ctx.strokeStyle = alpha(color, line);
-    ctx.lineWidth = Math.max(1, 2.4 * u * st.lw);
-    ctx.lineJoin = 'round';
-    ctx.stroke();
-  };
-  if (prev && now.x < 1) shape(prev, 0.16 * (1 - now.x), 0.7 * (1 - now.x), st.ink);
-  if (cur && now.c && !now.c.unison) shape(cur, 0.18 * now.x, 0.9 * now.x, st.ink);
-
-  // Sounding notes: a dot on each lit node, sized by how many voices play it and how loud.
-  if (cur) {
-    const counts = new Map<number, number>();
-    soundingPitches(score, t).forEach((p, v) => counts.set(mod12(Math.round(p)), (counts.get(mod12(Math.round(p))) ?? 0) + 0.4 + 0.6 * levelAt(score, v, t)));
-    const lit = [...cur.nodes];
-    if (prev && now.x < 1) for (const n of prev.nodes) if (!lit.some((m) => m.pc === n.pc)) lit.push(n);
-    for (const n of lit) {
-      const w = counts.get(n.pc) ?? 0;
-      if (w <= 0) continue;
-      const p = node(n.i, n.j);
-      const r = (7 + 4 * Math.min(3, w)) * u;
-      ctx.fillStyle = st.pcColor(n.pc);
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = alpha(st.text, 0.95);
-      ctx.font = `700 ${15 * tu}px ${st.font}`;
-      ctx.fillText(nameOf(score, n.pc, now.c), p.x, p.y + r + 13 * tu);
-    }
-  }
-  ctx.restore();
-}
 
 // ---------------------------------------------------------------------------
 // Circle of fifths
@@ -450,5 +275,295 @@ export function drawConstellation(ctx: CanvasRenderingContext2D, score: Score, t
   const off = pitches.reduce((m, p) => Math.max(m, Math.abs(p - Math.round(p))), 0);
   const settle = 1 - Math.min(1, off * 5);
   figure(pitches, 0.85, 1, 1, settle * settle);
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Chladni plate
+// ---------------------------------------------------------------------------
+
+/**
+ * Each voice drives the plate in one standing-wave mode,
+ *   cos(nπx)·cos(mπy) + s·cos(mπx)·cos(nπy)   on x, y ∈ [−1, 1],
+ * and sand gathers on the nodal lines, where the summed waves cancel. Register sets the mode's
+ * size (k = √(n² + m²): higher notes, finer patterns), the note sets its angle (n = k·cosθ,
+ * m = k·sinθ) and its symmetry s. Everything is continuous in pitch, so a glide melts one
+ * pattern into the next; a unison is one clean classic figure, and big chords tangle.
+ */
+interface SandBuffer {
+  n: number;
+  canvas: HTMLCanvasElement | OffscreenCanvas;
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+  img: ImageData;
+  /** A fixed grain threshold per pixel, so sand stays put where the pattern holds still. */
+  grain: Float32Array;
+  field: Float32Array;
+}
+let sand: SandBuffer | null = null;
+
+function sandBuffer(n: number): SandBuffer {
+  if (sand && sand.n === n) return sand;
+  const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(n, n) : Object.assign(document.createElement('canvas'), { width: n, height: n });
+  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+  const grain = new Float32Array(n * n);
+  for (let i = 0; i < grain.length; i++) {
+    let h = Math.imul(i + 1, 0x9e3779b1) >>> 0;
+    h = Math.imul(h ^ (h >>> 15), 0x85ebca6b) >>> 0;
+    h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+    grain[i] = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+  sand = { n, canvas, ctx, img: ctx.createImageData(n, n), grain, field: new Float32Array(n * n) };
+  return sand;
+}
+
+/** Any CSS colour as [r, g, b] (theme colours are usually hex; others go through the canvas parser). */
+function toRgb(ctx: CanvasRenderingContext2D, color: string): [number, number, number] {
+  if (/^#[0-9a-f]{6}$/i.test(color)) return rgb(color) as [number, number, number];
+  ctx.save();
+  ctx.fillStyle = color;
+  const c = String(ctx.fillStyle);
+  ctx.restore();
+  if (c.startsWith('#')) return rgb(c) as [number, number, number];
+  const m = c.match(/[\d.]+/g);
+  return m ? [Number(m[0]), Number(m[1]), Number(m[2])] : [128, 128, 128];
+}
+
+export function drawChladni(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false) {
+  const { cx, cy, u } = a;
+  const S = a.R * 1.7; // plate side
+  const N = lite ? 120 : 200;
+  const buf = sandBuffer(N);
+  const { lo, span } = skyRange(score);
+  const pitches = soundingPitches(score, t);
+  // One mode per distinct (rounded to a hundredth) pitch; doubled notes just drive it harder.
+  const modes = new Map<number, { p: number; w: number }>();
+  pitches.forEach((p, v) => {
+    const key = Math.round(p * 100);
+    const m = modes.get(key) ?? { p, w: 0 };
+    m.w += levelAt(score, v, t);
+    modes.set(key, m);
+  });
+  const list = [...modes.values()].filter((m) => m.w > 1e-3);
+  const M = list.length;
+  const Cn = new Float32Array(M * N);
+  const Cm = new Float32Array(M * N);
+  const W = new Float32Array(M);
+  const Sy = new Float32Array(M);
+  let power = 0;
+  list.forEach((m, i) => {
+    const k = 2.2 + 7 * Math.max(0, Math.min(1, (m.p - lo) / span));
+    const theta = (((m.p % 12) + 12) % 12) / 12 * (Math.PI / 2);
+    const n = k * Math.cos(theta);
+    const mm = k * Math.sin(theta);
+    for (let x = 0; x < N; x++) {
+      const X = -1 + (2 * x) / (N - 1);
+      Cn[i * N + x] = Math.cos(n * Math.PI * X);
+      Cm[i * N + x] = Math.cos(mm * Math.PI * X);
+    }
+    W[i] = m.w;
+    // Symmetry: −1 at the ends of the note's turn (so the wrap from B to C, which swaps n and m,
+    // is seamless) and +1 in the middle, where n = m and the − form would cancel to nothing.
+    Sy[i] = -Math.cos(4 * theta);
+    power += m.w * m.w;
+  });
+  const field = buf.field;
+  let sumSq = 0;
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      let f = 0;
+      for (let i = 0; i < M; i++) {
+        const o = i * N;
+        f += W[i] * (Cn[o + x] * Cm[o + y] + Sy[i] * Cm[o + x] * Cn[o + y]);
+      }
+      field[y * N + x] = f;
+      sumSq += f * f;
+    }
+  }
+  const rms = Math.sqrt(sumSq / (N * N)) + 1e-6;
+  // Silence (or a field that cancels out) leaves the plate bare rather than painting it solid.
+  const present = Math.min(1, Math.sqrt(power) * 1.5) * Math.min(1, rms / (0.05 * Math.sqrt(power) + 1e-6));
+  const [r, g, b] = toRgb(ctx, st.ink);
+  const data = buf.img.data;
+  const grain = buf.grain;
+  for (let i = 0; i < N * N; i++) {
+    const v = field[i] / rms;
+    const s = Math.exp(-(v * v) / 0.03); // close to a nodal line → lots of sand
+    const on = s > grain[i] * 0.85 + 0.08 ? 1 : s * 0.25;
+    data[i * 4] = r;
+    data[i * 4 + 1] = g;
+    data[i * 4 + 2] = b;
+    data[i * 4 + 3] = Math.round(255 * on * present * (0.55 + 0.45 * s));
+  }
+  buf.ctx.putImageData(buf.img, 0, 0);
+
+  ctx.save();
+  // The plate: a faint square, its centre mount, and tick marks for the edge.
+  ctx.strokeStyle = alpha(st.text, 0.22);
+  ctx.lineWidth = Math.max(1, 1.2 * u);
+  ctx.strokeRect(cx - S / 2, cy - S / 2, S, S);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(buf.canvas as CanvasImageSource, cx - S / 2, cy - S / 2, S, S);
+  ctx.fillStyle = alpha(st.text, 0.35);
+  ctx.beginPath();
+  ctx.arc(cx, cy, 4 * u, 0, Math.PI * 2);
+  ctx.fill();
+  // Each mode as a dot on the plate's edge (where along it: the note; colour: its pitch class).
+  for (const m of list) {
+    const pos = (((m.p % 12) + 12) % 12) / 12;
+    ctx.fillStyle = st.pcColor(mod12(Math.round(m.p)));
+    ctx.beginPath();
+    ctx.arc(cx - S / 2 + pos * S, cy + S / 2 + 12 * u, 3.5 * u * Math.min(2, 0.6 + m.w * 0.4), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Harmonic compass
+// ---------------------------------------------------------------------------
+
+/**
+ * Every voice is an arrow pointing at its note on the circle of fifths, and the arrows are
+ * chained tip to tail (bass first). Notes close together on the circle (a diatonic chord) line
+ * up into a long reach; spread or symmetric chords (diminished, augmented, whole-tone) curl back
+ * toward the centre. Where the chain ends is the chord's pull: its direction leans toward the
+ * key the notes belong to, its length is how strongly. Glides swing the arrows round (a
+ * semitone is seven steps on the circle), and the tip leaves a trail.
+ */
+export function drawCompass(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea) {
+  const { cx, cy, u, tu } = a;
+  const R = a.R * 0.82;
+  const V = score.config.voices;
+  const L = (R * 1.5) / V;
+  const ang = (p: number) => -Math.PI / 2 + (Math.PI * 2 * 7 * p) / 12;
+  const station = (pc: number, r = R) => ({ x: cx + Math.cos(ang(pc)) * r, y: cy + Math.sin(ang(pc)) * r });
+  const now = chordAt(score, t);
+  const chain = (time: number) => {
+    const ps = soundingPitches(score, time);
+    const pts = [{ x: cx, y: cy }];
+    let x = cx;
+    let y = cy;
+    ps.forEach((p, v) => {
+      const len = L * (0.35 + 0.65 * levelAt(score, v, time));
+      x += Math.cos(ang(p)) * len;
+      y += Math.sin(ang(p)) * len;
+      pts.push({ x, y });
+    });
+    // Arrows are long enough to read; a chain that would leave the dial (a unison) is shrunk to fit.
+    const reach = Math.hypot(x - cx, y - cy);
+    const f = reach > R * 0.92 ? (R * 0.92) / reach : 1;
+    if (f < 1) for (const q of pts) (q.x = cx + (q.x - cx) * f), (q.y = cy + (q.y - cy) * f);
+    return { ps, pts };
+  };
+
+  ctx.save();
+  // The dial: the circle, faint rings, and the twelve notes in fifths order; the key's notes are brighter.
+  const tonic = now.c?.tonic ?? score.keyPc;
+  const inKey = new Set(scaleSteps(now.c?.scale ?? score.config.scale).map((s) => mod12(tonic + s)));
+  ctx.strokeStyle = alpha(st.text, 0.14);
+  ctx.lineWidth = Math.max(1, 1.2 * u);
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.moveTo(cx + R * 0.5, cy);
+  ctx.arc(cx, cy, R * 0.5, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = alpha(st.text, 0.06);
+  ctx.beginPath();
+  for (let pc = 0; pc < 12; pc++) {
+    const p = station(pc);
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(p.x, p.y);
+  }
+  ctx.stroke();
+  ctx.font = `600 ${18 * tu}px ${st.font}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let pc = 0; pc < 12; pc++) {
+    const p = station(pc);
+    const q = station(pc, R + 30 * tu);
+    const k = inKey.has(pc);
+    ctx.fillStyle = alpha(st.text, pc === tonic ? 0.95 : k ? 0.6 : 0.25);
+    ctx.fillText(nameOf(score, pc, now.c), q.x, q.y);
+    ctx.fillStyle = alpha(st.text, k ? 0.45 : 0.2);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, (k ? 3.5 : 2.5) * u, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tp = station(tonic);
+  ctx.strokeStyle = alpha(st.accent, 0.8);
+  ctx.lineWidth = Math.max(1, 2 * u);
+  ctx.beginPath();
+  ctx.arc(tp.x, tp.y, 13 * u, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // The trail: where the chain's tip has been over the last few seconds.
+  const TRAIL = 6;
+  const steps = 120;
+  const start = Math.max(0, t - TRAIL);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  let prev: { x: number; y: number } | null = null;
+  for (let i = 0; i <= steps; i++) {
+    const time = start + ((t - start) * i) / steps;
+    const pts = chain(time).pts;
+    const tip = pts[pts.length - 1];
+    if (prev) {
+      ctx.strokeStyle = alpha(st.accent, 0.05 + 0.5 * (i / steps) ** 2);
+      ctx.lineWidth = Math.max(1, 2.2 * u * st.lw);
+      ctx.beginPath();
+      ctx.moveTo(prev.x, prev.y);
+      ctx.lineTo(tip.x, tip.y);
+      ctx.stroke();
+    }
+    prev = tip;
+  }
+
+  // The chain itself.
+  const { ps, pts } = chain(t);
+  const tip = pts[pts.length - 1];
+  ctx.setLineDash([4 * u, 5 * u]);
+  ctx.strokeStyle = alpha(st.text, 0.3);
+  ctx.lineWidth = Math.max(1, u);
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(tip.x, tip.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  for (let i = 1; i < pts.length; i++) {
+    const p0 = pts[i - 1];
+    const p1 = pts[i];
+    const color = st.pcColor(mod12(Math.round(ps[i - 1])));
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = Math.max(1, 2 * u * st.lw);
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(p1.x, p1.y);
+    ctx.stroke();
+    // A small head, pointing along the arrow.
+    const dx = p1.x - p0.x;
+    const dy = p1.y - p0.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 4 * u) {
+      const h = Math.min(7 * u, d * 0.45);
+      const ux = dx / d;
+      const uy = dy / d;
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p1.x - ux * h - uy * h * 0.5, p1.y - uy * h + ux * h * 0.5);
+      ctx.lineTo(p1.x - ux * h + uy * h * 0.5, p1.y - uy * h - ux * h * 0.5);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  ctx.fillStyle = st.accent;
+  ctx.beginPath();
+  ctx.arc(tip.x, tip.y, 6 * u, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = alpha(st.text, 0.5);
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3 * u, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
