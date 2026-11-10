@@ -251,7 +251,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   motion: { easing: 'smootherstep', transition: 'glide' },
   rhythm: { tempo: 76, chords: '', pluck: 'e' },
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
-  audio: { wave: 'warm', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 10000, width: 0.12, gain: 0.9, sub: 0.5, warmth: 0, bass: 2, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
+  audio: { wave: 'warm', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 10000, width: 0.12, gain: 0.9, sub: 0.4, warmth: 0, bass: 2, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
   theme: { ...THEME_PRESETS.paper },
   drums: {
     enabled: false,

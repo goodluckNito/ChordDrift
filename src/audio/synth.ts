@@ -272,7 +272,7 @@ export class VoiceBank {
       // Drums skip the chords' tone filter but share the limiter and reverb; the bank's bus gates them.
       this.drumBus = ctx.createGain();
       // Drums sit under the chords (they used to match the whole chord mix, which buried it on small speakers).
-      this.drumBus.gain.value = d.level * 0.5;
+      this.drumBus.gain.value = d.level;
       const gate = ctx.createGain();
       this.drumBus.connect(gate).connect(master.direct);
       this.drumSend = ctx.createGain();
@@ -372,8 +372,11 @@ export class VoiceBank {
     const sr = this.ctx.sampleRate;
     const fadeLen = Math.max(0.05, Math.min(cfg.timing.outro * 0.7, 1.5));
     const fadeOutStart = this.endAt - fadeLen;
-    const baseGain = (1.25 / V) * WAVE_GAIN[cfg.audio.wave];
-    const leadGain = 0.55 * cfg.melody.level * WAVE_GAIN[cfg.melody.wave];
+    // Voices add up like independent sources (√V), not like one coherent wave (V): sizing every voice
+    // for the worst case — the unison, all voices on one note — made ordinary chords ~7 dB too quiet.
+    // Voices sharing a note now back off by 1/√(how many share it), so unisons don't spike either.
+    const baseGain = (0.75 / Math.sqrt(V)) * WAVE_GAIN[cfg.audio.wave];
+    const leadGain = 0.7 * cfg.melody.level * WAVE_GAIN[cfg.melody.wave];
     const n = Math.round(CHUNK * CONTROL_RATE) + 1;
     const live = !(this.ctx instanceof OfflineAudioContext);
     while (this.scheduledUntil < Math.min(until, this.endAt)) {
@@ -396,6 +399,21 @@ export class VoiceBank {
       // tiny gap just holds that value — no step in pitch.
       const dur = CHUNK - Math.max(256 / sr, 0.004);
       const wrap = (t: number) => (this.loopLen ? ((t % this.loopLen) + this.loopLen) % this.loopLen : t);
+      // Pitches (and layer levels) of every voice first, so each voice can see who shares its note.
+      const P = Array.from({ length: V * this.layers }, () => new Float32Array(n));
+      const G = Array.from({ length: V * this.layers }, () => new Float32Array(n).fill(1));
+      const chops = Array.from({ length: n }, (_, i) => chopAt(this.score, wrap(t0 + (i / (n - 1)) * CHUNK)));
+      for (let idx = 0; idx < V * this.layers; idx++) {
+        const v = idx % V;
+        const L = (idx >= V ? 1 : 0) as 0 | 1;
+        for (let i = 0; i < n; i++) {
+          if (this.layers === 2) {
+            const st = layerAt(this.score, L, v, chops[i].s);
+            P[idx][i] = st.p;
+            G[idx][i] = st.g;
+          } else P[idx][i] = pitchAt(this.score, v, chops[i].s);
+        }
+      }
       for (let idx = 0; idx < V * this.layers; idx++) {
         const v = idx % V;
         const L = (idx >= V ? 1 : 0) as 0 | 1;
@@ -405,22 +423,21 @@ export class VoiceBank {
           const raw = t0 + (i / (n - 1)) * CHUNK;
           const tt = wrap(raw);
           // Chop remaps time (reverse, repeat, tape stop); the rate bends the pitch for tape stops.
-          const ch = chopAt(this.score, tt);
+          const ch = chops[i];
           const t = ch.s;
-          let f: number;
-          let layerGain = 1;
-          if (this.layers === 2) {
-            const st = layerAt(this.score, L, v, t);
-            f = midiToHz(st.p) * ch.rate;
-            layerGain = st.g;
-          } else f = midiToHz(pitchAt(this.score, v, t)) * ch.rate;
+          const f = midiToHz(P[idx][i]) * ch.rate;
+          const layerGain = G[idx][i];
+          // How many voices (in this layer, weighted by level) share this note right now.
+          let share = 0;
+          for (let w = L * V; w < (L + 1) * V; w++) if (Math.abs(P[w][i] - P[idx][i]) < 0.35) share += G[w][i];
+          const together = 1 / Math.sqrt(Math.max(1, share));
           freq[i] = f;
           let env = Math.min(1, raw / 0.05); // 50 ms fade-in at the very start
           if (this.offset > 0) env *= Math.min(1, (raw - this.offset) / 0.03); // de-click when starting mid-piece
           if (raw > fadeOutStart) env *= 0.5 * (1 + Math.cos(Math.PI * Math.min(1, (raw - fadeOutStart) / fadeLen)));
           // Song mode: soft parts sit lower, so the full parts lift.
           const lift = this.score.energy.length ? 0.68 + 0.32 * energyAt(this.score, tt) : 1;
-          gain[i] = baseGain * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env) * swellAt(this.score, v, t) * layerGain * lift;
+          gain[i] = baseGain * together * Math.pow(f / 220, -cfg.audio.tilt) * Math.max(0, env) * swellAt(this.score, v, t) * layerGain * lift;
         }
         setCurve(this.oscs[idx].frequency, freq, at, dur);
         setCurve(this.gains[idx].gain, gain, at, dur);
@@ -429,7 +446,8 @@ export class VoiceBank {
         const freq = new Float32Array(n);
         const gain = new Float32Array(n);
         // The Bass shelf no longer touches the sub (it runs dry), so it scales the sub directly.
-        const subGain = cfg.audio.sub * 2.4 * 1.3 * (1.25 / V) * Math.pow(10, cfg.audio.bass / 20);
+        // A fixed level (the Sub slider means the same at any voice count).
+        const subGain = cfg.audio.sub * 0.3 * Math.pow(10, cfg.audio.bass / 20);
         const d = cfg.drums;
         for (let i = 0; i < n; i++) {
           const raw = t0 + (i / (n - 1)) * CHUNK;
@@ -874,7 +892,7 @@ export class LivePlayer {
       osc.frequency.value = f;
       osc.detune.value = score.detune[v % score.detune.length] ?? 0;
       const g = ctx.createGain();
-      const peak = (1.1 / notes.length) * Math.pow(f / 220, -a.tilt) * WAVE_GAIN[a.wave];
+      const peak = (0.7 / Math.sqrt(notes.length)) * Math.pow(f / 220, -a.tilt) * WAVE_GAIN[a.wave];
       g.gain.setValueAtTime(0, now);
       g.gain.linearRampToValueAtTime(peak, now + 0.08);
       g.gain.setTargetAtTime(0, now + seconds * 0.6, seconds * 0.15);
