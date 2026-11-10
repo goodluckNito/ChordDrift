@@ -20,6 +20,9 @@ export interface ViewStyle {
   lw: number;
   /** Colour for a pitch class (follows the theme's line colouring, or ink). */
   pcColor: (pc: number) => string;
+  /** A distinct colour per voice from the theme's palette (whatever the line colouring). */
+  voiceColor: (v: number) => string;
+  background: string;
 }
 
 export interface ViewArea {
@@ -29,16 +32,20 @@ export interface ViewArea {
   R: number;
   u: number;
   tu: number;
+  /** The whole frame width and the band the picture lives in (for views that use all of it). */
+  width: number;
+  top: number;
+  bottom: number;
 }
 
 const rgb = (hex: string) => {
   const n = parseInt(hex.slice(1), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 };
-const alpha = (color: string, a: number) => (color.startsWith('#') ? `rgba(${rgb(color).join(',')},${a})` : color.replace(/^rgb\(([^)]+)\)$/, `rgba($1,${a})`).replace(/^hsl\(([^)]+)\)$/, `hsla($1 / ${a})`));
+export const alpha = (color: string, a: number) => (color.startsWith('#') ? `rgba(${rgb(color).join(',')},${a})` : color.replace(/^rgb\(([^)]+)\)$/, `rgba($1,${a})`).replace(/^hsl\(([^)]+)\)$/, `hsla($1 / ${a})`));
 
 /** The chord sounding at t and how far its change has progressed (0 → 1 over the glide). */
-function chordAt(score: Score, t: number): { k: number; c: ScoreChord | null; prev: ScoreChord | null; x: number } {
+export function chordAt(score: Score, t: number): { k: number; c: ScoreChord | null; prev: ScoreChord | null; x: number } {
   const k = chordIndexAt(score, t);
   if (k < 0) return { k, c: null, prev: null, x: 1 };
   const c = score.chords[k];
@@ -47,7 +54,7 @@ function chordAt(score: Score, t: number): { k: number; c: ScoreChord | null; pr
   return { k, c, prev, x: smootherstep(Math.min(1, Math.max(0, (t - c.t) / span))) };
 }
 
-const nameOf = (score: Score, pc: number, c?: ScoreChord | null) => spellPc(pc, c?.tonic ?? score.keyPc, c?.scale ?? score.config.scale);
+export const nameOf = (score: Score, pc: number, c?: ScoreChord | null) => spellPc(pc, c?.tonic ?? score.keyPc, c?.scale ?? score.config.scale);
 
 // ---------------------------------------------------------------------------
 // Constellation
@@ -60,7 +67,7 @@ const skyCache = new WeakMap<Score, { lo: number; span: number; n: number }>();
  * (a moving camera range made every star lurch in or out). Grows only if an endless piece
  * wanders past it.
  */
-function skyRange(score: Score): { lo: number; span: number } {
+export function skyRange(score: Score): { lo: number; span: number } {
   const hit = skyCache.get(score);
   if (hit && hit.n === score.chords.length) return hit;
   let lo = Math.min(score.startNote, score.endNote);
@@ -168,7 +175,7 @@ export function drawConstellation(ctx: CanvasRenderingContext2D, score: Score, t
  * How hard the drums are hitting right now, per family (0–1, decaying after each hit), for views
  * that move with them. Only where the drums are heard (song parts without drums stay still).
  */
-function drumPulse(score: Score, t: number): { kick: number; snare: number; hat: number; snareAt: number } {
+export function drumPulse(score: Score, t: number): { kick: number; snare: number; hat: number; snareAt: number } {
   const out = { kick: 0, snare: 0, hat: 0, snareAt: 0 };
   if (!score.drums) return out;
   const [s0, s1] = drumSpan(score);

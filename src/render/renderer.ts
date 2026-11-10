@@ -6,6 +6,7 @@ import { midiToHz, mod12 } from '../engine/theory';
 import { fontStack } from './fonts';
 import { mulberry32 } from '../engine/rng';
 import { drawChladni, drawConstellation, type ViewArea, type ViewStyle } from './harmony-views';
+import { drawFerro, drawMarbling, drawMurmuration, drawTransit } from './novel-views';
 
 /**
  * Pitch-versus-time plot with a moving camera. Everything is a pure function of
@@ -1514,17 +1515,34 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   }
 
   const freqs = soundingPitches(score, t).map(midiToHz);
-  const harmonyView = cfg.video.view === 'chladni' || cfg.video.view === 'constellation';
+  const harmonyView = ['chladni', 'constellation', 'transit', 'marbling', 'ferro', 'murmur'].includes(cfg.video.view);
   if (harmonyView) {
-    const vs: ViewStyle = { ink: st.ink, accent: st.accent, text: th.text, font: st.font, lw: st.lw, pcColor: (pc) => (st.colorBy === 'none' ? st.ink : pitchColor(pc, st)) };
+    const vs: ViewStyle = {
+      ink: st.ink,
+      accent: st.accent,
+      text: th.text,
+      font: st.font,
+      lw: st.lw,
+      pcColor: (pc) => (st.colorBy === 'none' ? st.ink : pitchColor(pc, st)),
+      voiceColor: (v) => voiceColor(v, cfg.voices, st),
+      background: th.background,
+    };
     const area: ViewArea = {
       cx: W / 2,
       cy: (lay.bandTop + lay.bandBottom) / 2,
       R: Math.min(W * 0.44, (lay.bandBottom - lay.bandTop) / 2 + 0.06 * H),
       u,
       tu,
+      width: W,
+      top: lay.bandTop,
+      bottom: lay.bandBottom,
     };
-    if (cfg.video.view === 'chladni') drawChladni(ctx, score, t, vs, area, lite);
+    const view = cfg.video.view;
+    if (view === 'chladni') drawChladni(ctx, score, t, vs, area, lite);
+    else if (view === 'transit') drawTransit(ctx, score, t, vs, area);
+    else if (view === 'marbling') drawMarbling(ctx, score, t, vs, area);
+    else if (view === 'ferro') drawFerro(ctx, score, t, vs, area);
+    else if (view === 'murmur') drawMurmuration(ctx, score, t, vs, area, lite);
     else drawConstellation(ctx, score, t, vs, area);
   } else if (cfg.video.view === 'waterfall') drawWaterfall(ctx, score, t, st, lay);
   else if (cfg.video.view === 'spiral') {

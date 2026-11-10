@@ -205,7 +205,7 @@ export interface ChordDriftConfig {
     /** Zoom of the picture (titles and HUD stay put): 1 = normal. */
     zoom: number;
     /** timeline = pitch over time · spiral = pitch on a spiral · waterfall = rotating 3D spectrograph, depth is time */
-    view: 'timeline' | 'spiral' | 'waterfall' | 'chladni' | 'constellation';
+    view: 'timeline' | 'spiral' | 'waterfall' | 'chladni' | 'constellation' | 'transit' | 'marbling' | 'ferro' | 'murmur';
     /**
      * Spiral motion. orbit = rotation is time, distance from the centre is pitch, the past spirals inward ·
      * drain = like orbit, but the past sinks into the centre · fly = travel forward through time · inward = pitch-class clock
@@ -314,7 +314,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   if ((c.video.view as string) === 'tonnetz') c.video.view = 'chladni'; // the Chladni plate took its place
   // Retired views open in the nearest one that's left.
   if (['fifths', 'compass', 'scope'].includes(c.video.view as string)) c.video.view = 'constellation';
-  if (!['timeline', 'spiral', 'waterfall', 'chladni', 'constellation'].includes(c.video.view)) c.video.view = 'timeline';
+  if (!['timeline', 'spiral', 'waterfall', 'chladni', 'constellation', 'transit', 'marbling', 'ferro', 'murmur'].includes(c.video.view)) c.video.view = 'timeline';
   if ((c.video.spiral as string) === 'zoom') c.video.spiral = 'fly'; // older projects
   if (!['orbit', 'drain', 'fly', 'inward'].includes(c.video.spiral)) c.video.spiral = 'orbit';
   c.drums.double = Boolean(c.drums.double);

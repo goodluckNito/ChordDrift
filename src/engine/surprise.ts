@@ -172,6 +172,8 @@ export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = '
       voicing: { inversion: 0 },
     } as DeepPartial<ChordDriftConfig>);
   }
+  // The newer views take a share of word songs' looks (drawn last, so the music never changes).
+  if (mood !== 'pure' && r() < 0.3) out.video = { ...out.video, view: pick(r, ['transit', 'marbling', 'ferro', 'murmur'] as const) };
   return out;
 }
 
