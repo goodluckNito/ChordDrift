@@ -1,18 +1,16 @@
 /**
  * Less usual pictures of the music, each moving with the voices and pushed around by the drums:
  *
- *   Ink marbling  a round tray with the notes round the rim; every voice is a pen of its own ink,
- *                 combing it along its path whenever it moves; old ink dissolves.
  *   Murmuration   one flock led by the voices: a ribbon of birds strung through them, stretching,
  *                 bunching and turning with the chord.
  *
  * Pure functions of (score, t) like every other view (marbling caches its work, but replays it
  * exactly when time jumps backwards).
  */
-import { drumHits, levelAt, pitchAt } from '../engine/motion';
+import { levelAt, pitchAt } from '../engine/motion';
 import type { Score } from '../engine/score';
 import { mod12 } from '../engine/theory';
-import { alpha, chordAt, drumPulse, nameOf, skyRange, type ViewArea, type ViewStyle } from './harmony-views';
+import { alpha, chordAt, drumPulse, skyRange, type ViewArea, type ViewStyle } from './harmony-views';
 
 /** A stable pseudo-random number in [0, 1) from a few integers. */
 function hash(...xs: number[]): number {
@@ -26,396 +24,106 @@ function hash(...xs: number[]): number {
 }
 
 // ---------------------------------------------------------------------------
-// Ink marbling
-// ---------------------------------------------------------------------------
-
-/**
- * A round tray of water with the twelve notes around its rim like a clock; distance from the
- * middle is register (low near the centre, high near the rim). Every voice is a pen with its own
- * ink. When a voice moves, its pen is dragged from the old note to the new one, combing the ink
- * along that path (the marbling transform for a stroke: points beside the path are carried along
- * it, more the closer they are), and it drops a little fresh ink where it lands. Held chords let
- * the ink settle; old ink slowly dissolves, so the tray shows the last half minute or so. Kicks
- * tap the middle of the water, snares tap near it.
- */
-interface MarbleEvent {
-  t: number;
-  d: number;
-  kind: 'drop' | 'drag' | 'tap';
-  x: number;
-  y: number;
-  /** drag: the end of the stroke. */
-  x1: number;
-  y1: number;
-  r: number;
-  z: number;
-  color: string;
-}
-interface Ink {
-  xs: number[];
-  ys: number[];
-  color: string;
-  born: number;
-}
-interface Marble {
-  events: MarbleEvent[];
-  /** Moves turned into events so far, per voice; and drum time covered. */
-  movesDone: number[];
-  started: boolean;
-  drumsUntil: number;
-  inks: Ink[];
-  applied: number;
-  colorKey: string;
-}
-const marbles = new WeakMap<Score, Marble>();
-const LAMBDA = 0.09;
-const INK_LIFE = 22;
-const MAX_INKS = 70;
-
-/** A note's place in the tray: angle by note name (C at the top), distance by register. */
-function trayPos(score: Score, p: number) {
-  const { lo, span } = skyRange(score);
-  const ang = -Math.PI / 2 + (Math.PI * 2 * p) / 12;
-  const r = 0.18 + 0.72 * Math.max(0, Math.min(1, (p - lo) / span));
-  return { x: Math.cos(ang) * r, y: Math.sin(ang) * r };
-}
-
-function applyEvent(ink: Ink, e: MarbleEvent, f: number) {
-  const { xs, ys } = ink;
-  if (e.kind === 'drop' || e.kind === 'tap') {
-    const r2 = e.r * e.r * f;
-    for (let i = 0; i < xs.length; i++) {
-      const dx = xs[i] - e.x;
-      const dy = ys[i] - e.y;
-      const s = Math.sqrt(1 + r2 / (dx * dx + dy * dy + 1e-9));
-      xs[i] = e.x + dx * s;
-      ys[i] = e.y + dy * s;
-    }
-    return;
-  }
-  // A stroke from (x, y) towards (x1, y1), drawn as far as f: points beside it are carried along.
-  const ex = e.x + (e.x1 - e.x) * f;
-  const ey = e.y + (e.y1 - e.y) * f;
-  const lx = ex - e.x;
-  const ly = ey - e.y;
-  const len = Math.hypot(lx, ly);
-  if (len < 1e-4) return;
-  const mx = lx / len;
-  const my = ly / len;
-  for (let i = 0; i < xs.length; i++) {
-    const px = xs[i] - e.x;
-    const py = ys[i] - e.y;
-    const along = px * mx + py * my;
-    const across = Math.abs(-px * my + py * mx);
-    // Only beside the stretch the pen has covered (softly past its ends).
-    const s = along / len;
-    const win = s < 0 ? Math.max(0, 1 + s * 4) : s > 1 ? Math.max(0, 1 - (s - 1) * 4) : 1;
-    if (win <= 0) continue;
-    const k = ((e.z * len * LAMBDA) / (across + LAMBDA)) * win;
-    xs[i] += k * mx;
-    ys[i] += k * my;
-  }
-}
-
-/** Keep feathered outlines smooth: split edges that have been stretched long (up to a cap). */
-function refine(ink: Ink) {
-  const { xs, ys } = ink;
-  if (xs.length > 600) return;
-  const nx: number[] = [];
-  const ny: number[] = [];
-  for (let i = 0; i < xs.length; i++) {
-    const j = (i + 1) % xs.length;
-    nx.push(xs[i]);
-    ny.push(ys[i]);
-    const dx = xs[j] - xs[i];
-    const dy = ys[j] - ys[i];
-    const n = Math.min(4, Math.floor(Math.hypot(dx, dy) / 0.035));
-    for (let k = 1; k <= n; k++) {
-      nx.push(xs[i] + (dx * k) / (n + 1));
-      ny.push(ys[i] + (dy * k) / (n + 1));
-    }
-  }
-  ink.xs = nx;
-  ink.ys = ny;
-}
-
-function circleInk(x: number, y: number, r: number, color: string, born: number): Ink {
-  const n = 64;
-  const xs: number[] = [];
-  const ys: number[] = [];
-  for (let i = 0; i < n; i++) {
-    xs.push(x + Math.cos((i / n) * Math.PI * 2) * r);
-    ys.push(y + Math.sin((i / n) * Math.PI * 2) * r);
-  }
-  return { xs, ys, color, born };
-}
-
-/** Turn voice moves (and drum hits) up to time `until` into events. */
-function buildMarble(m: Marble, score: Score, st: ViewStyle, until: number) {
-  const fresh: MarbleEvent[] = [];
-  const V = score.config.voices;
-  if (!m.started && score.chords.length) {
-    m.started = true;
-    // The opening: every voice drops its ink at its first note.
-    score.chords[0].notes.forEach((n, v) => {
-      const p = trayPos(score, n);
-      fresh.push({ t: score.chords[0].t + v * 0.05, d: 0.8, kind: 'drop', x: p.x, y: p.y, x1: 0, y1: 0, r: 0.16, z: 0, color: st.voiceColor(v) });
-    });
-  }
-  for (let v = 0; v < V; v++) {
-    const moves = score.moves[v];
-    while (m.movesDone[v] < moves.length && moves[m.movesDone[v]].t0 <= until) {
-      const mv = moves[m.movesDone[v]++];
-      if (Math.abs(mv.p1 - mv.p0) < 0.5) continue;
-      const a0 = trayPos(score, mv.p0);
-      const a1 = trayPos(score, mv.p1);
-      const d = Math.max(0.35, mv.d);
-      fresh.push({ t: mv.t0, d, kind: 'drag', x: a0.x, y: a0.y, x1: a1.x, y1: a1.y, r: 0, z: 0.9, color: '' });
-      fresh.push({ t: mv.t0 + d * 0.7, d: 0.5, kind: 'drop', x: a1.x, y: a1.y, x1: 0, y1: 0, r: 0.07, z: 0, color: st.voiceColor(v) });
-    }
-  }
-  if (until > m.drumsUntil) {
-    for (const h of drumHits(score, Math.max(0, m.drumsUntil), until)) {
-      if (h.voice !== 'kick' && h.voice !== 'snare') continue;
-      const i = Math.round(h.t * 1000);
-      const kick = h.voice === 'kick';
-      fresh.push({
-        t: h.t,
-        d: 0.18,
-        kind: 'tap',
-        x: kick ? 0 : (hash(i, 2) - 0.5) * 0.9,
-        y: kick ? 0 : (hash(i, 4) - 0.5) * 0.9,
-        x1: 0,
-        y1: 0,
-        r: (kick ? 0.045 : 0.03) * h.vel,
-        z: 0,
-        color: '',
-      });
-    }
-    m.drumsUntil = until;
-  }
-  if (fresh.length) {
-    const tail = m.events.splice(m.applied).concat(fresh).sort((x, y) => x.t - y.t);
-    m.events.push(...tail);
-  }
-}
-
-export function drawMarbling(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea) {
-  const colorKey = `${st.voiceColor(0)}${st.voiceColor(5)}${st.background}`;
-  let m = marbles.get(score);
-  if (!m || m.colorKey !== colorKey) {
-    m = { events: [], movesDone: new Array(score.config.voices).fill(0), started: false, drumsUntil: 0, inks: [], applied: 0, colorKey };
-    marbles.set(score, m);
-  }
-  buildMarble(m, score, st, t + 2);
-  const last = m.applied > 0 ? m.events[m.applied - 1] : null;
-  if (last && t < last.t + last.d) {
-    m.inks = [];
-    m.applied = 0;
-  }
-  while (m.applied < m.events.length) {
-    const e = m.events[m.applied];
-    if (e.t + e.d > t) break;
-    for (const ink of m.inks) applyEvent(ink, e, 1);
-    if (e.kind === 'drop') m.inks.push(circleInk(e.x, e.y, e.r, e.color, e.t));
-    if (e.kind === 'drag') for (const ink of m.inks) refine(ink);
-    m.applied++;
-    m.inks = m.inks.filter((ink) => e.t - ink.born < INK_LIFE && ink.xs.some((x, i) => x * x + ink.ys[i] * ink.ys[i] < 1.6));
-    if (m.inks.length > MAX_INKS) m.inks.splice(0, m.inks.length - MAX_INKS);
-  }
-  const live = m.events.slice(m.applied).filter((e) => e.t <= t);
-  let inks = m.inks;
-  if (live.length) {
-    inks = m.inks.map((ink) => ({ ...ink, xs: ink.xs.slice(), ys: ink.ys.slice() }));
-    for (const e of live) {
-      const f = Math.max(0, Math.min(1, (t - e.t) / e.d));
-      const ease = f * f * (3 - 2 * f);
-      for (const ink of inks) applyEvent(ink, e, ease);
-      if (e.kind === 'drop') inks.push(circleInk(e.x, e.y, e.r * Math.sqrt(ease), e.color, e.t));
-    }
-  }
-
-  const { cx, cy, u, tu } = a;
-  const S = a.R * 0.92;
-  ctx.save();
-  // The tray.
-  ctx.fillStyle = alpha(st.ink, 0.04);
-  ctx.beginPath();
-  ctx.arc(cx, cy, S, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.save();
-  ctx.clip();
-  for (const ink of inks) {
-    // Old ink dissolves into the water.
-    const age = t - ink.born;
-    const fade = Math.max(0, Math.min(1, (INK_LIFE - age) / 8));
-    if (fade <= 0) continue;
-    ctx.beginPath();
-    for (let i = 0; i < ink.xs.length; i++) {
-      const x = cx + ink.xs[i] * S;
-      const y = cy + ink.ys[i] * S;
-      if (i) ctx.lineTo(x, y);
-      else ctx.moveTo(x, y);
-    }
-    ctx.closePath();
-    ctx.fillStyle = alpha(ink.color, 0.85 * fade);
-    ctx.fill();
-  }
-  ctx.restore();
-  ctx.strokeStyle = alpha(st.text, 0.3);
-  ctx.lineWidth = Math.max(1, 1.5 * u);
-  ctx.beginPath();
-  ctx.arc(cx, cy, S, 0, Math.PI * 2);
-  ctx.stroke();
-  // The notes round the rim.
-  ctx.font = `600 ${15 * tu}px ${st.font}`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const now = chordAt(score, t);
-  for (let pc = 0; pc < 12; pc++) {
-    const ang = -Math.PI / 2 + (Math.PI * 2 * pc) / 12;
-    ctx.strokeStyle = alpha(st.text, 0.35);
-    ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(ang) * S, cy + Math.sin(ang) * S);
-    ctx.lineTo(cx + Math.cos(ang) * (S + 8 * u), cy + Math.sin(ang) * (S + 8 * u));
-    ctx.stroke();
-    ctx.fillStyle = alpha(st.text, 0.55);
-    ctx.fillText(nameOf(score, pc, now.c), cx + Math.cos(ang) * (S + 24 * tu), cy + Math.sin(ang) * (S + 24 * tu));
-  }
-  // The pens: where each voice is now.
-  for (let v = 0; v < score.config.voices; v++) {
-    const p = trayPos(score, pitchAt(score, v, t));
-    const x = cx + p.x * S;
-    const y = cy + p.y * S;
-    ctx.fillStyle = st.background;
-    ctx.strokeStyle = st.voiceColor(v);
-    ctx.lineWidth = Math.max(1.5, 2.2 * u);
-    ctx.beginPath();
-    ctx.arc(x, y, 5 * u, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-// ---------------------------------------------------------------------------
 // Murmuration
 // ---------------------------------------------------------------------------
 
 /**
- * One flock that takes the shape of the chord. Around an invisible clock of the twelve notes,
- * every voice leads from its note's angle (a little further out the higher it is), and the birds
- * stream round the polygon the chord's notes make, gathering in knots at each note. So each kind of
- * chord has its own figure in any key: a major triad one triangle, a minor triad its mirror image,
- * a 7th chord a four-sided shape, a unison one ball; changing the root turns the figure. The
- * leaders follow their notes slowly, with weight, and the birds trail behind, so a chord change is
- * the whole flock wheeling into the next shape. Kicks make it pulse, snares send a ripple round it.
+ * One flock, led by the voices. The leaders sit at their notes' heights, strung across the sky in
+ * order from the bass up, and the flock is a ribbon of birds through them: it stretches between the
+ * lowest and highest voices, bunches where voices cluster (the same number of birds between each
+ * pair of neighbours, so close voices make dense knots), and draws into one ball on a unison. The
+ * leaders follow their notes slowly, with weight, and birds trail behind them, so a chord change
+ * is a sweeping turn of the whole flock. Kicks make it pulse; snares send a ripple along it.
  */
 export function drawMurmuration(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false) {
-  const { cx, cy, u, tu } = a;
+  const { u } = a;
   const W = a.width;
-  const Rr = Math.min(W * 0.36, (a.bottom - a.top) * 0.38);
+  const top = a.top + 40 * u;
+  const bottom = a.bottom - 60 * u;
   const { lo, span } = skyRange(score);
   const V = score.config.voices;
   const drum = drumPulse(score, t);
-  const BIRDS = lite ? 700 : 1600;
-  // A leader follows its note with weight: an average of where the note was over the last
-  // couple of seconds, recent moments counting most.
+  const BIRDS = lite ? 600 : 1500;
+  // A leader's height follows its note with weight: an average of where the note was over the
+  // last couple of seconds, recent moments counting most.
   const smoothP = (v: number, time: number) => {
     let s = 0;
     let w = 0;
     for (let i = 0; i < 10; i++) {
-      const age = i * 0.16;
-      const k = Math.exp(-age / 0.5);
+      const age = i * 0.18;
+      const k = Math.exp(-age / 0.55);
       s += pitchAt(score, v, time - age) * k;
       w += k;
     }
     return s / w;
   };
-  // The figure at a moment: the distinct notes' places round the clock, in order of angle.
-  const figure = (time: number) => {
-    const pts: { x: number; y: number; ang: number; n: number }[] = [];
-    for (let v = 0; v < V; v++) {
-      if (levelAt(score, v, time) < 0.03) continue;
-      const p = smoothP(v, time);
-      const ang = -Math.PI / 2 + (Math.PI * 2 * p) / 12;
-      const r = Rr * (0.72 + 0.4 * Math.max(0, Math.min(1, (p - lo) / span)));
-      const x = cx + Math.cos(ang) * r;
-      const y = cy + Math.sin(ang) * r;
-      const near = pts.find((q) => Math.hypot(q.x - x, q.y - y) < Rr * 0.06);
-      if (near) near.n++;
-      else pts.push({ x, y, ang: ((ang % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2), n: 1 });
+  // How wide the chord is (smoothed too): a wide chord strings the flock across the sky, a unison
+  // draws it into one ball.
+  const width = (time: number) => {
+    let s = 0;
+    for (let i = 0; i < 6; i++) {
+      const ps = Array.from({ length: V }, (_, v) => pitchAt(score, v, time - i * 0.25));
+      s += Math.max(...ps) - Math.min(...ps);
     }
-    pts.sort((p, q) => p.ang - q.ang);
-    // Perimeter, for spacing birds evenly round it.
-    const seg: number[] = [];
-    let per = 0;
-    for (let i = 0; i < pts.length; i++) {
-      const b = pts[(i + 1) % pts.length];
-      const d = pts.length > 1 ? Math.hypot(b.x - pts[i].x, b.y - pts[i].y) : 0;
-      seg.push(d);
-      per += d;
-    }
-    return { pts, seg, per };
+    return Math.min(1, s / 6 / 24);
   };
+  const leader = (v: number, time: number, spread: number) => {
+    const p = smoothP(v, time);
+    const f = V > 1 ? v / (V - 1) - 0.5 : 0;
+    // Strung across the sky from the bass up, the string itself slowly swaying.
+    const x = W / 2 + W * 0.62 * spread * f + W * 0.12 * Math.sin(0.11 * time + f * 2.4) + W * 0.05 * Math.sin(0.23 * time - f * 4);
+    const y = bottom - ((p - lo) / span) * (bottom - top);
+    return { x, y };
+  };
+  // Leaders at a few lags, so trailing birds follow where the flock was.
   const LAGS = 6;
   const lagStep = 0.12;
-  const figs = Array.from({ length: LAGS }, (_, j) => figure(t - j * lagStep));
-  const pulse = 1 + 0.45 * drum.kick;
+  const leaders = Array.from({ length: LAGS }, (_, j) => {
+    const spread = width(t - j * lagStep);
+    return Array.from({ length: V }, (_, v) => leader(v, t - j * lagStep, spread));
+  });
+  const pulse = 1 + 0.5 * drum.kick;
   const rippleAge = drum.snare > 0.02 ? Math.max(0, t - drum.snareAt) : -1;
 
   ctx.save();
-  // The clock, barely there: twelve ticks and the note names, to read the figure by.
-  ctx.fillStyle = alpha(st.text, 0.22);
-  ctx.font = `500 ${13 * tu}px ${st.font}`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const now = chordAt(score, t);
-  for (let pc = 0; pc < 12; pc++) {
-    const ang = -Math.PI / 2 + (Math.PI * 2 * pc) / 12;
-    ctx.fillText(nameOf(score, pc, now.c), cx + Math.cos(ang) * Rr * 1.36, cy + Math.sin(ang) * Rr * 1.36);
-  }
   ctx.strokeStyle = alpha(st.ink, 0.7);
   ctx.lineWidth = Math.max(1, 1.3 * u);
   ctx.lineCap = 'round';
   ctx.beginPath();
   for (let b = 0; b < BIRDS; b++) {
+    // A place along the ribbon (between two neighbouring voices) and across it.
+    const along = hash(b, 1) * (V - 1);
+    const i0 = Math.min(V - 2, Math.floor(along));
+    const f = along - i0;
     const lag = Math.min(LAGS - 1.001, hash(b, 2) * hash(b, 3) * (LAGS - 1));
     const j0 = Math.floor(lag);
     const lf = lag - j0;
-    // Most birds stream round the outline (circling slowly); the rest gather at the notes.
-    const knot = hash(b, 1) < 0.4;
-    const flow = (hash(b, 4) + t * 0.035 * (0.7 + 0.6 * hash(b, 5))) % 1;
-    const place = (fig: ReturnType<typeof figure>) => {
-      const { pts, seg, per } = fig;
-      if (!pts.length) return { x: cx, y: cy, dx: 1, dy: 0 };
-      if (knot || per < Rr * 0.05) {
-        const q = pts[Math.floor(hash(b, 6) * pts.length)];
-        return { x: q.x, y: q.y, dx: 1, dy: 0 };
-      }
-      let d = flow * per;
-      let i = 0;
-      while (i < seg.length - 1 && d > seg[i]) d -= seg[i++];
-      const A = pts[i];
-      const B = pts[(i + 1) % pts.length];
-      const f = seg[i] > 0 ? d / seg[i] : 0;
-      return { x: A.x + (B.x - A.x) * f, y: A.y + (B.y - A.y) * f, dx: B.x - A.x, dy: B.y - A.y };
+    const at = (j: number) => {
+      const L = leaders[j];
+      const p0 = L[Math.max(0, i0)];
+      const p1 = L[Math.min(V - 1, i0 + 1)];
+      return { x: p0.x + (p1.x - p0.x) * f, y: p0.y + (p1.y - p0.y) * f, dx: p1.x - p0.x, dy: p1.y - p0.y };
     };
-    const P = place(figs[j0]);
-    const Qp = place(figs[j0 + 1]);
-    const x0 = P.x + (Qp.x - P.x) * lf;
-    const y0 = P.y + (Qp.y - P.y) * lf;
-    const len = Math.hypot(P.dx, P.dy) || 1;
-    const nx = -P.dy / len;
-    const ny = P.dx / len;
-    const g = (hash(b, 7) + hash(b, 8) + hash(b, 9)) / 1.5 - 1;
-    const g2 = (hash(b, 10) + hash(b, 11)) - 1;
-    const wave = 0.5 + 0.5 * Math.sin(flow * Math.PI * 8 - t * 1.6);
-    const ripple = rippleAge >= 0 ? Math.exp(-((flow - ((rippleAge * 0.8) % 1)) ** 2) * 60) * drum.snare : 0;
-    const thick = Rr * (knot ? 0.1 : 0.045 + 0.04 * wave + 0.06 * ripple) * pulse;
-    const x = x0 + (knot ? Math.cos(b) * g : nx * g) * thick + (knot ? 0 : (P.dx / len) * g2 * thick * 0.6) + Math.sin(t * 1.7 + b * 1.3) * 2.5 * u;
-    const y = y0 + (knot ? Math.sin(b * 1.7) * g : ny * g) * thick + (knot ? 0 : (P.dy / len) * g2 * thick * 0.6) + Math.cos(t * 1.3 + b * 2.1) * 2.5 * u;
-    const hd = Math.atan2(P.dy, P.dx) + 0.6 * Math.sin(b + t);
+    const A = at(j0);
+    const B = at(j0 + 1);
+    const x0 = A.x + (B.x - A.x) * lf;
+    const y0 = A.y + (B.y - A.y) * lf;
+    // Across the ribbon: thick in the middle, thinning to the edges; waves of density run along it.
+    const len = Math.hypot(A.dx, A.dy);
+    const nx = len > 1e-3 ? -A.dy / len : 0;
+    const ny = len > 1e-3 ? A.dx / len : 1;
+    const g = (hash(b, 4) + hash(b, 5) + hash(b, 6)) / 1.5 - 1;
+    // Along the ribbon too, so knots and the ball have body (and a unison isn't a line).
+    const g2 = (hash(b, 7) + hash(b, 8) + hash(b, 9)) / 1.5 - 1;
+    const wave = Math.sin(along * 2.2 - t * 1.4) * 0.5 + 0.5;
+    const ripple = rippleAge >= 0 ? Math.exp(-(((along / (V - 1)) - rippleAge * 1.5) ** 2) * 30) * drum.snare : 0;
+    const thick = W * (0.03 + 0.03 * wave + 0.04 * ripple) * pulse;
+    // A little wander of each bird, so the flock shimmers.
+    const wx = Math.sin(t * 1.7 + b * 1.3) * 3 * u;
+    const wy = Math.cos(t * 1.3 + b * 2.1) * 3 * u;
+    const x = x0 + nx * g * thick + ny * g2 * thick * 0.8 + wx;
+    const y = y0 + ny * g * thick * 0.75 - nx * g2 * thick * 0.6 + wy;
+    const hd = Math.atan2(A.dy, A.dx) + 0.6 * Math.sin(b + t);
     const l = 2 * u;
     ctx.moveTo(x - Math.cos(hd) * l, y - Math.sin(hd) * l);
     ctx.lineTo(x + Math.cos(hd) * l, y + Math.sin(hd) * l);
