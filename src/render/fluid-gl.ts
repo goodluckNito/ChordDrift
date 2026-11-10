@@ -84,10 +84,18 @@ void main() {
   advect: `#version 300 es
 precision highp float;
 in vec2 uv; out vec4 o;
-uniform sampler2D vel; uniform sampler2D src; uniform vec2 texel; uniform float dt; uniform float decay;
+uniform sampler2D vel; uniform sampler2D src; uniform vec2 texel; uniform vec2 velTexel; uniform float dt; uniform float decay; uniform float walls;
 void main() {
-  vec2 p = uv - dt * texture(vel, uv).xy * texel;
-  o = texture(src, p) * decay;
+  vec2 p = clamp(uv - dt * texture(vel, uv).xy * velTexel, texel * 0.5, 1.0 - texel * 0.5);
+  vec4 c = texture(src, p) * decay;
+  if (walls > 0.5) {
+    // Velocity: solid walls (nothing flows out through the frame's edges).
+    if (uv.x < texel.x * 1.5) c.x = max(c.x, 0.0);
+    if (uv.x > 1.0 - texel.x * 1.5) c.x = min(c.x, 0.0);
+    if (uv.y < texel.y * 1.5) c.y = max(c.y, 0.0);
+    if (uv.y > 1.0 - texel.y * 1.5) c.y = min(c.y, 0.0);
+  }
+  o = c;
 }`,
   divergence: `#version 300 es
 precision highp float;
@@ -154,6 +162,10 @@ void main() {
   float b = texture(pressure, uv - vec2(0.0, texel.y)).x;
   float t = texture(pressure, uv + vec2(0.0, texel.y)).x;
   vec2 v = texture(vel, uv).xy - vec2(r - l, t - b);
+  if (uv.x < texel.x * 1.5) v.x = max(v.x, 0.0);
+  if (uv.x > 1.0 - texel.x * 1.5) v.x = min(v.x, 0.0);
+  if (uv.y < texel.y * 1.5) v.y = max(v.y, 0.0);
+  if (uv.y > 1.0 - texel.y * 1.5) v.y = min(v.y, 0.0);
   o = vec4(v, 0.0, 1.0);
 }`,
   scale: `#version 300 es
@@ -255,21 +267,31 @@ function free(gl: WebGL2RenderingContext, t: Target) {
 }
 
 /** Run a program into a target with some textures and uniforms. */
+/** Uniform locations, looked up once per program (the lookups are slow, on phones especially). */
+const locations = new WeakMap<WebGLProgram, Map<string, WebGLUniformLocation | null>>();
+function loc(gl: WebGL2RenderingContext, prog: WebGLProgram, name: string): WebGLUniformLocation | null {
+  let m = locations.get(prog);
+  if (!m) locations.set(prog, (m = new Map()));
+  if (!m.has(name)) m.set(name, gl.getUniformLocation(prog, name));
+  return m.get(name)!;
+}
+
 function pass(S: GLState, prog: WebGLProgram, out: Target | null, tex: Record<string, Target>, uni: Record<string, number | number[]>) {
   const gl = S.gl;
   gl.useProgram(prog);
   let unit = 0;
-  for (const [name, t] of Object.entries(tex)) {
+  for (const name in tex) {
     gl.activeTexture(gl.TEXTURE0 + unit);
-    gl.bindTexture(gl.TEXTURE_2D, t.tex);
-    gl.uniform1i(gl.getUniformLocation(prog, name), unit++);
+    gl.bindTexture(gl.TEXTURE_2D, tex[name].tex);
+    gl.uniform1i(loc(gl, prog, name), unit++);
   }
-  for (const [name, v] of Object.entries(uni)) {
-    const loc = gl.getUniformLocation(prog, name);
-    if (!loc) continue;
-    if (typeof v === 'number') gl.uniform1f(loc, v);
-    else if (v.length === 2) gl.uniform2fv(loc, v);
-    else gl.uniform3fv(loc, v);
+  for (const name in uni) {
+    const v = uni[name];
+    const loc2 = loc(gl, prog, name);
+    if (!loc2) continue;
+    if (typeof v === 'number') gl.uniform1f(loc2, v);
+    else if (v.length === 2) gl.uniform2f(loc2, v[0], v[1]);
+    else gl.uniform3f(loc2, v[0], v[1], v[2]);
   }
   if (out) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, out.fbo);
@@ -281,17 +303,24 @@ function pass(S: GLState, prog: WebGLProgram, out: Target | null, tex: Record<st
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
+const ptsBuf = new Float32Array(MAX_POINTS * 2);
+const valsBuf = new Float32Array(MAX_POINTS * 4);
 /** Add discs to a field: pts in uv, vals = [r, g, b, radius²]. */
 function splats(S: GLState, d: Double, pts: number[][], vals: number[][], aspect: number) {
+  const gl = S.gl;
+  const prog = S.progs.splat;
   for (let i = 0; i < pts.length; i += MAX_POINTS) {
-    const p = pts.slice(i, i + MAX_POINTS);
-    const v = vals.slice(i, i + MAX_POINTS);
-    const gl = S.gl;
-    gl.useProgram(S.progs.splat);
-    gl.uniform1i(gl.getUniformLocation(S.progs.splat, 'n'), p.length);
-    gl.uniform2fv(gl.getUniformLocation(S.progs.splat, 'pts'), new Float32Array(MAX_POINTS * 2).map((_, k) => p[k >> 1]?.[k & 1] ?? 0));
-    gl.uniform4fv(gl.getUniformLocation(S.progs.splat, 'vals'), new Float32Array(MAX_POINTS * 4).map((_, k) => v[k >> 2]?.[k & 3] ?? 0));
-    pass(S, S.progs.splat, d.write, { src: d.read }, { aspect });
+    const n = Math.min(MAX_POINTS, pts.length - i);
+    for (let k = 0; k < n; k++) {
+      ptsBuf[k * 2] = pts[i + k][0];
+      ptsBuf[k * 2 + 1] = pts[i + k][1];
+      for (let c = 0; c < 4; c++) valsBuf[k * 4 + c] = vals[i + k][c];
+    }
+    gl.useProgram(prog);
+    gl.uniform1i(loc(gl, prog, 'n'), n);
+    gl.uniform2fv(loc(gl, prog, 'pts'), ptsBuf);
+    gl.uniform4fv(loc(gl, prog, 'vals'), valsBuf);
+    pass(S, prog, d.write, { src: d.read }, { aspect });
     d.swap();
   }
 }
@@ -345,15 +374,15 @@ function stepSim(S: GLState, score: Score, time: number) {
   pass(S, S.progs.divergence, S.div, { vel: S.vel.read }, { texel: vt });
   pass(S, S.progs.scale, S.pressure.write, { src: S.pressure.read }, { k: 0.8 });
   S.pressure.swap();
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 16; i++) {
     pass(S, S.progs.pressure, S.pressure.write, { pressure: S.pressure.read, div: S.div }, { texel: vt });
     S.pressure.swap();
   }
   pass(S, S.progs.gradient, S.vel.write, { pressure: S.pressure.read, vel: S.vel.read }, { texel: vt });
   S.vel.swap();
-  pass(S, S.progs.advect, S.vel.write, { vel: S.vel.read, src: S.vel.read }, { texel: vt, dt: DT, decay: 0.995 });
+  pass(S, S.progs.advect, S.vel.write, { vel: S.vel.read, src: S.vel.read }, { texel: vt, velTexel: vt, dt: DT, decay: 0.995, walls: 1 });
   S.vel.swap();
-  pass(S, S.progs.advect, S.dye.write, { vel: S.vel.read, src: S.dye.read }, { texel: vt, dt: DT, decay: Math.exp(-DT / 4.5) });
+  pass(S, S.progs.advect, S.dye.write, { vel: S.vel.read, src: S.dye.read }, { texel: [1 / S.dye.read.w, 1 / S.dye.read.h], dt: DT, decay: Math.exp(-DT / 4.5), walls: 0, velTexel: vt });
   S.dye.swap();
   S.step++;
 }

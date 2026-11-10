@@ -27,13 +27,13 @@ function hash(...xs: number[]): number {
 // ---------------------------------------------------------------------------
 
 /**
- * The toy: a clear bottle with a vortex spinning down its middle, narrow at the bottom and wide at
- * the top. Every voice is a band of glitter swirling round the funnel at its pitch's height
- * (seen in perspective: particles at the front bright and large, at the back dim), spinning faster
- * where the funnel is narrow. So the chord is the column's profile: a wide voicing a tall, gappy
- * column, a close one a dense knot, a unison a single swirling ring. Bands follow their notes with
- * weight and glitter trails behind, streaming between heights on a glide. Kicks surge the spin,
- * snares fling the glitter outward, hats make it sparkle.
+ * The toy: a clear bottle with a vortex spinning down its middle. The glitter fills the whole
+ * funnel evenly and spirals slowly upward; the voices shape it. Each voice bulges the funnel's
+ * silhouette at its pitch's height (a louder voice bulges more) and tints the glitter there in its
+ * colour, so the chord is the shape of the tornado: a wide voicing a long, lumpy funnel, a close
+ * one a single fat swell, a unison one bulge. Heights follow the notes with weight (the bass most
+ * of all, and it bulges least, so its leaps don't throw the shape about). The funnel bends and
+ * sways; kicks widen it and spin it faster, snares fling glitter out, hats make it sparkle.
  */
 export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false) {
   const { cx, u } = a;
@@ -45,30 +45,45 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const top = a.top + (a.bottom - a.top - H) / 2;
   const bot = top + H;
   const halfW = Math.min(a.width * 0.3, H * 0.28);
-  const tilt = 0.24; // how much we look down on the swirl
+  const tilt = 0.24;
   const inside0 = top + halfW * tilt + 16 * u;
   const inside1 = bot - halfW * tilt - 10 * u;
-  /** Funnel radius at height fraction f (0 bottom … 1 top). */
-  const funnel = (f: number) => halfW * (0.1 + 0.78 * Math.pow(Math.max(0, f), 0.75));
   const yOf = (f: number) => inside1 - f * (inside1 - inside0);
-  // A band's height follows its note with weight.
-  const smoothF = (v: number, time: number) => {
+  // A voice's height follows its note with weight (the bass with more).
+  const smoothF = (v: number) => {
+    const tau = v === 0 ? 1.1 : 0.6;
     let s = 0;
     let w = 0;
-    for (let i = 0; i < 9; i++) {
-      const age = i * 0.15;
-      const k = Math.exp(-age / 0.45);
-      s += pitchAt(score, v, time - age) * k;
+    for (let i = 0; i < 12; i++) {
+      const age = i * tau * 0.35;
+      const k = Math.exp(-age / tau);
+      s += pitchAt(score, v, t - age) * k;
       w += k;
     }
-    return Math.max(0.03, Math.min(0.97, 0.06 + 0.9 * ((s / w - lo) / span)));
+    return Math.max(0.04, Math.min(0.96, 0.06 + 0.9 * ((s / w - lo) / span)));
   };
-  const PER = lite ? 45 : 110;
-  const LAGS = 5;
-  const lagStep = 0.1;
-  const fAt = Array.from({ length: LAGS }, (_, j) => Array.from({ length: V }, (_, v) => smoothF(v, t - j * lagStep)));
-  const spinBoost = 1 + 0.9 * drum.kick;
-  const fling = 1 + 0.6 * drum.snare;
+  const bulges = Array.from({ length: V }, (_, v) => ({ f: smoothF(v), amp: levelAt(score, v, t) * (v === 0 ? 0.3 : 0.55), v }));
+  const W0 = 0.05;
+  /** The funnel's radius at height f: narrow at the bottom, wide at the top, swelling where the voices are. */
+  const radiusAt = (f: number) => {
+    let swell = 0;
+    for (const b of bulges) swell += b.amp * Math.exp(-(((f - b.f) / W0) ** 2));
+    const base = halfW * (0.06 + 0.4 * Math.pow(Math.max(0, f), 0.8));
+    return Math.min(halfW * 0.95, base * (1 + 0.15 * drum.kick) + halfW * 0.4 * Math.tanh(swell * 0.8));
+  };
+  /** Which voice tints the glitter at height f (the one swelling it most), and how strongly. */
+  const tintAt = (f: number) => {
+    let best = -1;
+    let bw = 0;
+    for (const b of bulges) {
+      const w = b.amp * Math.exp(-(((f - b.f) / (W0 * 1.4)) ** 2));
+      if (w > bw) (bw = w), (best = b.v);
+    }
+    return { v: best, w: Math.min(1, bw * 1.6) };
+  };
+  // The funnel bends and sways (more toward the top), and the kick shoves it.
+  const axis = (f: number) => cx + halfW * (0.22 * Math.sin(f * 3.2 + t * 0.6) + 0.1 * Math.sin(f * 7 - t * 1.1)) * f * (1 + 0.6 * drum.kick);
+  const spin = 1 + 0.8 * drum.kick;
 
   ctx.save();
   // Back of the glass and the liquid's tint.
@@ -83,66 +98,45 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   ctx.beginPath();
   ctx.ellipse(cx, bot - halfW * tilt, halfW, halfW * tilt, 0, Math.PI, Math.PI * 2);
   ctx.stroke();
-  // The funnel itself: faint spiralling threads round the core.
-  ctx.strokeStyle = alpha(st.text, 0.12);
-  for (let k = 0; k < 5; k++) {
-    ctx.beginPath();
-    for (let i = 0; i <= 80; i++) {
-      const f = i / 80;
-      const r = funnel(f) * 0.55;
-      const th = f * 14 + t * 2.2 * spinBoost + (k / 5) * Math.PI * 2;
-      const x = cx + Math.cos(th) * r;
-      const y = yOf(f) + Math.sin(th) * r * tilt;
-      if (i) ctx.lineTo(x, y);
-      else ctx.moveTo(x, y);
-    }
-    ctx.stroke();
+  // The funnel's body: a translucent silhouette, so its shape reads even between the glitter.
+  const steps = 60;
+  const body = new Path2D();
+  for (let i = 0; i <= steps; i++) {
+    const f = i / steps;
+    const p = { x: axis(f) - radiusAt(f), y: yOf(f) };
+    if (i) body.lineTo(p.x, p.y);
+    else body.moveTo(p.x, p.y);
   }
-  // Glitter: back half first (behind the funnel), then the front.
+  for (let i = steps; i >= 0; i--) body.lineTo(axis(i / steps) + radiusAt(i / steps), yOf(i / steps));
+  body.closePath();
+  const fill = ctx.createLinearGradient(0, inside0, 0, inside1);
+  fill.addColorStop(0, alpha(st.text, 0.07));
+  fill.addColorStop(1, alpha(st.text, 0.16));
+  ctx.fillStyle = fill;
+  ctx.fill(body);
+  // Glitter: back half, then the front.
+  const N = lite ? 700 : 1700;
   const draw = (front: boolean) => {
-    for (let v = 0; v < V; v++) {
-      const level = levelAt(score, v, t);
-      if (level < 0.03) continue;
-      ctx.fillStyle = st.voiceColor(v);
-      for (let b = 0; b < PER; b++) {
-        const lag = Math.min(LAGS - 1.001, hash(v, b, 1) * hash(v, b, 2) * (LAGS - 1));
-        const j0 = Math.floor(lag);
-        const lf = lag - j0;
-        // Height within the band: thick in the middle, thinning out.
-        const spread = ((hash(v, b, 3) + hash(v, b, 4) + hash(v, b, 5)) / 1.5 - 1) * 0.035;
-        const f = fAt[j0][v] + (fAt[j0 + 1][v] - fAt[j0][v]) * lf + spread;
-        const rr = funnel(f) * (0.62 + 0.5 * hash(v, b, 6)) * (1 + 0.35 * drum.snare * hash(v, b, 7)) * fling;
-        // Faster near the narrow bottom (angular speed grows as the radius shrinks).
-        const omega = ((1.4 * halfW) / Math.max(rr, halfW * 0.08)) * 0.55 * spinBoost;
-        const th = hash(v, b, 8) * Math.PI * 2 + t * omega;
-        const depth = Math.sin(th);
-        if (depth >= 0 !== front) continue;
-        const x = cx + Math.cos(th) * rr;
-        const y = yOf(f) + depth * rr * tilt;
-        // Glitter catches the light as it turns toward you; hats make it all flash.
-        const sparkle = Math.max(0, Math.cos(th * 3 + b)) ** 8 + drum.hat * hash(v, b, Math.floor(t * 10));
-        const size = (front ? 2.4 : 1.6) * u * (0.7 + 0.6 * hash(v, b, 9)) * (0.6 + 0.4 * level);
-        ctx.globalAlpha = Math.min(1, (front ? 0.85 : 0.35) * (0.5 + 0.5 * level) + 0.6 * sparkle);
-        ctx.fillRect(x - size, y - size * 0.6, size * 2, size * 1.2);
-      }
+    for (let b = 0; b < N; b++) {
+      // Spread evenly up the column, rising slowly as it spins.
+      const f = (hash(b, 1) + t * (0.025 + 0.02 * hash(b, 2))) % 1;
+      const rr = radiusAt(f) * (0.55 + 0.5 * Math.sqrt(hash(b, 3))) * (1 + 0.4 * drum.snare * hash(b, 4));
+      const omega = ((1.2 * halfW) / Math.max(rr, halfW * 0.06)) * 0.5 * spin;
+      const th = hash(b, 5) * Math.PI * 2 + t * omega;
+      const depth = Math.sin(th);
+      if (depth >= 0 !== front) continue;
+      const x = axis(f) + Math.cos(th) * rr;
+      const y = yOf(f) + depth * rr * tilt;
+      const tint = tintAt(f);
+      const sparkle = Math.max(0, Math.cos(th * 3 + b)) ** 8 + drum.hat * hash(b, Math.floor(t * 10));
+      const size = (front ? 2.3 : 1.5) * u * (0.7 + 0.6 * hash(b, 6));
+      ctx.fillStyle = tint.v >= 0 && hash(b, 7) < 0.35 + 0.65 * tint.w ? st.voiceColor(tint.v) : st.ink;
+      ctx.globalAlpha = Math.min(1, (front ? 0.8 : 0.3) + 0.6 * sparkle);
+      ctx.fillRect(x - size, y - size * 0.6, size * 2, size * 1.2);
     }
     ctx.globalAlpha = 1;
   };
   draw(false);
-  // The vortex core: a thin bright line down the middle where the air is pulled through.
-  const core = ctx.createLinearGradient(0, inside0, 0, inside1);
-  core.addColorStop(0, alpha(st.text, 0.04));
-  core.addColorStop(1, alpha(st.text, 0.3));
-  ctx.strokeStyle = core;
-  ctx.lineWidth = Math.max(1, 2 * u);
-  ctx.beginPath();
-  for (let i = 0; i <= 40; i++) {
-    const f = i / 40;
-    const x = cx + Math.sin(f * 9 - t * 3) * funnel(f) * 0.08;
-    if (i) ctx.lineTo(x, yOf(f));
-    else ctx.moveTo(x, yOf(f));
-  }
-  ctx.stroke();
   draw(true);
   // Front of the glass: edges, cap and highlights.
   ctx.strokeStyle = alpha(st.text, 0.35);

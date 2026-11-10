@@ -4,14 +4,14 @@
  * light, a bright rim, a sparkle) with a glossy bead beside it, in its note's jewel colour, placed
  * by note (angle in the wedge) and register (distance out), sized by level; they blend like light
  * through glass over a liquid backdrop with drifting caustics. Colour fringing at the edges, a soft
- * glow, and the eyepiece vignette. Folds = different notes in the chord (at least three),
+ * glow, and a soft vignette; it fills the whole frame. Folds = different notes in the chord (at least three),
  * crossfading as chords change. Kicks flash and breathe it, snares shake the glass, hats sparkle.
  * Returns false without WebGL2 (the caller draws the canvas version).
  */
 import { levelAt, pitchAt } from '../engine/motion';
 import type { Score } from '../engine/score';
 import { mod12 } from '../engine/theory';
-import { alpha, chordAt, drumPulse, skyRange, type ViewArea, type ViewStyle } from './harmony-views';
+import { chordAt, drumPulse, skyRange, type ViewArea, type ViewStyle } from './harmony-views';
 
 const MAXV = 24;
 
@@ -22,7 +22,7 @@ void main() { uv = pos * 0.5 + 0.5; gl_Position = vec4(pos, 0.0, 1.0); }`;
 const FRAG = `#version 300 es
 precision highp float;
 in vec2 uv; out vec4 o;
-uniform float t, spin, foldA, foldB, mixAB, kick, snare, hat;
+uniform float t, spin, foldA, foldB, mixAB, kick, snare, hat, aspect;
 uniform int n;
 uniform vec4 gem[${MAXV}];   // angle (0..1 of the wedge), radius (0..1), size, hue (0..1)
 uniform vec4 gem2[${MAXV}];  // level, seed, -, -
@@ -104,9 +104,9 @@ vec3 view(vec2 p) {
 }
 
 void main() {
-  vec2 p = uv * 2.0 - 1.0;
+  // The whole frame: the mandala reaches its corners (1 = the half-diagonal).
+  vec2 p = (uv * 2.0 - 1.0) * vec2(aspect, 1.0) / sqrt(aspect * aspect + 1.0);
   float r = length(p);
-  if (r > 1.0) { o = vec4(0.0); return; }
   // Colour fringing toward the edge: red and blue looked up slightly in and out.
   float ca = 0.006 * r * r;
   vec3 col;
@@ -114,10 +114,9 @@ void main() {
   col.g = view(p).g;
   col.b = view(p * (1.0 + ca)).b;
   col += vec3(0.08) * kick;
-  // Eyepiece: vignette and a soft edge.
-  col *= 0.3 + 0.7 * smoothstep(1.02, 0.5, r);
-  col *= smoothstep(1.0, 0.97, r);
-  o = vec4(col, smoothstep(1.0, 0.985, r));
+  // A soft vignette toward the corners.
+  col *= 0.35 + 0.65 * smoothstep(1.05, 0.45, r);
+  o = vec4(col, 1.0);
 }`;
 
 interface KState {
@@ -152,20 +151,18 @@ function init(): KState | null {
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     const loc: KState['loc'] = {};
-    for (const k of ['t', 'spin', 'foldA', 'foldB', 'mixAB', 'kick', 'snare', 'hat', 'n', 'gem', 'gem2']) loc[k] = gl.getUniformLocation(prog, k);
+    for (const k of ['t', 'spin', 'foldA', 'foldB', 'mixAB', 'kick', 'snare', 'hat', 'aspect', 'n', 'gem', 'gem2']) loc[k] = gl.getUniformLocation(prog, k);
     return { canvas, gl, prog, loc };
   } catch {
     return null;
   }
 }
 
-export function drawKaleidoscopeGL(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false): boolean {
+export function drawKaleidoscopeGL(ctx: CanvasRenderingContext2D, score: Score, t: number, _st: ViewStyle, _a: ViewArea, lite = false): boolean {
   if (kState === undefined) kState = init();
   const K = kState;
   if (!K) return false;
   const { gl, loc } = K;
-  const { cx, cy, u } = a;
-  const R = a.R * 0.92;
   const drum = drumPulse(score, t);
   const { lo, span } = skyRange(score);
   const now = chordAt(score, t);
@@ -183,14 +180,16 @@ export function drawKaleidoscopeGL(ctx: CanvasRenderingContext2D, score: Score, 
     gem2.set([level, ((v * 0.6180339) % 1) + 0.001 * v, 0, 0], n * 4);
     n++;
   }
-  // Render at the scope's size in device pixels (capped), then place it on the frame.
-  const m = ctx.getTransform();
-  const px = Math.max(64, Math.min(lite ? 640 : 1100, Math.round(2 * R * Math.abs(m.a))));
-  if (K.canvas.width !== px || K.canvas.height !== px) {
-    K.canvas.width = px;
-    K.canvas.height = px;
+  // Render the whole frame (capped), then draw it over the frame in screen space.
+  const Wc = ctx.canvas.width;
+  const Hc = ctx.canvas.height;
+  const pw = Math.max(64, Math.min(lite ? 640 : 1280, Wc));
+  const ph = Math.round((pw * Hc) / Wc);
+  if (K.canvas.width !== pw || K.canvas.height !== ph) {
+    K.canvas.width = pw;
+    K.canvas.height = ph;
   }
-  gl.viewport(0, 0, px, px);
+  gl.viewport(0, 0, pw, ph);
   gl.useProgram(K.prog);
   const fNow = foldOf(now.c);
   const fPrev = foldOf(now.prev);
@@ -203,6 +202,7 @@ export function drawKaleidoscopeGL(ctx: CanvasRenderingContext2D, score: Score, 
   gl.uniform1f(loc.kick, drum.kick);
   gl.uniform1f(loc.snare, drum.snare);
   gl.uniform1f(loc.hat, drum.hat);
+  gl.uniform1f(loc.aspect, pw / ph);
   gl.uniform1i(loc.n, n);
   gl.uniform4fv(loc.gem, gem);
   gl.uniform4fv(loc.gem2, gem2);
@@ -210,13 +210,8 @@ export function drawKaleidoscopeGL(ctx: CanvasRenderingContext2D, score: Score, 
   gl.clear(gl.COLOR_BUFFER_BIT);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   ctx.save();
-  ctx.drawImage(K.canvas as CanvasImageSource, cx - R, cy - R, 2 * R, 2 * R);
-  // The eyepiece rim.
-  ctx.strokeStyle = alpha(st.ink, 0.85);
-  ctx.lineWidth = Math.max(4, 10 * u);
-  ctx.beginPath();
-  ctx.arc(cx, cy, R + 4 * u, 0, Math.PI * 2);
-  ctx.stroke();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(K.canvas as CanvasImageSource, 0, 0, Wc, Hc);
   ctx.restore();
   return true;
 }
