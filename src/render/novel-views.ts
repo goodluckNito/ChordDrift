@@ -1,7 +1,7 @@
 /**
  * Less usual pictures of the music, each moving with the voices and pushed around by the drums:
  *
- *   Tornado       a vortex in a bottle; each voice a band of glitter swirling at its pitch's height.
+ *   Tornado       a tornado filling the frame; each voice a band of debris swirling at its pitch's height.
  *
  * Pure functions of (score, t) like every other view (marbling caches its work, but replays it
  * exactly when time jumps backwards).
@@ -23,37 +23,29 @@ function hash(...xs: number[]): number {
 }
 
 // ---------------------------------------------------------------------------
-// Tornado in a bottle
+// Tornado
 // ---------------------------------------------------------------------------
 
 /**
- * The toy: a clear bottle with a vortex spinning down its middle. The glitter fills the whole
- * funnel evenly and spirals slowly upward; the voices shape it. Each voice bulges the funnel's
- * silhouette at its pitch's height (a louder voice bulges more) and tints the glitter there in its
- * colour, so the chord is the shape of the tornado: a wide voicing a long, lumpy funnel, a close
- * one a single fat swell, a unison one bulge. Heights follow the notes with weight (the bass most
- * of all, and it bulges least, so its leaps don't throw the shape about). The funnel bends and
- * sways; kicks widen it and spin it faster, snares fling glitter out, hats make it sparkle.
+ * A tornado filling the frame: a rotating storm cloud across the top, the funnel dropping from it
+ * to the ground, a skirt of debris where it touches down. The funnel always keeps a tornado's shape
+ * (a rope at the ground flaring into the cloud); debris spirals slowly up it. Each voice is a band
+ * of brighter, denser debris at its pitch's height, much of it the note's own letter tumbling round,
+ * coloured like the note. Heights follow the notes with weight (the bass most of all, so its leaps
+ * don't throw the bands about). The funnel bends and its foot wanders; kicks widen it and spin it
+ * faster, snares light the cloud and fling debris out, hats make it sparkle.
  */
 export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false) {
   const { cx, u } = a;
+  const W = a.width;
+  const Hf = a.height ?? a.bottom + a.top;
   const drum = drumPulse(score, t);
   const { lo, span } = skyRange(score);
   const V = score.config.voices;
-  // The bottle.
-  const H = (a.bottom - a.top) * 0.92;
-  const top = a.top + (a.bottom - a.top - H) / 2;
-  const bot = top + H;
-  const halfW = Math.min(a.width * 0.3, H * 0.26);
-  // Seen straight from the side, like the toy on a shelf: a black cap, the clear tube, a black base.
-  const capH = H * 0.075;
-  const baseH = H * 0.06;
-  const glassTop = top + capH;
-  const glassBot = bot - baseH;
-  const tilt = 0; // a true side view: no looking down into the swirl
-  const inside0 = glassTop + 10 * u;
-  const inside1 = glassBot - 8 * u;
-  const yOf = (f: number) => inside1 - f * (inside1 - inside0);
+  const cloudY = Hf * 0.14; // the cloud base, where the funnel spreads into the storm
+  const ground = Hf * 0.83;
+  const halfW = Math.min(W * 0.5, Hf * 0.42);
+  const yOf = (f: number) => ground - f * (ground - cloudY);
   // A voice's height follows its note with weight (the bass with more).
   const smoothF = (v: number) => {
     const tau = v === 0 ? 1.1 : 0.6;
@@ -65,80 +57,190 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       s += pitchAt(score, v, t - age) * k;
       w += k;
     }
-    return Math.max(0.04, Math.min(0.96, 0.06 + 0.9 * ((s / w - lo) / span)));
+    return Math.max(0.04, Math.min(0.94, 0.06 + 0.88 * ((s / w - lo) / span)));
   };
   const bulges = Array.from({ length: V }, (_, v) => ({ f: smoothF(v), amp: levelAt(score, v, t) * (v === 0 ? 0.3 : 0.55), v }));
   const W0 = 0.05;
-  /**
-   * The funnel's radius at height f: always a tornado (a thin point at the bottom flaring to a wide
-   * top). The voices only ripple its edge a little where they are (never more than ~8%), so the
-   * silhouette keeps its shape; they show as bands of brighter, denser, coloured glitter instead.
-   */
+  /** The funnel's radius at height f: a rope at the ground flaring into the cloud; voices ripple it slightly. */
   const radiusAt = (f: number) => {
     let swell = 0;
     for (const b of bulges) swell += b.amp * Math.exp(-(((f - b.f) / W0) ** 2));
-    const ff = Math.max(0, f);
-    const base = halfW * (0.035 + 0.86 * Math.pow(ff, 1.65));
-    return Math.min(halfW * 0.95, base * (1 + 0.12 * drum.kick) * (1 + 0.08 * Math.tanh(swell)));
+    const ff = Math.max(0, Math.min(1, f));
+    const flare = Math.max(0, (ff - 0.82) / 0.18) ** 2;
+    const base = halfW * (0.035 + 0.5 * Math.pow(ff, 1.8) + 0.45 * flare);
+    return base * (1 + 0.12 * drum.kick) * (1 + 0.08 * Math.tanh(swell));
   };
-  /** Which voice tints the glitter at height f (the one swelling it most), and how strongly. */
   const tintAt = (f: number) => {
-    let best = -1;
     let bw = 0;
-    for (const b of bulges) {
-      const w = b.amp * Math.exp(-(((f - b.f) / (W0 * 1.4)) ** 2));
-      if (w > bw) (bw = w), (best = b.v);
-    }
-    return { v: best, w: Math.min(1, bw * 1.6) };
+    for (const b of bulges) bw = Math.max(bw, b.amp * Math.exp(-(((f - b.f) / (W0 * 1.4)) ** 2)));
+    return Math.min(1, bw * 1.6);
   };
-  // The funnel bends and sways (more toward the top), and the kick shoves it.
-  // The sway is limited by the room left beside the funnel at that height, so it never leaves the glass.
+  // The foot wanders along the ground; the body bends and sways, more toward the bottom (the rope).
+  const footX = cx + W * 0.07 * Math.sin(t * 0.11) + W * 0.03 * Math.sin(t * 0.29 + 1);
   const axis = (f: number) => {
-    const room = Math.max(0, halfW * 0.9 - radiusAt(f));
-    const sway = (0.6 * Math.sin(f * 3.2 + t * 0.6) + 0.3 * Math.sin(f * 7 - t * 1.1)) * (0.4 + 0.6 * f) * (1 + 0.5 * drum.kick);
-    return cx + room * Math.max(-1, Math.min(1, sway));
+    const sway = (0.6 * Math.sin(f * 3.2 + t * 0.6) + 0.3 * Math.sin(f * 7 - t * 1.1)) * (1 - 0.6 * f) * (1 + 0.5 * drum.kick);
+    return footX + (cx - footX) * Math.pow(f, 0.7) + W * 0.05 * sway;
   };
   const spin = 1 + 0.8 * drum.kick;
+  const flash = drum.snare;
 
   ctx.save();
-  // The liquid fills the whole tube; the tube is shaded like a cylinder (darker toward its edges).
-  const liquid = ctx.createLinearGradient(cx - halfW, 0, cx + halfW, 0);
-  liquid.addColorStop(0, alpha(st.ink, 0.12));
-  liquid.addColorStop(0.18, alpha(st.ink, 0.04));
-  liquid.addColorStop(0.5, alpha(st.ink, 0.02));
-  liquid.addColorStop(0.82, alpha(st.ink, 0.05));
-  liquid.addColorStop(1, alpha(st.ink, 0.14));
-  ctx.fillStyle = liquid;
-  ctx.fillRect(cx - halfW, glassTop, halfW * 2, glassBot - glassTop);
-  // The funnel's body: a translucent silhouette, so its shape reads even between the glitter.
-  const steps = 60;
+  // The sky darkens up into the storm; the ground is a faint plain with a horizon.
+  const sky = ctx.createLinearGradient(0, 0, 0, cloudY + Hf * 0.2);
+  sky.addColorStop(0, alpha(st.ink, 0.24 + 0.12 * flash));
+  sky.addColorStop(0.35, alpha(st.ink, 0.14 + 0.08 * flash));
+  sky.addColorStop(0.6, alpha(st.ink, 0.04 + 0.04 * flash));
+  sky.addColorStop(1, alpha(st.ink, 0));
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, cloudY + Hf * 0.2);
+  const land = ctx.createLinearGradient(0, ground, 0, Hf);
+  land.addColorStop(0, alpha(st.ink, 0.07));
+  land.addColorStop(1, alpha(st.ink, 0.02));
+  ctx.fillStyle = land;
+  ctx.fillRect(0, ground, W, Hf - ground);
+  ctx.strokeStyle = alpha(st.ink, 0.18);
+  ctx.lineWidth = Math.max(1, u);
+  ctx.beginPath();
+  ctx.moveTo(0, ground);
+  ctx.lineTo(W, ground);
+  ctx.stroke();
+
+  // Far off: low hills along the horizon, and grey rain curtains hanging from the storm's edges.
+  ctx.fillStyle = alpha(st.ink, 0.07);
+  ctx.beginPath();
+  ctx.moveTo(0, ground);
+  for (let i = 0; i <= 48; i++) {
+    const x = (i / 48) * W;
+    const h = Hf * (0.012 + 0.02 * hash(i, 51) + 0.012 * Math.sin(i * 0.7));
+    ctx.lineTo(x, ground - h);
+  }
+  ctx.lineTo(W, ground);
+  ctx.closePath();
+  ctx.fill();
+  for (let i = 0; i < 7; i++) {
+    const side = i % 2 ? 1 : -1;
+    const x0 = cx + side * W * (0.28 + 0.2 * hash(i, 52));
+    const w = W * (0.05 + 0.08 * hash(i, 53));
+    const lean = W * 0.04 * Math.sin(t * 0.1 + i);
+    // Soft at the sides (a horizontal gradient), fading out toward the ground in slices.
+    const g = ctx.createLinearGradient(x0 - w / 2, 0, x0 + w / 2, 0);
+    g.addColorStop(0, alpha(st.ink, 0));
+    g.addColorStop(0.5, alpha(st.ink, 0.07));
+    g.addColorStop(1, alpha(st.ink, 0));
+    ctx.fillStyle = g;
+    const y0 = cloudY - Hf * 0.04;
+    const slices = 8;
+    for (let k = 0; k < slices; k++) {
+      const a0 = k / slices;
+      const a1 = (k + 1) / slices;
+      ctx.globalAlpha = 1 - (a0 + a1) / 2;
+      ctx.beginPath();
+      ctx.moveTo(x0 - w / 2 + lean * a0, y0 + (ground - y0) * a0);
+      ctx.lineTo(x0 + w / 2 + lean * a0, y0 + (ground - y0) * a0);
+      ctx.lineTo(x0 + w / 2 + lean * a1, y0 + (ground - y0) * a1);
+      ctx.lineTo(x0 - w / 2 + lean * a1, y0 + (ground - y0) * a1);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // The storm cloud: a ragged base of small billows wheeling round above the funnel (seen from
+  // below, so the near side of the wheel hangs lower), thickest where the funnel joins it; a snare
+  // lights it up like lightning inside.
+  const deck = lite ? 60 : 150;
+  const billow = (front: boolean) => {
+    for (let i = 0; i < deck; i++) {
+      const phi = hash(i, 21) * Math.PI * 2 + t * (0.05 + 0.04 * hash(i, 22));
+      const depth = Math.sin(phi);
+      if (depth >= 0 !== front) continue;
+      const rr = W * (0.05 + 0.7 * hash(i, 23) ** 1.3);
+      const x = cx + Math.cos(phi) * rr;
+      const near = 1 - rr / (W * 0.75); // billows near the funnel hang lowest
+      const y = cloudY - Hf * (0.005 + 0.07 * hash(i, 24)) + depth * Hf * 0.03 + near * Hf * 0.03;
+      const r = Math.max(W, Hf * 0.6) * (0.025 + 0.045 * hash(i, 25));
+      const g = ctx.createRadialGradient(x, y - r * 0.25, r * 0.1, x, y, r);
+      const k = (front ? 0.16 : 0.1) + 0.12 * flash * hash(i, 26);
+      g.addColorStop(0, alpha(st.ink, k * 1.25));
+      g.addColorStop(0.5, alpha(st.ink, k * 0.6));
+      g.addColorStop(1, alpha(st.ink, 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(x - r, y - r, 2 * r, 2 * r);
+    }
+  };
+  billow(false);
+
+  // The funnel's body: a translucent silhouette, with condensation striations wrapping round its
+  // front as it turns, so the rotation reads even where there's little debris.
+  const steps = 70;
   const body = new Path2D();
   for (let i = 0; i <= steps; i++) {
     const f = i / steps;
-    const p = { x: axis(f) - radiusAt(f), y: yOf(f) };
-    if (i) body.lineTo(p.x, p.y);
-    else body.moveTo(p.x, p.y);
+    if (i) body.lineTo(axis(f) - radiusAt(f), yOf(f));
+    else body.moveTo(axis(f) - radiusAt(f), yOf(f));
   }
   for (let i = steps; i >= 0; i--) body.lineTo(axis(i / steps) + radiusAt(i / steps), yOf(i / steps));
   body.closePath();
-  const fill = ctx.createLinearGradient(0, inside0, 0, inside1);
-  fill.addColorStop(0, alpha(st.text, 0.07));
-  fill.addColorStop(1, alpha(st.text, 0.16));
+  const fill = ctx.createLinearGradient(0, cloudY, 0, ground);
+  fill.addColorStop(0, alpha(st.ink, 0));
+  fill.addColorStop(0.12, alpha(st.ink, 0.1));
+  fill.addColorStop(0.7, alpha(st.ink, 0.1));
+  fill.addColorStop(1, alpha(st.ink, 0.05));
   ctx.fillStyle = fill;
   ctx.fill(body);
-  // Glitter: back half, then the front. Dust fills the funnel; in each voice's band the glitter is
-  // the note itself, tiny letters of its name swirling round, coloured like the note.
+  ctx.save();
+  ctx.clip(body);
+  ctx.lineWidth = Math.max(1, 1.1 * u);
+  const strands = lite ? 10 : 18;
+  for (let k = 0; k < strands; k++) {
+    const th0 = (k / strands) * Math.PI * 2;
+    ctx.strokeStyle = alpha(st.ink, 0.05 + 0.05 * hash(k, 31));
+    ctx.beginPath();
+    let on = false;
+    for (let i = 0; i <= steps; i++) {
+      const f = i / steps;
+      const th = th0 + f * 4.5 - t * 0.9 * spin;
+      if (Math.sin(th) < 0) {
+        on = false;
+        continue;
+      }
+      const x = axis(f) + Math.cos(th) * radiusAt(f);
+      if (on) ctx.lineTo(x, yOf(f));
+      else ctx.moveTo(x, yOf(f));
+      on = true;
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Debris: back half, then the front. Dust fills the funnel; in each voice's band the debris is
+  // the note itself, letters of its name swirling round, coloured like the note.
   const now = chordAt(score, t);
   const names = bulges.map((b) => nameOf(score, mod12(Math.round(pitchAt(score, b.v, t))), now.c));
   const colors = bulges.map((b) => st.noteColor(pitchAt(score, b.v, t), b.v));
-  const N = lite ? 700 : 1700;
-  const letterPx = 11 * a.tu;
+  const N = lite ? 900 : 2200;
+  const letterPx = 14 * a.tu;
+  // The skirt where it touches down: dust thrown out round the foot, low and wide.
+  const skirt = lite ? 160 : 420;
   const draw = (front: boolean) => {
     ctx.font = `700 ${letterPx}px ${st.font}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    for (let b = 0; b < skirt; b++) {
+      const life = (hash(b, 41) + t * (0.15 + 0.1 * hash(b, 42))) % 1;
+      const rr = halfW * (0.05 + 0.32 * Math.sqrt(life) * (0.5 + 0.5 * hash(b, 43))) * (1 + 0.35 * drum.kick);
+      const th = hash(b, 44) * Math.PI * 2 + t * (1.4 * spin) / (0.4 + rr / halfW * 3);
+      const depth = Math.sin(th);
+      if (depth >= 0 !== front) continue;
+      const x = footX + Math.cos(th) * rr;
+      const y = ground - Hf * 0.07 * Math.sin(Math.PI * life) * hash(b, 45) + depth * rr * 0.18;
+      const size = (front ? 1.8 : 1.2) * u * (0.6 + 0.8 * hash(b, 46));
+      ctx.fillStyle = st.ink;
+      ctx.globalAlpha = (0.1 + 0.3 * (0.55 + 0.45 * depth)) * (1 - life);
+      ctx.fillRect(x - size, y - size * 0.6, size * 2, size * 1.2);
+    }
     for (let b = 0; b < N; b++) {
-      // Half the glitter spreads evenly up the column, rising slowly as it spins; the other half
+      // Half the debris spreads evenly up the funnel, rising slowly as it spins; the other half
       // gathers round the voices' heights.
       let f: number;
       let band = -1;
@@ -150,27 +252,26 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
         f = Math.max(0.01, Math.min(0.99, bv.f + g * W0 * 1.4 + 0.012 * Math.sin(t * 2 + b)));
         if (bv.amp < 0.03) continue;
       }
-      const rr = Math.min(halfW * 0.9 - Math.abs(axis(f) - cx), radiusAt(f) * (0.55 + 0.5 * Math.sqrt(hash(b, 3))) * (1 + 0.4 * drum.snare * hash(b, 4)));
-      const omega = ((1.2 * halfW) / Math.max(rr, halfW * 0.06)) * 0.5 * spin;
+      const rr = radiusAt(f) * (0.55 + 0.5 * Math.sqrt(hash(b, 3))) * (1 + 0.4 * drum.snare * hash(b, 4));
+      const omega = ((1.2 * halfW) / Math.max(rr, halfW * 0.06)) * 0.35 * spin;
       const th = hash(b, 5) * Math.PI * 2 + t * omega;
       const depth = Math.sin(th);
       if (depth >= 0 !== front) continue;
       const x = axis(f) + Math.cos(th) * rr;
-      const y = yOf(f) + depth * rr * tilt;
+      const y = yOf(f);
       const sparkle = Math.max(0, Math.cos(th * 3 + b)) ** 8 + drum.hat * hash(b, Math.floor(t * 10));
-      // Nearer (front) glitter is larger and brighter, the far side dim: depth without a tilt.
-      const near = 0.55 + 0.45 * depth;
+      const near = 0.55 + 0.45 * depth; // the near side larger and brighter, the far side dim
       if (band >= 0 && hash(b, 12) < 0.45) {
         ctx.fillStyle = colors[band];
-        ctx.globalAlpha = Math.min(1, 0.35 + 0.55 * near + 0.4 * sparkle);
+        ctx.globalAlpha = Math.min(1, 0.3 + 0.6 * near + 0.4 * sparkle);
         const sc = 0.65 + 0.5 * near;
         ctx.save();
         ctx.translate(x, y);
-        ctx.scale(sc * Math.max(0.35, Math.abs(Math.cos(th))) , sc); // letters turn edge-on as they swing round
+        ctx.scale(sc * Math.max(0.3, Math.abs(Math.cos(th))), sc); // letters turn edge-on as they swing round
         ctx.fillText(names[band], 0, 0);
         ctx.restore();
       } else {
-        const tint = band >= 0 ? 1 : tintAt(f).w;
+        const tint = band >= 0 ? 1 : tintAt(f);
         const size = (front ? 2 : 1.4) * u * (0.6 + 0.6 * hash(b, 6)) * (0.8 + 0.5 * tint);
         ctx.fillStyle = band >= 0 ? colors[band] : st.ink;
         ctx.globalAlpha = Math.min(1, (0.12 + 0.45 * near) * (band >= 0 ? 1 : 0.8) + 0.6 * sparkle);
@@ -181,95 +282,8 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   };
   draw(false);
   draw(true);
-
-  // The tube, as glass: thick walls that bend the light at the edges, a broad soft highlight and a
-  // sharp one, a rim light, and a shadow where the liquid meets the cap and base.
-  const L = cx - halfW;
-  const R = cx + halfW;
-  const gh = glassBot - glassTop;
-  const wall = Math.max(3, halfW * 0.06);
-  for (const [x0, dir] of [[L, 1], [R, -1]] as const) {
-    const g = ctx.createLinearGradient(x0, 0, x0 + dir * wall, 0);
-    g.addColorStop(0, 'rgba(255,255,255,0.22)');
-    g.addColorStop(0.35, 'rgba(255,255,255,0.05)');
-    g.addColorStop(1, 'rgba(255,255,255,0.12)');
-    ctx.fillStyle = g;
-    ctx.fillRect(Math.min(x0, x0 + dir * wall), glassTop, wall, gh);
-  }
-  const hi = ctx.createLinearGradient(L, 0, R, 0);
-  hi.addColorStop(0.0, 'rgba(255,255,255,0)');
-  hi.addColorStop(0.1, 'rgba(255,255,255,0)');
-  hi.addColorStop(0.13, 'rgba(255,255,255,0.32)');
-  hi.addColorStop(0.15, 'rgba(255,255,255,0.08)');
-  hi.addColorStop(0.24, 'rgba(255,255,255,0.12)');
-  hi.addColorStop(0.34, 'rgba(255,255,255,0)');
-  hi.addColorStop(0.86, 'rgba(255,255,255,0)');
-  hi.addColorStop(0.9, 'rgba(255,255,255,0.14)');
-  hi.addColorStop(0.92, 'rgba(255,255,255,0)');
-  ctx.fillStyle = hi;
-  ctx.fillRect(L, glassTop, halfW * 2, gh);
-  for (const [y0, dir] of [[glassTop, 1], [glassBot, -1]] as const) {
-    const g = ctx.createLinearGradient(0, y0, 0, y0 + dir * 18 * u);
-    g.addColorStop(0, 'rgba(0,0,0,0.35)');
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(L, Math.min(y0, y0 + dir * 18 * u), halfW * 2, 18 * u);
-  }
-  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
-  ctx.lineWidth = Math.max(1, 1.2 * u);
-  ctx.beginPath();
-  ctx.moveTo(L, glassTop);
-  ctx.lineTo(L, glassBot);
-  ctx.moveTo(R, glassTop);
-  ctx.lineTo(R, glassBot);
-  ctx.stroke();
-  // Black plastic: the cap with its grip ridges and a sheen, the base with a lip and a shadow under it.
-  const plastic = (x0: number, y0: number, w: number, h: number, r: number[]) => {
-    const g = ctx.createLinearGradient(x0, 0, x0 + w, 0);
-    g.addColorStop(0, '#020202');
-    g.addColorStop(0.18, '#1c1c20');
-    g.addColorStop(0.3, '#4a4a52');
-    g.addColorStop(0.36, '#26262b');
-    g.addColorStop(0.75, '#101012');
-    g.addColorStop(1, '#020202');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.roundRect(x0, y0, w, h, r);
-    ctx.fill();
-    const v = ctx.createLinearGradient(0, y0, 0, y0 + h);
-    v.addColorStop(0, 'rgba(255,255,255,0.14)');
-    v.addColorStop(0.25, 'rgba(255,255,255,0)');
-    v.addColorStop(0.85, 'rgba(0,0,0,0)');
-    v.addColorStop(1, 'rgba(0,0,0,0.4)');
-    ctx.fillStyle = v;
-    ctx.fill();
-  };
-  // Shadow on the surface under the base.
-  const shadow = ctx.createRadialGradient(cx, bot + 4 * u, 0, cx, bot + 4 * u, halfW * 1.5);
-  shadow.addColorStop(0, 'rgba(0,0,0,0.35)');
-  shadow.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = shadow;
-  ctx.save();
-  ctx.translate(cx, bot + 4 * u);
-  ctx.scale(1, 0.18);
-  ctx.translate(-cx, -(bot + 4 * u));
-  ctx.fillRect(cx - halfW * 1.5, bot + 4 * u - halfW * 1.5, halfW * 3, halfW * 3);
+  billow(true); // the near side of the cloud hangs in front of the funnel's top
   ctx.restore();
-  plastic(L - halfW * 0.04, top, halfW * 2.08, capH + 2 * u, [12 * u, 12 * u, 3 * u, 3 * u]);
-  // Grip ridges on the cap.
-  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-  ctx.lineWidth = Math.max(1, u);
-  ctx.beginPath();
-  for (let i = 1; i < 22; i++) {
-    const x = L - halfW * 0.04 + (halfW * 2.08 * i) / 22;
-    ctx.moveTo(x, top + capH * 0.22);
-    ctx.lineTo(x, top + capH * 0.92);
-  }
-  ctx.stroke();
-  plastic(L - halfW * 0.1, glassBot - 2 * u, halfW * 2.2, baseH + 2 * u, [3 * u, 3 * u, 14 * u, 14 * u]);
-  ctx.fillStyle = 'rgba(255,255,255,0.12)';
-  ctx.fillRect(L - halfW * 0.08, glassBot + 1 * u, halfW * 2.16, Math.max(1, 1.2 * u));
-  ctx.restore()
 }
 
 // ---------------------------------------------------------------------------

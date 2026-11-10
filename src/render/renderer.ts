@@ -1548,6 +1548,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       width: W,
       top: lay.bandTop,
       bottom: lay.bandBottom,
+      height: H,
     };
     const view = cfg.video.view;
     if (view === 'marbling') {

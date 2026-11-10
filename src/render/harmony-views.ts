@@ -38,6 +38,8 @@ export interface ViewArea {
   width: number;
   top: number;
   bottom: number;
+  /** The whole frame height (for views that fill the frame). */
+  height?: number;
 }
 
 const rgb = (hex: string) => {
