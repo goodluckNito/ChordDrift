@@ -203,15 +203,33 @@ export function drumPulse(score: Score, t: number): { kick: number; snare: numbe
 // ---------------------------------------------------------------------------
 
 /**
- * Each voice drives the plate in one standing-wave mode,
- *   cos(nπx)·cos(mπy) + s·cos(mπx)·cos(nπy)   on x, y ∈ [−1, 1],
- * and sand gathers on the nodal lines, where the summed waves cancel. Register sets the mode's
- * size (k = √(n² + m²): higher notes, finer patterns), the note sets its angle (n = k·cosθ,
- * m = k·sinθ) and its symmetry s. Everything is continuous in pitch, so a glide melts one
- * pattern into the next; a unison is one clean classic figure, and big chords tangle.
+ * Real Chladni figures: a square plate's standing waves are
+ *   cos(nπx)·cos(mπy) ± cos(mπx)·cos(nπy)   on x, y ∈ [−1, 1]
+ * with whole numbers n, m, and sand gathers on the nodal lines, where the plate stays still.
+ * Each voice drives one figure, chosen by its interval above the bass (the root a simple figure,
+ * fifths and fourths simple ones, seconds and the tritone busy ones), one step finer per octave
+ * above the bass. So a chord's shape decides its figure: a major triad draws the same picture in
+ * any key, a minor triad another; lower voices weigh more. A glide crossfades between the two
+ * figures either side of where the voice is, so patterns melt into each other.
  */
+const MODES: [number, number, number][] = [
+  [1, 2, 1], // root / octave
+  [5, 6, -1], // minor 2nd
+  [3, 4, -1], // major 2nd
+  [2, 3, -1], // minor 3rd
+  [1, 4, 1], // major 3rd
+  [2, 5, 1], // 4th
+  [4, 7, -1], // tritone
+  [1, 3, -1], // 5th
+  [3, 5, 1], // minor 6th
+  [2, 4, -1], // major 6th
+  [3, 6, 1], // minor 7th
+  [4, 5, 1], // major 7th
+];
 interface SandBuffer {
-  n: number;
+  /** Field grid (smooth, so coarse) and the image it's drawn into (the plate's real size). */
+  fn: number;
+  on: number;
   canvas: HTMLCanvasElement | OffscreenCanvas;
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
   img: ImageData;
@@ -221,21 +239,20 @@ interface SandBuffer {
 }
 let sand: SandBuffer | null = null;
 
-function sandBuffer(n: number): SandBuffer {
-  if (sand && sand.n === n) return sand;
-  const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(n, n) : Object.assign(document.createElement('canvas'), { width: n, height: n });
+function sandBuffer(fn: number, on: number): SandBuffer {
+  if (sand && sand.fn === fn && sand.on === on) return sand;
+  const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(on, on) : Object.assign(document.createElement('canvas'), { width: on, height: on });
   const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-  const grain = new Float32Array(n * n);
+  const grain = new Float32Array(on * on);
   for (let i = 0; i < grain.length; i++) {
     let h = Math.imul(i + 1, 0x9e3779b1) >>> 0;
     h = Math.imul(h ^ (h >>> 15), 0x85ebca6b) >>> 0;
     h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
     grain[i] = ((h ^ (h >>> 16)) >>> 0) / 4294967296;
   }
-  sand = { n, canvas, ctx, img: ctx.createImageData(n, n), grain, field: new Float32Array(n * n) };
+  sand = { fn, on, canvas, ctx, img: ctx.createImageData(on, on), grain, field: new Float32Array(fn * fn) };
   return sand;
 }
-
 /** A voice's level apart from the swell crossfade (the layers carry that): its articulation. */
 const widthLevel = (score: Score, _v: number, t: number) => Math.max(0, Math.min(1, articulationAt(score, t)));
 
@@ -256,95 +273,133 @@ export function drawChladni(ctx: CanvasRenderingContext2D, score: Score, t: numb
   // Drums shake the plate: a kick throws the sand up (the lines blur and the plate thumps), a
   // snare scatters grains across it, hats make the edges shimmer.
   const drum = drumPulse(score, t);
-  const S = a.R * 1.7 * (1 + 0.025 * drum.kick); // plate side
-  const N = lite ? 120 : 200;
-  const buf = sandBuffer(N);
-  const { lo, span } = skyRange(score);
-  // One mode per distinct (rounded to a hundredth) pitch; doubled notes just drive it harder.
-  const modes = new Map<number, { p: number; w: number }>();
-  const drive = (p: number, w: number) => {
-    const key = Math.round(p * 100);
-    const m = modes.get(key) ?? { p, w: 0 };
-    m.w += w;
-    modes.set(key, m);
+  const S = a.R * 1.7 * (1 + 0.02 * drum.kick); // plate side
+  const FN = lite ? 110 : 170;
+  const ON = Math.max(160, Math.min(lite ? 360 : 560, Math.round(a.R * 1.7)));
+  const buf = sandBuffer(FN, ON);
+  // Figures, keyed by (n, m, sign); weights add up.
+  const figures = new Map<string, { n: number; m: number; sg: number; w: number }>();
+  const add = (n: number, m: number, sg: number, w: number) => {
+    const key = `${n},${m},${sg}`;
+    const f = figures.get(key) ?? { n, m, sg, w: 0 };
+    f.w += w;
+    figures.set(key, f);
   };
-  const swell = score.config.motion.transition === 'swell';
-  if (swell) {
-    // Release & swell: both chords drive the plate while one fades and the next swells in, so the
-    // pattern melts across instead of snapping.
-    for (const L of [0, 1] as const) {
-      for (let v = 0; v < score.config.voices; v++) {
-        const l = layerAt(score, L, v, t);
-        if (l.g > 0.01) drive(l.p, l.g * widthLevel(score, v, t));
+  let power = 0;
+  const layer = (ps: number[], ws: number[]) => {
+    let bass = Infinity;
+    ps.forEach((p, v) => ws[v] > 0.02 && (bass = Math.min(bass, p)));
+    if (!Number.isFinite(bass)) return;
+    ps.forEach((p, v) => {
+      const w0 = ws[v];
+      if (w0 <= 0.02) return;
+      const x = Math.max(0, p - bass);
+      const oct = Math.floor(x / 12 + 1e-9);
+      const iv = x - oct * 12;
+      const i0 = Math.floor(iv);
+      const f = iv - i0;
+      const w = w0 / (1 + 0.6 * oct);
+      power += w * w;
+      for (const [i, wf] of [
+        [i0, 1 - f],
+        [i0 + 1, f],
+      ] as const) {
+        if (wf < 1e-3) continue;
+        const o = oct + (i >= 12 ? 1 : 0);
+        const [n, m, sg] = MODES[i % 12];
+        add(n + o, m + o, sg, w * wf);
       }
+    });
+  };
+  const V = score.config.voices;
+  if (score.config.motion.transition === 'swell') {
+    // Release & swell: both chords drive the plate while one fades and the next swells in.
+    for (const L of [0, 1] as const) {
+      const ls = Array.from({ length: V }, (_, v) => layerAt(score, L, v, t));
+      layer(
+        ls.map((l) => l.p),
+        ls.map((l, v) => l.g * widthLevel(score, v, t)),
+      );
     }
-  } else soundingPitches(score, t).forEach((p, v) => drive(p, levelAt(score, v, t)));
+  } else {
+    const ps = soundingPitches(score, t);
+    layer(
+      ps,
+      ps.map((_, v) => levelAt(score, v, t)),
+    );
+  }
   // A change without a glide (swell, pluck) throws the sand up, and it settles into the new
-  // pattern over about half a second, the way sand jumps when a plate's note changes.
+  // figure over about half a second, the way sand jumps when a plate's note changes.
   const now = chordAt(score, t);
   const snap = score.config.motion.transition !== 'glide' && now.c && now.k > 0 ? Math.exp(-Math.max(0, t - now.c.t) / 0.3) : 0;
-  const list = [...modes.values()].filter((m) => m.w > 1e-3);
+
+  const list = [...figures.values()];
   const M = list.length;
-  const Cn = new Float32Array(M * N);
-  const Cm = new Float32Array(M * N);
-  const W = new Float32Array(M);
-  const Sy = new Float32Array(M);
-  let power = 0;
-  list.forEach((m, i) => {
-    const k = 2.2 + 7 * Math.max(0, Math.min(1, (m.p - lo) / span));
-    const theta = (((m.p % 12) + 12) % 12) / 12 * (Math.PI / 2);
-    const n = k * Math.cos(theta);
-    const mm = k * Math.sin(theta);
-    for (let x = 0; x < N; x++) {
-      const X = -1 + (2 * x) / (N - 1);
-      Cn[i * N + x] = Math.cos(n * Math.PI * X);
-      Cm[i * N + x] = Math.cos(mm * Math.PI * X);
+  const Cn = new Float32Array(M * FN);
+  const Cm = new Float32Array(M * FN);
+  list.forEach((f, i) => {
+    for (let x = 0; x < FN; x++) {
+      const X = -1 + (2 * x) / (FN - 1);
+      Cn[i * FN + x] = Math.cos(f.n * Math.PI * X);
+      Cm[i * FN + x] = Math.cos(f.m * Math.PI * X);
     }
-    W[i] = m.w;
-    // Symmetry: −1 at the ends of the note's turn (so the wrap from B to C, which swaps n and m,
-    // is seamless) and +1 in the middle, where n = m and the − form would cancel to nothing.
-    Sy[i] = -Math.cos(4 * theta);
-    power += m.w * m.w;
   });
   const field = buf.field;
   let sumSq = 0;
-  for (let y = 0; y < N; y++) {
-    for (let x = 0; x < N; x++) {
-      let f = 0;
+  for (let y = 0; y < FN; y++) {
+    for (let x = 0; x < FN; x++) {
+      let v = 0;
       for (let i = 0; i < M; i++) {
-        const o = i * N;
-        f += W[i] * (Cn[o + x] * Cm[o + y] + Sy[i] * Cm[o + x] * Cn[o + y]);
+        const o = i * FN;
+        const f = list[i];
+        v += f.w * (Cn[o + x] * Cm[o + y] + f.sg * Cm[o + x] * Cn[o + y]);
       }
-      field[y * N + x] = f;
-      sumSq += f * f;
+      field[y * FN + x] = v;
+      sumSq += v * v;
     }
   }
-  const rms = Math.sqrt(sumSq / (N * N)) + 1e-6;
+  const rms = Math.sqrt(sumSq / (FN * FN)) + 1e-6;
   // Silence (or a field that cancels out) leaves the plate bare rather than painting it solid.
   const present = Math.min(1, Math.sqrt(power) * 1.5) * Math.min(1, rms / (0.05 * Math.sqrt(power) + 1e-6));
   const [r, g, b] = toRgb(ctx, st.ink);
   const data = buf.img.data;
   const grain = buf.grain;
   // Thrown sand: the band of grains around each line widens, and grains loosen.
-  const width = 0.03 * (1 + 5 * Math.max(drum.kick, snap * 0.8) + 1.5 * drum.hat);
-  const loose = 0.85 + 0.6 * Math.max(drum.kick, snap);
+  const width = 0.012 * (1 + 6 * Math.max(drum.kick, snap * 0.8) + 1.5 * drum.hat);
+  const loose = 0.8 + 0.6 * Math.max(drum.kick, snap);
   // Scattered sand: each snare throws its own random sprinkle (seeded by the hit, so it holds still).
-  const dust = drum.snare * 0.07;
-  const shift = Math.floor(drum.snareAt * 7919) % (N * N);
-  for (let i = 0; i < N * N; i++) {
-    const v = field[i] / rms;
-    const s = Math.exp(-(v * v) / width); // close to a nodal line → lots of sand
-    let on = s > grain[i] * loose + 0.08 ? 1 : s * 0.25;
-    if (dust > 0 && grain[(i + shift) % (N * N)] < dust) on = Math.max(on, 0.8);
-    data[i * 4] = r;
-    data[i * 4 + 1] = g;
-    data[i * 4 + 2] = b;
-    data[i * 4 + 3] = Math.round(255 * on * present * (0.55 + 0.45 * s));
+  const dust = drum.snare * 0.03;
+  const shift = Math.floor(drum.snareAt * 7919) % (ON * ON);
+  const scale = (FN - 1) / (ON - 1);
+  for (let y = 0; y < ON; y++) {
+    const fy = y * scale;
+    const y0 = Math.min(FN - 2, Math.floor(fy));
+    const ty = fy - y0;
+    for (let x = 0; x < ON; x++) {
+      const fx = x * scale;
+      const x0 = Math.min(FN - 2, Math.floor(fx));
+      const tx = fx - x0;
+      // The field is smooth, so the coarse grid sampled bilinearly is exact enough; the grains are full size.
+      const i00 = y0 * FN + x0;
+      const f = (field[i00] * (1 - tx) + field[i00 + 1] * tx) * (1 - ty) + (field[i00 + FN] * (1 - tx) + field[i00 + FN + 1] * tx) * ty;
+      const v = f / rms;
+      const s = Math.exp(-(v * v) / width); // close to a nodal line → lots of sand
+      const i = y * ON + x;
+      // Soft-edged grains (no hard on/off pixels), plus a faint haze where the sand thins out.
+      let on = Math.max(0, Math.min(1, (s - grain[i] * loose - 0.06) * 7)) + s * 0.1;
+      if (dust > 0 && grain[(i + shift) % (ON * ON)] < dust) on = Math.max(on, 0.7);
+      data[i * 4] = r;
+      data[i * 4 + 1] = g;
+      data[i * 4 + 2] = b;
+      data[i * 4 + 3] = Math.round(255 * Math.min(1, on) * present);
+    }
   }
   buf.ctx.putImageData(buf.img, 0, 0);
 
   ctx.save();
-  // The plate: a faint square, its centre mount, and tick marks for the edge.
+  // The plate: a faint sheet and edge, the sand, and its centre mount.
+  ctx.fillStyle = alpha(st.ink, 0.035);
+  ctx.fillRect(cx - S / 2, cy - S / 2, S, S);
   ctx.strokeStyle = alpha(st.text, 0.22);
   ctx.lineWidth = Math.max(1, 1.2 * u);
   ctx.strokeRect(cx - S / 2, cy - S / 2, S, S);
@@ -355,13 +410,5 @@ export function drawChladni(ctx: CanvasRenderingContext2D, score: Score, t: numb
   ctx.beginPath();
   ctx.arc(cx, cy, 4 * u, 0, Math.PI * 2);
   ctx.fill();
-  // Each mode as a dot on the plate's edge (where along it: the note; colour: its pitch class).
-  for (const m of list) {
-    const pos = (((m.p % 12) + 12) % 12) / 12;
-    ctx.fillStyle = st.pcColor(mod12(Math.round(m.p)));
-    ctx.beginPath();
-    ctx.arc(cx - S / 2 + pos * S, cy + S / 2 + 12 * u, 3.5 * u * Math.min(2, 0.6 + m.w * 0.4), 0, Math.PI * 2);
-    ctx.fill();
-  }
   ctx.restore();
 }
