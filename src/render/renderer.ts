@@ -86,6 +86,9 @@ const luminance = (hex: string) => {
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 };
 const withAlpha = (hex: string, a: number) => `rgba(${rgbOf(hex).join(',')},${a})`;
+/** Any of the colours themes produce (hex, rgb(), hsl()) with an alpha. */
+const colorAlpha = (c: string, a: number) =>
+  c.startsWith('#') ? withAlpha(c, a) : c.startsWith('rgb(') ? c.replace(/^rgb\(([^)]+)\)$/, `rgba($1,${a})`) : c.startsWith('hsl(') ? c.replace(/\)$/, ` / ${a})`) : c;
 
 function styleOf(cfg: ChordDriftConfig): Style {
   const th = cfg.theme;
@@ -513,7 +516,8 @@ class Painter {
     return path;
   }
 
-  paint(lineWidth: number) {
+  /** Paint everything collected; `opacity` dims the whole batch (older spiral turns). */
+  paint(lineWidth: number, opacity = 1) {
     const ctx = this.ctx;
     const glow = this.style.glow;
     ctx.lineCap = 'round';
@@ -523,7 +527,7 @@ class Painter {
       // A struggling preview keeps only the narrow pass (the wide one paints the most pixels).
       const passes: (readonly [number, number])[] = lite ? [[lineWidth * 3, 0.2]] : [[lineWidth * 6, 0.07], [lineWidth * 3, 0.16]];
       for (const [width, alpha] of passes) {
-        ctx.globalAlpha = alpha * glow;
+        ctx.globalAlpha = alpha * glow * opacity;
         ctx.lineWidth = width;
         for (const [color, path] of this.strokes) {
           ctx.strokeStyle = color;
@@ -538,6 +542,7 @@ class Painter {
       }
       ctx.globalAlpha = 1;
     }
+    ctx.globalAlpha = opacity;
     ctx.lineWidth = lineWidth;
     for (const [color, path] of this.strokes) {
       ctx.strokeStyle = color;
@@ -547,6 +552,7 @@ class Painter {
       ctx.fillStyle = color;
       ctx.fill(path);
     }
+    ctx.globalAlpha = 1;
     this.strokes.clear();
     this.fills.clear();
   }
@@ -1043,8 +1049,25 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
   // Sized by turns: each ring is a fixed ratio bigger than the next (1.5× zooming, 1.45× draining),
   // so several turns stack up as concentric rings instead of one short arc.
   const sink = period / Math.log(zoom ? 1.5 : 1.45); // e-folding time
-  const memory = zoom ? sink * Math.log(1.8) : sink * Math.log(1 / 0.05); // how far back trails go
-  const ahead = zoom ? Math.min(60, sink * Math.log(6)) : 0; // how far ahead (zoom only)
+  // Three turns of history at most (13 voices × many turns was a wall of rings), and two of future.
+  const memory = zoom ? sink * Math.log(1.8) : 3 * period; // how far back trails go
+  // The future spirals in inside the present ring and interleaves with it, so only a short glimpse.
+  const ahead = zoom ? Math.min(60, 0.75 * period) : 0; // how far ahead (zoom only)
+  /**
+   * The trail fades like a comet: brightness falls smoothly with age (to KEEP after one turn),
+   * so the newest stretch reads clearly and older turns recede instead of stacking up at full
+   * strength. Each whole turn is a batch painted at its starting opacity, with a conic gradient
+   * around the centre carrying the fade within the turn (turns meet at the hand, so it's seamless).
+   * Zooming, the future fades the same way ahead of the hand. Ages < 0 are the future.
+   */
+  const KEEP = 0.3;
+  /** Ahead, it fades faster: the future is a hint of what's coming, not a second set of rings. */
+  const KEEP_AHEAD = 0.08;
+  const TURNS = Math.max(1, Math.ceil(Math.max(memory, ahead) / period));
+  const turnOf = (age: number) => {
+    const n = Math.min(TURNS - 1, Math.floor(Math.abs(age) / period));
+    return age >= 0 ? n : -(n + 1);
+  };
   const scaleAt = (age: number) => (zoom ? Math.exp(age / sink) : Math.exp(-age / sink));
   const at = (p: number, age: number) => {
     const s = scaleAt(age);
@@ -1103,16 +1126,24 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
   const half = 1.8 * u * st.lw;
   const crossfade = cfg.motion.transition === 'swell';
   const samples = 120; // points per turn at full size
-  const trail = (sample: (tau: number) => { p: number; g: number }, width: number): RibbonPoint[][] => {
-    const runs: RibbonPoint[][] = [];
+  const trail = (sample: (tau: number) => { p: number; g: number }, width: number): { pts: RibbonPoint[]; turn: number }[] => {
+    const runs: { pts: RibbonPoint[]; turn: number }[] = [];
     let run: RibbonPoint[] = [];
+    let runTurn = 0;
     let lastP = NaN;
     const push = (age: number) => {
       const { p, g } = sample(t - age);
+      const turn = turnOf(age);
       if (g < 0.02 || Math.abs(p - lastP) > 1) {
-        if (run.length > 1) runs.push(run);
+        if (run.length > 1) runs.push({ pts: run, turn: runTurn });
         run = [];
+      } else if (turn !== runTurn && run.length) {
+        // Crossing into another turn: start a new run there, sharing the point so there's no gap.
+        const last = run[run.length - 1];
+        if (run.length > 1) runs.push({ pts: run, turn: runTurn });
+        run = [last];
       }
+      runTurn = turn;
       lastP = p;
       if (g < 0.02) return;
       const q = at(p, age);
@@ -1140,8 +1171,33 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
       prevAge = age;
       prevP = p;
     }
-    if (run.length > 1) runs.push(run);
+    if (run.length > 1) runs.push({ pts: run, turn: runTurn });
     return runs;
+  };
+  // One painter per turn (past and future), each painted at its own opacity.
+  const past = Array.from({ length: TURNS }, () => new Painter(ctx, st, V, cy - R, cy + R));
+  const future = Array.from({ length: TURNS }, () => new Painter(ctx, st, V, cy - R, cy + R));
+  const handAngle = angleAt(t);
+  const fades = new Map<string, CanvasGradient>();
+  /** The colour with the within-turn fade: a conic gradient from the hand round (oldest → newest, or nearest → furthest ahead). */
+  const faded = (color: string | CanvasGradient, ahead: boolean): string | CanvasGradient => {
+    if (typeof color !== 'string' || typeof ctx.createConicGradient !== 'function') return color;
+    const key = `${ahead ? '>' : '<'}${color}`;
+    let g = fades.get(key);
+    if (!g) {
+      g = ctx.createConicGradient(handAngle, cx, cy);
+      for (let i = 0; i <= 8; i++) {
+        const f = i / 8;
+        g.addColorStop(f, colorAlpha(color, ahead ? Math.pow(KEEP_AHEAD, f) : Math.pow(KEEP, 1 - f)));
+      }
+      fades.set(key, g);
+    }
+    return g;
+  };
+  const add = (turn: number, v: number, p: number, pts: RibbonPoint[], color?: string) => {
+    const ahead = turn < 0;
+    const painter = ahead ? future[-turn - 1] : past[turn];
+    ribbon(painter.fill(v, p, faded(color ?? painter.colorFor(v, p), ahead)), pts);
   };
   for (let v = 0; v < V; v++) {
     if (crossfade) {
@@ -1150,18 +1206,20 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
           const sl = layerAt(score, L, v, tau);
           return { p: sl.p, g: sl.g * widthFactor(score, v, tau) };
         }, half);
-        for (const r of runs) ribbon(painter.fill(v, layerAt(score, L, v, t).p), r);
+        for (const r of runs) add(r.turn, v, layerAt(score, L, v, t).p, r.pts);
       }
     } else {
       const runs = trail((tau) => ({ p: pitchAt(score, v, tau), g: widthFactor(score, v, tau) }), half);
-      for (const r of runs) ribbon(painter.fill(v, pitchAt(score, v, t)), r);
+      for (const r of runs) add(r.turn, v, pitchAt(score, v, t), r.pts);
     }
   }
-  painter.paint(3.2 * u * st.lw);
   if (score.melody.length) {
     const runs = trail((tau) => melodyAt(score, tau) ?? { p: 0, g: 0 }, half * 1.1);
-    for (const r of runs) ribbon(painter.fill(-1, 0, st.accent), r);
-    painter.paint(3.2 * u * st.lw);
+    for (const r of runs) add(r.turn, -1, 0, r.pts, st.accent);
+  }
+  for (let n = TURNS - 1; n >= 0; n--) {
+    future[n].paint(3.2 * u * st.lw, Math.pow(KEEP_AHEAD, n));
+    past[n].paint(3.2 * u * st.lw, Math.pow(KEEP, n));
   }
 
   // The present: dots along the hand.
