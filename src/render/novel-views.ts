@@ -414,8 +414,8 @@ export function drawMurmuration(ctx: CanvasRenderingContext2D, score: Score, t: 
 /**
  * Twelve towers, one per note name (C to B, left to right), one floor per octave. A sounding note
  * is a lit window; the last few chords' windows fade out slowly, so the recent harmony glows.
- * A voice that moves rides out as a light: along a skybridge at its old floor to the new note's
- * tower, then up or down its lift, and the window lights as it arrives. Kicks light up the sky,
+ * A voice that moves flies as a comet over the rooftops from its old window to the new one, which
+ * lights as it lands. Lit windows show a little life inside (a lamp, a plant, a cat). Kicks light up the sky,
  * snares flash the antennas. Two looks: neon (lit windows, reflections in the water) and
  * blueprint (isometric line drawing).
  */
@@ -463,15 +463,6 @@ function cityLights(score: Score, t: number): CityLights {
   return { lit, cars };
 }
 
-/** Where a car is along its route: along the skybridge first, then the lift. */
-function carPos(from: { x: number; y: number }, to: { x: number; y: number }, f: number) {
-  const dx = Math.abs(to.x - from.x);
-  const dy = Math.abs(to.y - from.y);
-  const d = (dx + dy) * f;
-  if (d <= dx) return { x: from.x + Math.sign(to.x - from.x) * d, y: from.y };
-  return { x: to.x, y: from.y + Math.sign(to.y - from.y) * (d - dx) };
-}
-
 export function drawCity(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea) {
   if (score.config.video.city === 'blueprint') drawBlueprintCity(ctx, score, t, st, a);
   else drawNeonCity(ctx, score, t, st, a);
@@ -484,131 +475,249 @@ function octRange(score: Score) {
   return { o0, o1, floors: o1 - o0 + 1 };
 }
 
+/** A little silhouette inside a lit window: someone's lamp, plant, cat, sofa… (picked per window). */
+function furniture(c: CanvasRenderingContext2D, kind: number, x: number, y: number, w: number, h: number) {
+  c.fillStyle = 'rgba(40,18,8,0.82)';
+  c.beginPath();
+  switch (kind % 7) {
+    case 0: // floor lamp
+      c.rect(x + w * 0.72, y + h * 0.35, w * 0.05, h * 0.65);
+      c.moveTo(x + w * 0.62, y + h * 0.38);
+      c.lineTo(x + w * 0.87, y + h * 0.38);
+      c.lineTo(x + w * 0.81, y + h * 0.18);
+      c.lineTo(x + w * 0.68, y + h * 0.18);
+      break;
+    case 1: // potted plant
+      c.rect(x + w * 0.18, y + h * 0.72, w * 0.2, h * 0.28);
+      c.ellipse(x + w * 0.22, y + h * 0.55, w * 0.07, h * 0.18, -0.5, 0, Math.PI * 2);
+      c.ellipse(x + w * 0.34, y + h * 0.52, w * 0.07, h * 0.2, 0.5, 0, Math.PI * 2);
+      c.ellipse(x + w * 0.28, y + h * 0.45, w * 0.05, h * 0.2, 0, 0, Math.PI * 2);
+      break;
+    case 2: // someone at the window
+      c.arc(x + w * 0.5, y + h * 0.45, Math.min(w, h) * 0.13, 0, Math.PI * 2);
+      c.roundRect(x + w * 0.3, y + h * 0.62, w * 0.4, h * 0.4, w * 0.15);
+      break;
+    case 3: // sofa
+      c.roundRect(x + w * 0.1, y + h * 0.66, w * 0.8, h * 0.34, w * 0.05);
+      c.roundRect(x + w * 0.06, y + h * 0.58, w * 0.12, h * 0.42, w * 0.04);
+      c.roundRect(x + w * 0.82, y + h * 0.58, w * 0.12, h * 0.42, w * 0.04);
+      break;
+    case 4: // cat on the sill
+      c.ellipse(x + w * 0.6, y + h * 0.9, w * 0.17, h * 0.1, 0, 0, Math.PI * 2);
+      c.arc(x + w * 0.42, y + h * 0.8, Math.min(w, h) * 0.08, 0, Math.PI * 2);
+      c.moveTo(x + w * 0.36, y + h * 0.76);
+      c.lineTo(x + w * 0.38, y + h * 0.66);
+      c.lineTo(x + w * 0.42, y + h * 0.74);
+      c.lineTo(x + w * 0.46, y + h * 0.66);
+      c.lineTo(x + w * 0.48, y + h * 0.76);
+      break;
+    case 5: // bookshelf
+      c.rect(x + w * 0.62, y + h * 0.15, w * 0.3, h * 0.85);
+      break;
+    default: // curtains half drawn
+      c.moveTo(x, y);
+      c.lineTo(x + w * 0.22, y);
+      c.quadraticCurveTo(x + w * 0.12, y + h * 0.6, x + w * 0.2, y + h);
+      c.lineTo(x, y + h);
+      c.moveTo(x + w, y);
+      c.lineTo(x + w * 0.8, y);
+      c.quadraticCurveTo(x + w * 0.9, y + h * 0.6, x + w * 0.82, y + h);
+      c.lineTo(x + w, y + h);
+  }
+  c.fill();
+  if (kind % 7 === 5) {
+    // books on the shelf
+    c.fillStyle = 'rgba(255,200,120,0.35)';
+    for (let i = 0; i < 3; i++) c.fillRect(x + w * 0.64, y + h * (0.28 + i * 0.24), w * 0.26, h * 0.04);
+  }
+}
+
+let cityBuf: { canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D } | null = null;
+function cityCanvas(w: number, h: number) {
+  if (!cityBuf || cityBuf.canvas.width !== w || cityBuf.canvas.height !== h) {
+    const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h });
+    cityBuf = { canvas, ctx: canvas.getContext('2d') as unknown as CanvasRenderingContext2D };
+  }
+  cityBuf.ctx.setTransform(1, 0, 0, 1, 0, 0);
+  cityBuf.ctx.clearRect(0, 0, w, h);
+  return cityBuf;
+}
+
 function drawNeonCity(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea) {
   const { u } = a;
   const W = a.width;
-  const H = ctx.canvas.height;
   const drum = drumPulse(score, t);
   const { o0, floors } = octRange(score);
   const margin = W * 0.05;
   const tw = (W - 2 * margin) / 12;
-  const ground = a.top + (a.bottom - a.top) * 0.74;
-  const floorH = Math.min(tw * 1.1, (ground - a.top - 40 * u) / (floors + 2.6));
+  const ground = a.top + (a.bottom - a.top) * 0.7;
+  const floorH = Math.min(tw * 0.95, (ground - a.top - 40 * u) / (floors + 2.6));
   const extra = (pc: number) => Math.round(hash(pc, 7) * 2.4);
   const towerX = (pc: number) => margin + pc * tw;
-  const win = (c: Cell) => ({ x: towerX(c.pc) + tw / 2, y: ground - (c.oct - o0 + 0.5) * floorH });
+  // Two windows a floor; a note lights one of them (which one is the building's habit).
+  const side = (pc: number, oct: number) => (hash(pc, oct, 11) < 0.5 ? 0 : 1);
+  const winRect = (pc: number, oct: number, s: number) => {
+    const x = towerX(pc) + tw * 0.08;
+    const w = tw * 0.84;
+    const ww = w * 0.27;
+    const wh = floorH * 0.42;
+    const y = ground - (oct - o0 + 0.5) * floorH;
+    return { x: x + w * (s ? 0.6 : 0.13), y: y - wh / 2, w: ww, h: wh };
+  };
+  const winCentre = (c: Cell) => {
+    const r = winRect(c.pc, c.oct, side(c.pc, c.oct));
+    return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+  };
   const { lit, cars } = cityLights(score, t);
   const dark = luminanceOf(st.background) < 0.45;
-  const body = dark ? 'rgba(8,10,24,0.92)' : alpha(st.ink, 0.88);
-  const amber = (b: number) => `rgba(255,190,90,${b})`;
+  const body = dark ? '#0a0c1c' : alpha(st.ink, 0.9);
+  const amber = (b: number) => `rgba(255,190,96,${b})`;
+  const H = ctx.canvas.height;
+  // The skyline is drawn once into a buffer, then onto the frame and, rippled, into the water.
+  const buf = cityCanvas(ctx.canvas.width, H);
+  const c = buf.ctx;
+  c.setTransform(ctx.getTransform());
 
   ctx.save();
-  // Sky glow over the city, breathing with the kick.
+  // Sky glow over the city, breathing with the kick; stars on dark themes.
   const glow = ctx.createLinearGradient(0, a.top, 0, ground);
   glow.addColorStop(0, 'rgba(0,0,0,0)');
-  glow.addColorStop(1, dark ? `rgba(90,70,160,${0.18 + 0.25 * drum.kick})` : `rgba(255,170,90,${0.12 + 0.2 * drum.kick})`);
+  glow.addColorStop(1, dark ? `rgba(110,70,170,${0.2 + 0.25 * drum.kick})` : `rgba(255,170,90,${0.14 + 0.2 * drum.kick})`);
   ctx.fillStyle = glow;
   ctx.fillRect(0, a.top, W, ground - a.top);
   if (dark) {
-    for (let i = 0; i < 80; i++) {
-      const tw2 = 0.15 + 0.45 * hash(i, 3) * (0.7 + 0.3 * Math.sin(t * 1.3 + i) + 0.4 * drum.hat);
-      ctx.fillStyle = `rgba(255,255,255,${Math.max(0, tw2)})`;
+    for (let i = 0; i < 90; i++) {
+      const b = 0.15 + 0.45 * hash(i, 3) * (0.7 + 0.3 * Math.sin(t * 1.3 + i) + 0.4 * drum.hat);
+      ctx.fillStyle = `rgba(255,255,255,${Math.max(0, b)})`;
       ctx.fillRect(hash(i, 1) * W, a.top + hash(i, 2) * (ground - a.top) * 0.55, 1.4 * u, 1.4 * u);
     }
   }
-  const city = (reflection: boolean) => {
-    for (let pc = 0; pc < 12; pc++) {
-      const x = towerX(pc) + tw * 0.08;
-      const w = tw * 0.84;
-      const n = floors + extra(pc);
-      const top = ground - n * floorH;
-      ctx.fillStyle = body;
-      ctx.fillRect(x, top, w, ground - top);
-      ctx.strokeStyle = dark ? 'rgba(120,140,255,0.16)' : alpha(st.background, 0.15);
-      ctx.lineWidth = Math.max(1, u);
-      ctx.strokeRect(x + 0.5, top + 0.5, w - 1, ground - top);
-      if (!reflection) {
-        // Antennas, flashing with the snare.
-        const ah = (14 + 18 * hash(pc, 1)) * u;
-        ctx.strokeStyle = dark ? 'rgba(160,170,255,0.3)' : alpha(st.ink, 0.5);
-        ctx.beginPath();
-        ctx.moveTo(x + w / 2, top);
-        ctx.lineTo(x + w / 2, top - ah);
-        ctx.stroke();
-        ctx.fillStyle = `rgba(255,77,109,${0.35 + 0.65 * Math.max(drum.snare, (Math.sin(t * 2 + pc) + 1) / 4)})`;
-        ctx.beginPath();
-        ctx.arc(x + w / 2, top - ah, 2.2 * u, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      for (let f = 0; f < n; f++) {
-        const y = ground - (f + 0.5) * floorH;
-        const b = lit.get(pc + 12 * (o0 + f)) ?? 0;
-        const wx = x + w * 0.22;
-        const ww = w * 0.56;
-        const wh = floorH * 0.42;
-        ctx.fillStyle = dark ? 'rgba(70,80,140,0.18)' : alpha(st.background, 0.12);
-        ctx.fillRect(wx, y - wh / 2, ww, wh);
-        if (b > 0.01) {
-          if (!reflection) {
-            ctx.save();
-            ctx.shadowColor = '#ffb347';
-            ctx.shadowBlur = 24 * u * b;
-            ctx.fillStyle = amber(b);
-            ctx.fillRect(wx, y - wh / 2, ww, wh);
-            ctx.restore();
-          } else {
-            ctx.fillStyle = amber(b);
-            ctx.fillRect(wx, y - wh / 2, ww, wh);
-          }
+  for (let pc = 0; pc < 12; pc++) {
+    const x = towerX(pc) + tw * 0.08;
+    const w = tw * 0.84;
+    const n = floors + extra(pc);
+    const top = ground - n * floorH;
+    c.fillStyle = body;
+    c.fillRect(x, top, w, ground - top);
+    // A ledge between floors and a rim light down one edge.
+    c.fillStyle = dark ? 'rgba(130,150,255,0.07)' : alpha(st.background, 0.08);
+    for (let f = 1; f < n; f++) c.fillRect(x, ground - f * floorH - 1 * u, w, 2 * u);
+    c.fillStyle = dark ? 'rgba(150,170,255,0.18)' : alpha(st.background, 0.2);
+    c.fillRect(x + w - 2 * u, top, 2 * u, ground - top);
+    // Roof: an antenna with a light that flashes on the snare, or a water tank.
+    if (hash(pc, 5) < 0.6) {
+      const ah = (14 + 18 * hash(pc, 1)) * u;
+      c.strokeStyle = dark ? 'rgba(160,170,255,0.35)' : alpha(st.ink, 0.55);
+      c.lineWidth = Math.max(1, u);
+      c.beginPath();
+      c.moveTo(x + w / 2, top);
+      c.lineTo(x + w / 2, top - ah);
+      c.stroke();
+      c.fillStyle = `rgba(255,77,109,${0.35 + 0.65 * Math.max(drum.snare, (Math.sin(t * 2 + pc) + 1) / 4)})`;
+      c.beginPath();
+      c.arc(x + w / 2, top - ah, 2.2 * u, 0, Math.PI * 2);
+      c.fill();
+    } else {
+      c.fillStyle = body;
+      c.fillRect(x + w * 0.25, top - 10 * u, w * 0.3, 10 * u);
+      c.fillRect(x + w * 0.28, top - 14 * u, w * 0.24, 4 * u);
+    }
+    for (let f = 0; f < n; f++) {
+      const oct = o0 + f;
+      for (const s of [0, 1]) {
+        const r = winRect(pc, oct, s);
+        const on = s === side(pc, oct) ? lit.get(pc + 12 * oct) ?? 0 : 0;
+        c.fillStyle = dark ? 'rgba(70,80,140,0.2)' : alpha(st.background, 0.12);
+        c.fillRect(r.x, r.y, r.w, r.h);
+        if (on > 0.01) {
+          c.save();
+          c.shadowColor = '#ffb347';
+          c.shadowBlur = 18 * u * on;
+          c.fillStyle = amber(on);
+          c.fillRect(r.x, r.y, r.w, r.h);
+          c.restore();
+          c.save();
+          c.globalAlpha = Math.min(1, on * 1.2);
+          c.beginPath();
+          c.rect(r.x, r.y, r.w, r.h);
+          c.clip();
+          furniture(c, Math.floor(hash(pc, oct, 3) * 7), r.x, r.y, r.w, r.h);
+          c.restore();
         }
       }
     }
-    // Moving voices: a light along the skybridge, then the lift.
-    for (const car of cars) {
-      const p0 = win(car.from);
-      const p1 = win(car.to);
-      const bridgeY = p0.y + floorH * 0.32;
-      const q0 = { x: p0.x, y: bridgeY };
-      const q1 = { x: p1.x, y: p1.y + floorH * 0.32 };
-      ctx.strokeStyle = amber(0.3);
-      ctx.lineWidth = Math.max(1.5, 2 * u);
+  }
+  // The street.
+  c.fillStyle = body;
+  c.fillRect(0, ground - 2 * u, W, 4 * u);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(buf.canvas as CanvasImageSource, 0, 0);
+  ctx.restore();
+
+  // The water: the skyline mirrored, each strip rippled sideways (more the nearer you look),
+  // fading and tinted with depth; the kick sends a stronger ripple through.
+  const m = ctx.getTransform();
+  const groundPx = m.d * ground + m.f;
+  const bottomPx = Math.min(H, m.d * (a.bottom + 30 * u) + m.f);
+  const waterH = bottomPx - groundPx;
+  if (waterH > 4) {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const step = 2;
+    for (let y = 0; y < waterH; y += step) {
+      const depth = y / waterH;
+      const src = groundPx - y - step;
+      if (src < 0) break;
+      const dx = (Math.sin(y * 0.09 + t * 1.6) * 2 + Math.sin(y * 0.031 - t * 0.9) * 3) * (0.4 + 2.2 * depth) * (1 + 1.5 * drum.kick) * m.a;
+      ctx.globalAlpha = 0.6 * (1 - depth) ** 1.2;
+      ctx.drawImage(buf.canvas as CanvasImageSource, 0, src, ctx.canvas.width, step, dx, groundPx + y, ctx.canvas.width, step);
+    }
+    ctx.globalAlpha = 1;
+    const tint = ctx.createLinearGradient(0, groundPx, 0, bottomPx);
+    tint.addColorStop(0, alpha(st.background, 0.12));
+    tint.addColorStop(1, alpha(st.background, 0.92));
+    ctx.fillStyle = tint;
+    ctx.fillRect(0, groundPx, ctx.canvas.width, waterH);
+    ctx.restore();
+  }
+
+  // Moving voices: a comet arcing over the rooftops from the old window to the new one, its tail
+  // fading behind it; the new window lights as it lands.
+  for (const car of cars) {
+    const p0 = winCentre(car.from);
+    const p1 = winCentre(car.to);
+    const lift = Math.abs(p1.x - p0.x) * 0.3 + Math.abs(p1.y - p0.y) * 0.2 + 30 * u;
+    const ctrl = { x: (p0.x + p1.x) / 2, y: Math.min(p0.y, p1.y) - lift };
+    const at = (s: number) => ({
+      x: (1 - s) ** 2 * p0.x + 2 * (1 - s) * s * ctrl.x + s * s * p1.x,
+      y: (1 - s) ** 2 * p0.y + 2 * (1 - s) * s * ctrl.y + s * s * p1.y,
+    });
+    const f = car.f;
+    const tail = 0.4;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 16; i++) {
+      const s0 = Math.max(0, f - tail + (tail * i) / 16);
+      const s1 = Math.max(0, f - tail + (tail * (i + 1)) / 16);
+      if (s1 <= 0) continue;
+      const q0 = at(s0);
+      const q1 = at(s1);
+      ctx.strokeStyle = amber(0.08 + 0.6 * (i / 16) ** 2);
+      ctx.lineWidth = Math.max(1, (1 + 4 * (i / 16)) * u);
       ctx.beginPath();
       ctx.moveTo(q0.x, q0.y);
-      ctx.lineTo(q1.x, q0.y);
       ctx.lineTo(q1.x, q1.y);
       ctx.stroke();
-      const c = carPos(q0, q1, car.f);
-      ctx.save();
-      if (!reflection) {
-        ctx.shadowColor = '#ffd27a';
-        ctx.shadowBlur = 26 * u;
-      }
-      ctx.fillStyle = '#ffe2a8';
-      ctx.fillRect(c.x - 8 * u, c.y - 5 * u, 16 * u, 10 * u);
-      ctx.restore();
     }
-  };
-  city(false);
-  // The reflection in the water, then the water itself.
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, ground + 6 * u, W, H - ground);
-  ctx.clip();
-  ctx.translate(0, 2 * ground + 6 * u);
-  ctx.scale(1, -1);
-  ctx.globalAlpha = 0.26;
-  city(true);
-  ctx.restore();
-  const water = ctx.createLinearGradient(0, ground + 6 * u, 0, a.bottom + 40 * u);
-  water.addColorStop(0, alpha(st.background, 0.15));
-  water.addColorStop(1, alpha(st.background, 0.96));
-  ctx.fillStyle = water;
-  ctx.fillRect(0, ground + 6 * u, W, a.bottom + 40 * u - ground);
-  // Ripples catching the light (and the kick).
-  for (let i = 0; i < 40; i++) {
-    ctx.fillStyle = amber(0.05 + 0.08 * drum.kick);
-    const y = ground + 14 * u + hash(i, 7) * (a.bottom - ground);
-    ctx.fillRect(((hash(i, 5) * W + t * 12 * (0.5 + hash(i, 9))) % (W + 60)) - 30, y, (24 + 40 * hash(i, 4)) * u, Math.max(1, u));
+    const h = at(f);
+    ctx.save();
+    ctx.shadowColor = '#ffd27a';
+    ctx.shadowBlur = 22 * u;
+    ctx.fillStyle = '#fff0cc';
+    ctx.beginPath();
+    ctx.arc(h.x, h.y, 4.5 * u, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
   ctx.restore();
 }
@@ -620,9 +729,11 @@ function drawBlueprintCity(ctx: CanvasRenderingContext2D, score: Score, t: numbe
   const { o0, floors } = octRange(score);
   const extra = (pc: number) => Math.round(hash(pc, 7) * 2);
   const { lit, cars } = cityLights(score, t);
-  const cell = W / 21;
-  const FH = Math.min(cell * 1.7, (a.bottom - a.top - cell * 6) / (floors + 2.5));
-  const baseY = a.bottom - cell * 3.2;
+  // Sized to fit the band both ways: the street runs diagonally across, towers rise from it.
+  const band = a.bottom - a.top;
+  const cell = Math.min(W / 21, band / 11);
+  const baseY = a.bottom - cell * 4.2;
+  const FH = Math.max(cell * 0.6, (baseY - cell * 3.6 - a.top - 20 * u) / (floors + 2));
   const iso = (x: number, y: number, z: number) => ({ x: W / 2 + (x - y) * 0.866 * cell, y: baseY + (x + y) * 0.5 * cell - z });
   const gxOf = (pc: number) => pc * 1.25 - 7;
   const gyOf = (pc: number) => -pc * 0.15;
@@ -821,211 +932,5 @@ export function drawKaleidoscope(ctx: CanvasRenderingContext2D, score: Score, t:
   ctx.beginPath();
   ctx.arc(cx, cy, R, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.restore();
-}
-
-// ---------------------------------------------------------------------------
-// Lava lamp
-// ---------------------------------------------------------------------------
-
-/**
- * The classic lamp: a chrome cone base, a tapered glass bottle, a little cone cap, coloured
- * liquid lit from below. Each note sounding is a blob of wax at its pitch's height (low at the
- * bottom); voices on the same note fuse into one bigger blob. Blobs follow their notes slowly,
- * with weight, stretching tall as they rise or sink, and melt together when they meet; a molten
- * pool always sits at the bottom. Kicks flare the bulb and wobble the wax.
- */
-interface LavaBuffer {
-  w: number;
-  h: number;
-  canvas: HTMLCanvasElement | OffscreenCanvas;
-  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-  img: ImageData;
-}
-let lava: LavaBuffer | null = null;
-function lavaBuffer(w: number, h: number): LavaBuffer {
-  if (lava && lava.w === w && lava.h === h) return lava;
-  const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h });
-  const c = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-  lava = { w, h, canvas, ctx: c, img: c.createImageData(w, h) };
-  return lava;
-}
-
-export function drawLavaLamp(ctx: CanvasRenderingContext2D, score: Score, t: number, _st: ViewStyle, a: ViewArea, lite = false) {
-  const { cx, u } = a;
-  const drum = drumPulse(score, t);
-  const { lo, span } = skyRange(score);
-  const V = score.config.voices;
-  // Proportions of the classic lamp.
-  const total = (a.bottom - a.top) * 0.96;
-  const top = a.top + (a.bottom - a.top - total) / 2;
-  const capH = total * 0.13;
-  const glassH = total * 0.6;
-  const baseH = total - capH - glassH;
-  const gTop = top + capH;
-  const gBot = gTop + glassH;
-  const wMax = Math.min(a.width * 0.22, total * 0.19);
-  /** Glass half-width at height fraction f (0 bottom, 1 top): a little swell low down, tapering up. */
-  const glassHW = (f: number) => {
-    const swell = f < 0.28 ? 0.84 + 0.16 * Math.sin((f / 0.28) * (Math.PI / 2)) : 1 - 0.56 * ((f - 0.28) / 0.72) ** 1.15;
-    return wMax * swell;
-  };
-  const yOf = (f: number) => gBot - f * glassH;
-
-  // Blobs: one per note sounding (voices on it fuse), at its height, following with weight.
-  const smoothP = (v: number, time: number) => {
-    let s = 0;
-    let w = 0;
-    for (let i = 0; i < 9; i++) {
-      const age = i * 0.2;
-      const k = Math.exp(-age / 0.6);
-      s += pitchAt(score, v, time - age) * k;
-      w += k;
-    }
-    return s / w;
-  };
-  const groups = new Map<number, { p: number; pPrev: number; n: number; level: number }>();
-  for (let v = 0; v < V; v++) {
-    const p = smoothP(v, t);
-    const key = Math.round(p * 2);
-    const g = groups.get(key) ?? { p: 0, pPrev: 0, n: 0, level: 0 };
-    g.p += p;
-    g.pPrev += smoothP(v, t - 0.15);
-    g.n++;
-    g.level = Math.max(g.level, levelAt(score, v, t));
-    groups.set(key, g);
-  }
-  const blobs = [...groups.values()].sort((x, y) => x.p - y.p).map((g, i) => {
-    const p = g.p / g.n;
-    const vel = (p - g.pPrev / g.n) / 0.15; // semitones per second
-    const f = 0.1 + 0.78 * Math.max(0, Math.min(1, (p - lo) / span));
-    const r = wMax * (0.12 + 0.05 * Math.sqrt(g.n)) * (0.75 + 0.25 * g.level) * (1 + 0.08 * drum.kick * Math.sin(t * 25 + i));
-    const sy = 1 + Math.min(1.3, Math.abs(vel) * 0.12);
-    const room = glassHW(f) - r * 0.8;
-    // Neighbouring notes sit on alternate sides, so blobs spread across the glass.
-    const x = cx + Math.max(-room, Math.min(room, glassHW(f) * 0.5 * Math.sin(i * 2.4 + 0.13 * t + 0.4 * Math.sin(0.07 * t + i))));
-    return { x, y: yOf(f), r, sx: 1 / Math.sqrt(sy), sy };
-  });
-  // The molten pool at the bottom.
-  blobs.push({ x: cx, y: gBot + wMax * 0.1, r: wMax * 0.36, sx: 1.9, sy: 0.5 });
-
-  // Render the wax and liquid into a buffer covering the glass.
-  const scale = lite ? 0.35 : 0.55;
-  const bw = Math.max(40, Math.round(wMax * 2 * scale));
-  const bh = Math.max(80, Math.round(glassH * scale));
-  const buf = lavaBuffer(bw, bh);
-  const data = buf.img.data;
-  const flare = 1 + 0.35 * drum.kick;
-  for (let j = 0; j < bh; j++) {
-    const y = gTop + (j / (bh - 1)) * glassH;
-    const f = (gBot - y) / glassH;
-    const hw = glassHW(f);
-    // The liquid: lit from the bulb below, deep violet higher up.
-    const lift = Math.pow(Math.max(0, f), 0.8);
-    const lr = (150 - 90 * lift) * flare;
-    const lg = (40 - 15 * lift) * flare;
-    const lb = (120 + 20 * lift) * flare;
-    for (let i = 0; i < bw; i++) {
-      const x = cx - wMax + (i / (bw - 1)) * wMax * 2;
-      const o = (j * bw + i) * 4;
-      if (Math.abs(x - cx) > hw) {
-        data[o + 3] = 0;
-        continue;
-      }
-      let field = 0;
-      for (const b of blobs) {
-        const dx = (x - b.x) / b.sx;
-        const dy = (y - b.y) / b.sy;
-        field += (b.r * b.r) / (dx * dx + dy * dy + 1);
-      }
-      // Edge darkening of the glass (it's a curved bottle).
-      const edge = 1 - 0.45 * Math.pow(Math.abs(x - cx) / hw, 3);
-      if (field > 1) {
-        // Wax: hot and bright inside, deeper at the skin.
-        const k = Math.min(1, (field - 1) * 0.9);
-        data[o] = Math.min(255, (235 + 20 * k) * edge * flare);
-        data[o + 1] = Math.min(255, (70 + 120 * k) * edge * flare);
-        data[o + 2] = Math.min(255, (40 + 40 * k) * edge);
-        data[o + 3] = 255;
-      } else {
-        const glow = Math.max(0, field - 0.55) * 1.6; // the wax lights the liquid around it
-        data[o] = Math.min(255, (lr + 90 * glow) * edge);
-        data[o + 1] = Math.min(255, (lg + 40 * glow) * edge);
-        data[o + 2] = Math.min(255, (lb + 10 * glow) * edge);
-        data[o + 3] = 255;
-      }
-    }
-  }
-  buf.ctx.putImageData(buf.img, 0, 0);
-
-  ctx.save();
-  // Light the lamp throws around it.
-  const halo = ctx.createRadialGradient(cx, gBot, 0, cx, gBot, wMax * 4);
-  halo.addColorStop(0, `rgba(255,120,80,${0.16 * flare})`);
-  halo.addColorStop(1, 'rgba(255,120,80,0)');
-  ctx.fillStyle = halo;
-  ctx.fillRect(cx - wMax * 4, gBot - wMax * 4, wMax * 8, wMax * 8);
-  // The glass contents.
-  const glass = new Path2D();
-  for (let k = 0; k <= 40; k++) {
-    const f = k / 40;
-    const p = { x: cx - glassHW(f), y: yOf(f) };
-    if (k) glass.lineTo(p.x, p.y);
-    else glass.moveTo(p.x, p.y);
-  }
-  for (let k = 40; k >= 0; k--) glass.lineTo(cx + glassHW(k / 40), yOf(k / 40));
-  glass.closePath();
-  ctx.save();
-  ctx.clip(glass);
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(buf.canvas as CanvasImageSource, cx - wMax, gTop, wMax * 2, glassH);
-  // Glass highlights: a long streak on the left, a thin one on the right.
-  const streak = ctx.createLinearGradient(cx - wMax, 0, cx + wMax, 0);
-  streak.addColorStop(0.12, 'rgba(255,255,255,0)');
-  streak.addColorStop(0.2, 'rgba(255,255,255,0.28)');
-  streak.addColorStop(0.27, 'rgba(255,255,255,0)');
-  streak.addColorStop(0.8, 'rgba(255,255,255,0)');
-  streak.addColorStop(0.84, 'rgba(255,255,255,0.12)');
-  streak.addColorStop(0.88, 'rgba(255,255,255,0)');
-  ctx.fillStyle = streak;
-  ctx.fillRect(cx - wMax, gTop, wMax * 2, glassH);
-  ctx.restore();
-  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-  ctx.lineWidth = Math.max(1, 1.2 * u);
-  ctx.stroke(glass);
-  // Chrome: the cap and the base, brushed metal with a bright vertical highlight.
-  const chrome = (x0: number, x1: number) => {
-    const g = ctx.createLinearGradient(x0, 0, x1, 0);
-    g.addColorStop(0, '#3a3a40');
-    g.addColorStop(0.22, '#c9cbd2');
-    g.addColorStop(0.32, '#f4f5f8');
-    g.addColorStop(0.45, '#8c8f98');
-    g.addColorStop(0.75, '#5a5c63');
-    g.addColorStop(1, '#2c2c31');
-    return g;
-  };
-  const capTopW = glassHW(1) * 0.55;
-  ctx.fillStyle = chrome(cx - glassHW(1), cx + glassHW(1));
-  ctx.beginPath();
-  ctx.moveTo(cx - glassHW(1) * 1.04, gTop);
-  ctx.lineTo(cx + glassHW(1) * 1.04, gTop);
-  ctx.lineTo(cx + capTopW, top);
-  ctx.lineTo(cx - capTopW, top);
-  ctx.closePath();
-  ctx.fill();
-  const bTopW = glassHW(0) * 1.04;
-  const bBotW = wMax * 1.55;
-  ctx.fillStyle = chrome(cx - bBotW, cx + bBotW);
-  ctx.beginPath();
-  ctx.moveTo(cx - bTopW, gBot);
-  ctx.lineTo(cx + bTopW, gBot);
-  ctx.lineTo(cx + bBotW, gBot + baseH);
-  ctx.lineTo(cx - bBotW, gBot + baseH);
-  ctx.closePath();
-  ctx.fill();
-  // A lip where the glass meets the base.
-  ctx.fillStyle = chrome(cx - bTopW, cx + bTopW);
-  ctx.fillRect(cx - bTopW * 1.04, gBot - 3 * u, bTopW * 2.08, 6 * u);
   ctx.restore();
 }
