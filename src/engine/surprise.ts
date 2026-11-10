@@ -76,10 +76,10 @@ export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = '
     ['timeline', 6],
     ['spiral', 3],
     ['waterfall', 1.5],
-    ['chladni', 1.2],
+    ['constellation', 1.2], // (was the Chladni plate: same draw, so songs keep their music)
     ['constellation', 1.2], // (was the circle of fifths: same draw, so songs keep their music)
     ['constellation', 1.2],
-  ] as ['timeline' | 'spiral' | 'waterfall' | 'chladni' | 'constellation', number][]);
+  ] as ['timeline' | 'spiral' | 'waterfall' | 'constellation', number][]);
   const theme = randomTheme(r);
   let tempo = 0;
   const out: DeepPartial<ChordDriftConfig> = {

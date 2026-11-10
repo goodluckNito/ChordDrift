@@ -5,11 +5,10 @@ import { PALETTES, type ColorBy, type Theme } from '../engine/themes';
 import { midiToHz, mod12 } from '../engine/theory';
 import { fontStack } from './fonts';
 import { mulberry32 } from '../engine/rng';
-import { drawChladni, drawConstellation, type ViewArea, type ViewStyle } from './harmony-views';
-import { drawCity, drawKaleidoscope, drawTornado } from './novel-views';
+import { drawConstellation, type ViewArea, type ViewStyle } from './harmony-views';
+import { drawCity, drawTornado } from './novel-views';
 import { drawInk } from './fluid-ink';
 import { drawInkGL } from './fluid-gl';
-import { drawKaleidoscopeGL } from './kaleido-gl';
 
 /**
  * Pitch-versus-time plot with a moving camera. Everything is a pure function of
@@ -1518,7 +1517,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   }
 
   const freqs = soundingPitches(score, t).map(midiToHz);
-  const harmonyView = ['chladni', 'constellation', 'marbling', 'tornado', 'city', 'kaleido'].includes(cfg.video.view);
+  const harmonyView = ['constellation', 'marbling', 'tornado', 'city'].includes(cfg.video.view);
   if (harmonyView) {
     const vs: ViewStyle = {
       ink: st.ink,
@@ -1542,16 +1541,12 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       bottom: lay.bandBottom,
     };
     const view = cfg.video.view;
-    if (view === 'chladni') drawChladni(ctx, score, t, vs, area, lite);
-    else if (view === 'marbling') {
+    if (view === 'marbling') {
       // The GPU fluid where WebGL2 can render floats; the CPU one otherwise.
       if (!drawInkGL(ctx, score, t, vs, area, lite)) drawInk(ctx, score, t, vs, area, lite);
     }
     else if (view === 'tornado') drawTornado(ctx, score, t, vs, area, lite);
     else if (view === 'city') drawCity(ctx, score, t, vs, area);
-    else if (view === 'kaleido') {
-      if (!drawKaleidoscopeGL(ctx, score, t, vs, area, lite)) drawKaleidoscope(ctx, score, t, vs, area, lite);
-    }
     else drawConstellation(ctx, score, t, vs, area);
   } else if (cfg.video.view === 'waterfall') drawWaterfall(ctx, score, t, st, lay);
   else if (cfg.video.view === 'spiral') {

@@ -210,7 +210,7 @@ export interface ChordDriftConfig {
     /** Zoom of the picture (titles and HUD stay put): 1 = normal. */
     zoom: number;
     /** timeline = pitch over time · spiral = pitch on a spiral · waterfall = rotating 3D spectrograph, depth is time */
-    view: 'timeline' | 'spiral' | 'waterfall' | 'chladni' | 'constellation' | 'marbling' | 'tornado' | 'city' | 'kaleido';
+    view: 'timeline' | 'spiral' | 'waterfall' | 'constellation' | 'marbling' | 'tornado' | 'city';
     /** Night city look. */
     city: 'neon' | 'blueprint';
     /**
@@ -318,12 +318,11 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   if (!STYLE_IDS.includes(c.style)) c.style = 'none';
   c.video.centerLabel = c.video.centerLabel !== false;
   c.video.zoom = Math.max(0.4, Math.min(4, Number(c.video.zoom) || 1));
-  if ((c.video.view as string) === 'tonnetz') c.video.view = 'chladni'; // the Chladni plate took its place
   // Retired views open in the nearest one that's left.
   if (['fifths', 'compass', 'scope'].includes(c.video.view as string)) c.video.view = 'constellation';
-  if (['transit', 'ferro', 'pendulum', 'lava'].includes(c.video.view as string)) c.video.view = 'constellation';
+  if (['transit', 'ferro', 'pendulum', 'lava', 'tonnetz', 'chladni', 'kaleido'].includes(c.video.view as string)) c.video.view = 'constellation';
   if ((c.video.view as string) === 'murmur') c.video.view = 'tornado';
-  if (!['timeline', 'spiral', 'waterfall', 'chladni', 'constellation', 'marbling', 'tornado', 'city', 'kaleido'].includes(c.video.view)) c.video.view = 'timeline';
+  if (!['timeline', 'spiral', 'waterfall', 'constellation', 'marbling', 'tornado', 'city'].includes(c.video.view)) c.video.view = 'timeline';
   if (c.video.city !== 'blueprint') c.video.city = 'neon';
   if ((c.video.spiral as string) === 'zoom') c.video.spiral = 'fly'; // older projects
   if (!['orbit', 'drain', 'fly', 'inward'].includes(c.video.spiral)) c.video.spiral = 'orbit';

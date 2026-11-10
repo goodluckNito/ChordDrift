@@ -44,10 +44,15 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const H = (a.bottom - a.top) * 0.92;
   const top = a.top + (a.bottom - a.top - H) / 2;
   const bot = top + H;
-  const halfW = Math.min(a.width * 0.3, H * 0.28);
-  const tilt = 0.24;
-  const inside0 = top + halfW * tilt + 16 * u;
-  const inside1 = bot - halfW * tilt - 10 * u;
+  const halfW = Math.min(a.width * 0.3, H * 0.26);
+  // Seen straight from the side, like the toy on a shelf: a black cap, the clear tube, a black base.
+  const capH = H * 0.075;
+  const baseH = H * 0.06;
+  const glassTop = top + capH;
+  const glassBot = bot - baseH;
+  const tilt = 0; // a true side view: no looking down into the swirl
+  const inside0 = glassTop + 10 * u;
+  const inside1 = glassBot - 8 * u;
   const yOf = (f: number) => inside1 - f * (inside1 - inside0);
   // A voice's height follows its note with weight (the bass with more).
   const smoothF = (v: number) => {
@@ -96,18 +101,15 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const spin = 1 + 0.8 * drum.kick;
 
   ctx.save();
-  // Back of the glass and the liquid's tint.
+  // The liquid fills the whole tube; the tube is shaded like a cylinder (darker toward its edges).
   const liquid = ctx.createLinearGradient(cx - halfW, 0, cx + halfW, 0);
-  liquid.addColorStop(0, alpha(st.ink, 0.05));
-  liquid.addColorStop(0.5, alpha(st.ink, 0.015));
-  liquid.addColorStop(1, alpha(st.ink, 0.06));
+  liquid.addColorStop(0, alpha(st.ink, 0.12));
+  liquid.addColorStop(0.18, alpha(st.ink, 0.04));
+  liquid.addColorStop(0.5, alpha(st.ink, 0.02));
+  liquid.addColorStop(0.82, alpha(st.ink, 0.05));
+  liquid.addColorStop(1, alpha(st.ink, 0.14));
   ctx.fillStyle = liquid;
-  ctx.fillRect(cx - halfW, top + halfW * tilt, halfW * 2, H - 2 * halfW * tilt);
-  ctx.strokeStyle = alpha(st.text, 0.18);
-  ctx.lineWidth = Math.max(1, 1.2 * u);
-  ctx.beginPath();
-  ctx.ellipse(cx, bot - halfW * tilt, halfW, halfW * tilt, 0, Math.PI, Math.PI * 2);
-  ctx.stroke();
+  ctx.fillRect(cx - halfW, glassTop, halfW * 2, glassBot - glassTop);
   // The funnel's body: a translucent silhouette, so its shape reads even between the glitter.
   const steps = 60;
   const body = new Path2D();
@@ -180,31 +182,39 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
     ctx.textAlign = right ? 'left' : 'right';
     ctx.fillText(nameOf(score, mod12(Math.round(pitchAt(score, b.v, t))), now.c), x0 + (right ? 8 : -8) * u, y);
   }
-  // Front of the glass: edges, cap and highlights.
-  ctx.strokeStyle = alpha(st.text, 0.35);
+  // The tube's front: its edges and the light catching it, then the black cap and base.
+  ctx.strokeStyle = alpha(st.text, 0.3);
   ctx.lineWidth = Math.max(1.5, 2 * u);
   ctx.beginPath();
-  ctx.moveTo(cx - halfW, top + halfW * tilt);
-  ctx.lineTo(cx - halfW, bot - halfW * tilt);
-  ctx.moveTo(cx + halfW, top + halfW * tilt);
-  ctx.lineTo(cx + halfW, bot - halfW * tilt);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.ellipse(cx, top + halfW * tilt, halfW, halfW * tilt, 0, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.ellipse(cx, bot - halfW * tilt, halfW, halfW * tilt, 0, 0, Math.PI);
+  ctx.moveTo(cx - halfW, glassTop);
+  ctx.lineTo(cx - halfW, glassBot);
+  ctx.moveTo(cx + halfW, glassTop);
+  ctx.lineTo(cx + halfW, glassBot);
   ctx.stroke();
   const shine = ctx.createLinearGradient(cx - halfW, 0, cx + halfW, 0);
-  shine.addColorStop(0.06, 'rgba(255,255,255,0)');
-  shine.addColorStop(0.12, 'rgba(255,255,255,0.16)');
-  shine.addColorStop(0.18, 'rgba(255,255,255,0)');
-  shine.addColorStop(0.86, 'rgba(255,255,255,0)');
-  shine.addColorStop(0.9, 'rgba(255,255,255,0.08)');
-  shine.addColorStop(0.94, 'rgba(255,255,255,0)');
+  shine.addColorStop(0.08, 'rgba(255,255,255,0)');
+  shine.addColorStop(0.14, 'rgba(255,255,255,0.22)');
+  shine.addColorStop(0.2, 'rgba(255,255,255,0)');
+  shine.addColorStop(0.84, 'rgba(255,255,255,0)');
+  shine.addColorStop(0.88, 'rgba(255,255,255,0.1)');
+  shine.addColorStop(0.92, 'rgba(255,255,255,0)');
   ctx.fillStyle = shine;
-  ctx.fillRect(cx - halfW, top + halfW * tilt, halfW * 2, H - 2 * halfW * tilt);
-  ctx.restore();
+  ctx.fillRect(cx - halfW, glassTop, halfW * 2, glassBot - glassTop);
+  const plastic = (x0: number, y0: number, w: number, h: number, r: number[]) => {
+    const g = ctx.createLinearGradient(x0, 0, x0 + w, 0);
+    g.addColorStop(0, '#050505');
+    g.addColorStop(0.3, '#2a2a2e');
+    g.addColorStop(0.42, '#3a3a40');
+    g.addColorStop(0.7, '#141416');
+    g.addColorStop(1, '#030303');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.roundRect(x0, y0, w, h, r);
+    ctx.fill();
+  };
+  plastic(cx - halfW * 1.02, top, halfW * 2.04, capH + 2 * u, [10 * u, 10 * u, 3 * u, 3 * u]);
+  plastic(cx - halfW * 1.1, glassBot - 2 * u, halfW * 2.2, baseH + 2 * u, [3 * u, 3 * u, 12 * u, 12 * u]);
+  ctx.restore()
 }
 
 // ---------------------------------------------------------------------------
@@ -714,170 +724,4 @@ function luminanceOf(c: string): number {
   if (!/^#[0-9a-f]{6}$/i.test(c)) return 0.5;
   const n = parseInt(c.slice(1), 16);
   return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
-}
-
-// ---------------------------------------------------------------------------
-// Kaleidoscope
-// ---------------------------------------------------------------------------
-
-/**
- * A real kaleidoscope: a chamber of backlit glass (faceted shards and glossy beads in jewel
- * colours, blended like light through glass), mirrored round into the full circle and seen
- * through an eyepiece. Every voice is a jewel: its note sets its colour and its angle in the
- * chamber, its register how far out it sits, its level its size; voices on one note pile up into
- * a cluster. The mirrors fold once per different note in the chord (at least three), so chord
- * changes re-fold the pattern (crossfading); glides slide jewels across, the whole thing turns
- * slowly. Kicks flash it, snares shake the glass, hats sparkle.
- */
-let chamber: { q: number; canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D } | null = null;
-function chamberCanvas(q: number) {
-  if (!chamber || chamber.q !== q) {
-    const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(q, q) : Object.assign(document.createElement('canvas'), { width: q, height: q });
-    chamber = { q, canvas, ctx: canvas.getContext('2d') as unknown as CanvasRenderingContext2D };
-  }
-  chamber.ctx.setTransform(1, 0, 0, 1, 0, 0);
-  chamber.ctx.clearRect(0, 0, q, q);
-  return chamber;
-}
-/** Jewel colour for a note: around the circle of fifths, fully saturated. */
-const jewel = (pc: number, l = 56, a = 1) => `hsla(${(mod12(pc * 7) * 30 + 15) % 360}, 92%, ${l}%, ${a})`;
-
-export function drawKaleidoscope(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false) {
-  const { cx, cy, u } = a;
-  const R = a.R * 0.92;
-  const drum = drumPulse(score, t);
-  const { lo, span } = skyRange(score);
-  const now = chordAt(score, t);
-  const foldOf = (c: Score['chords'][number] | null) => Math.max(3, Math.min(9, c ? new Set(c.notes.map((n) => mod12(Math.round(n)))).size : 3));
-  const V = score.config.voices;
-  const Q = lite ? 300 : 520;
-  const half = Q / 2;
-  const spin = 0.035 * t;
-
-  // Paint the chamber once per fold count: jewels laid out in polar coordinates round its centre.
-  const paintChamber = (fold: number) => {
-    const ch = chamberCanvas(Q);
-    const c = ch.ctx;
-    const wedge = Math.PI / fold;
-    c.translate(half, half);
-    // Backlight.
-    const back = c.createRadialGradient(0, 0, 0, 0, 0, half);
-    back.addColorStop(0, `rgba(40,30,60,${0.9 + 0.1 * drum.kick})`);
-    back.addColorStop(1, 'rgba(6,4,12,1)');
-    c.fillStyle = back;
-    c.fillRect(-half, -half, Q, Q);
-    c.globalCompositeOperation = 'screen';
-    for (let v = 0; v < V; v++) {
-      const p = pitchAt(score, v, t);
-      const level = levelAt(score, v, t);
-      if (level < 0.03) continue;
-      const pc = ((p % 12) + 12) % 12;
-      const reg = Math.max(0, Math.min(1, (p - lo) / span));
-      // Angle in the wedge by note (a little either side spills over the mirror, as glass does).
-      const shake = drum.snare * 0.04 * Math.sin(t * 60 + v * 7);
-      const ang = -0.05 + (pc / 12) * (wedge + 0.1) + shake + 0.08 * Math.sin(0.2 * t + v);
-      const r = half * (0.1 + 0.82 * reg) + hash(v, 2) * half * 0.06;
-      const x = Math.cos(ang) * r;
-      const y = Math.sin(ang) * r;
-      const size = half * (0.07 + 0.07 * level) * (0.8 + 0.4 * hash(v, 3));
-      const col = mod12(Math.round(p));
-      // A faceted shard: an irregular polygon with a light-to-deep gradient and a bright edge.
-      const sides = 4 + Math.floor(hash(v, 4) * 3);
-      const rot = p * 0.7 + v + 0.15 * t;
-      c.beginPath();
-      for (let i = 0; i < sides; i++) {
-        const q = rot + (i / sides) * Math.PI * 2;
-        const rr = size * (0.55 + 0.6 * hash(v, i, 5));
-        if (i) c.lineTo(x + Math.cos(q) * rr, y + Math.sin(q) * rr);
-        else c.moveTo(x + Math.cos(q) * rr, y + Math.sin(q) * rr);
-      }
-      c.closePath();
-      const g = c.createLinearGradient(x - size, y - size, x + size, y + size);
-      g.addColorStop(0, jewel(col, 78, 0.95));
-      g.addColorStop(0.5, jewel(col, 52, 0.85));
-      g.addColorStop(1, jewel(col, 30, 0.8));
-      c.fillStyle = g;
-      c.fill();
-      c.strokeStyle = 'rgba(255,255,255,0.45)';
-      c.lineWidth = Math.max(1, Q / 400);
-      c.stroke();
-      // A glossy bead beside it, in a neighbouring shade.
-      const bx = x + Math.cos(rot * 1.7) * size * 1.1;
-      const by = y + Math.sin(rot * 1.7) * size * 1.1;
-      const br = size * (0.28 + 0.2 * hash(v, 6));
-      const bg = c.createRadialGradient(bx - br * 0.35, by - br * 0.35, br * 0.05, bx, by, br);
-      bg.addColorStop(0, 'rgba(255,255,255,0.95)');
-      bg.addColorStop(0.3, jewel(col + 1, 62, 0.9));
-      bg.addColorStop(1, jewel(col + 1, 28, 0.6));
-      c.fillStyle = bg;
-      c.beginPath();
-      c.arc(bx, by, br, 0, Math.PI * 2);
-      c.fill();
-    }
-    // Hats: sparkles in the glass.
-    if (drum.hat > 0.05) {
-      c.fillStyle = `rgba(255,255,255,${0.8 * drum.hat})`;
-      for (let i = 0; i < 14; i++) {
-        const ang = hash(i, 9, Math.floor(t * 8)) * wedge;
-        const r = hash(i, 10, Math.floor(t * 8)) * half * 0.9;
-        c.fillRect(Math.cos(ang) * r, Math.sin(ang) * r, Q / 260, Q / 260);
-      }
-    }
-    c.globalCompositeOperation = 'source-over';
-    return ch.canvas;
-  };
-  // Mirror the chamber's wedge round the circle.
-  const mirror = (fold: number, opacity: number) => {
-    if (opacity < 0.01) return;
-    const img = paintChamber(fold);
-    const wedge = Math.PI / fold;
-    const zoom = 1 + 0.04 * drum.kick;
-    ctx.globalAlpha = opacity;
-    for (let k = 0; k < 2 * fold; k++) {
-      ctx.save();
-      ctx.translate(cx, cy);
-      // Odd wedges are mirror images: turned one wedge further, then flipped back across their edge.
-      ctx.rotate(spin + (k % 2 ? k + 1 : k) * wedge);
-      if (k % 2) ctx.scale(1, -1);
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.arc(0, 0, R * 1.02, -0.002, wedge + 0.002);
-      ctx.closePath();
-      ctx.clip();
-      ctx.drawImage(img as CanvasImageSource, -R * zoom, -R * zoom, 2 * R * zoom, 2 * R * zoom);
-      ctx.restore();
-    }
-    ctx.globalAlpha = 1;
-  };
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(cx, cy, R, 0, Math.PI * 2);
-  ctx.fillStyle = '#05030a';
-  ctx.fill();
-  ctx.save();
-  ctx.clip();
-  const fNow = foldOf(now.c);
-  const fPrev = foldOf(now.prev);
-  if (fPrev !== fNow && now.x < 1) {
-    mirror(fPrev, 1);
-    mirror(fNow, now.x);
-  } else mirror(fNow, 1);
-  // The kick's flash, and the eyepiece: a vignette and a dark rim.
-  if (drum.kick > 0.02) {
-    ctx.fillStyle = `rgba(255,255,255,${0.08 * drum.kick})`;
-    ctx.fillRect(cx - R, cy - R, 2 * R, 2 * R);
-  }
-  const vig = ctx.createRadialGradient(cx, cy, R * 0.55, cx, cy, R);
-  vig.addColorStop(0, 'rgba(0,0,0,0)');
-  vig.addColorStop(1, 'rgba(0,0,0,0.75)');
-  ctx.fillStyle = vig;
-  ctx.fillRect(cx - R, cy - R, 2 * R, 2 * R);
-  ctx.restore();
-  ctx.strokeStyle = alpha(st.ink, 0.85);
-  ctx.lineWidth = Math.max(4, 10 * u);
-  ctx.beginPath();
-  ctx.arc(cx, cy, R + 4 * u, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.restore();
 }

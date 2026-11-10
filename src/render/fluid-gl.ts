@@ -342,10 +342,11 @@ function stepSim(S: GLState, score: Score, time: number) {
     const x = 0.1 + 0.8 * Math.max(0, Math.min(1, (p - lo) / span));
     const wob = Math.sin(time * 1.3 + v * 2.1) * 0.25;
     vPts.push([x, 0.05]);
-    vVals.push([wob * 30, 210 * level, 0, 0.0009]);
+    vVals.push([wob * 24, 150 * level, 0, 0.0009]);
     const col = noteInk(p);
     dPts.push([x, 0.05]);
-    dVals.push([col[0] * 0.011 * level, col[1] * 0.011 * level, col[2] * 0.011 * level, 0.0006]);
+    // The ink comes out over the same spot as the jet that pushes it, so what flows is what you see.
+    dVals.push([col[0] * 0.016 * level, col[1] * 0.016 * level, col[2] * 0.016 * level, 0.0009]);
   }
   for (const h of drumHits(score, time, time + DT)) {
     if (h.voice === 'kick') {
