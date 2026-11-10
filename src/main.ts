@@ -23,6 +23,7 @@ import {
   STYLES,
   chordIndexAt,
   chordToToken,
+  chordAlternatives,
   formatSeed,
   generateScore,
   songFromText,
@@ -617,7 +618,18 @@ function startApp() {
         list.append(li);
       }
       const origin = c.origin === 'scale' || c.origin === 'cadence' || c.origin === 'written' ? '' : ` · ${c.origin}`;
-      list.append(row(c.t, c.name, c.roman + origin + chordLength(s, i), (c.unison ? c.notes.slice(0, 1) : c.notes).map((n) => spellChordNote(n, c)).join(' ')));
+      const li = row(c.t, c.name, c.roman + origin + chordLength(s, i), (c.unison ? c.notes.slice(0, 1) : c.notes).map((n) => spellChordNote(n, c)).join(' '));
+      // Swapping writes the progression out, so it's offered where that keeps the piece the same.
+      if (!s.endless && !s.sections.length && !c.unison) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'swap';
+        b.dataset.k = String(i);
+        b.title = 'Swap this chord for an alternative';
+        b.textContent = '⇄';
+        li.append(b);
+      }
+      list.append(li);
     }
     renderedRows = s.chords.length + 1;
     if (!s.endless) {
@@ -926,7 +938,91 @@ function startApp() {
   });
   $('#restart').addEventListener('click', () => seek(0));
   scrub.addEventListener('input', () => seek(Number(scrub.value)));
+  // ---- Chord swapping ------------------------------------------------------------
+  const swapMenu = document.createElement('div');
+  swapMenu.className = 'swap-menu';
+  swapMenu.hidden = true;
+  document.body.append(swapMenu);
+  let undoProgression: { progression: string; key: string } | null = null;
+  const closeSwap = () => (swapMenu.hidden = true);
+  function openSwap(k: number, anchor: HTMLElement) {
+    const c = score.chords[k];
+    const alts = chordAlternatives(score, k);
+    swapMenu.innerHTML = '';
+    const head = document.createElement('div');
+    head.className = 'swap-head';
+    head.textContent = `Instead of ${c.name}:`;
+    swapMenu.append(head);
+    for (const a of alts) {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'swap-row';
+      const play = document.createElement('button');
+      play.type = 'button';
+      play.className = 'icon';
+      play.textContent = '▶';
+      play.title = `Hear ${a.name}`;
+      play.addEventListener('click', () => {
+        const ref = k > 0 ? score.chords[k - 1].notes : c.notes;
+        void player.audition(score, voiceChord(a.chord, ref, voicingRules(score.config), null));
+      });
+      const pickBtn = document.createElement('button');
+      pickBtn.type = 'button';
+      pickBtn.className = 'swap-pick';
+      pickBtn.innerHTML = '<b></b> <span class="muted"></span><small></small>';
+      pickBtn.children[0].textContent = a.name;
+      pickBtn.children[1].textContent = a.roman;
+      pickBtn.children[2].textContent = a.why;
+      pickBtn.addEventListener('click', () => {
+        undoProgression = { progression: state.progression, key: state.key };
+        const tokens = score.chords.map((x) => chordToToken(x, score.keyPc));
+        tokens[k] = chordToToken(a.chord, score.keyPc);
+        if (state.key === 'auto') state.key = score.keyName; // pin the key so the numerals mean the same chords
+        state.progression = tokens.join(' ');
+        closeSwap();
+        writeForm();
+        rebuild(true);
+        setStatus(`Swapped ${c.name} for ${a.name} (${a.why}). The chords are now written in Progression.`);
+      });
+      rowEl.append(play, pickBtn);
+      swapMenu.append(rowEl);
+    }
+    if (undoProgression) {
+      const undo = document.createElement('button');
+      undo.type = 'button';
+      undo.className = 'swap-undo';
+      undo.textContent = '↶ Undo last swap';
+      undo.addEventListener('click', () => {
+        if (!undoProgression) return;
+        state.progression = undoProgression.progression;
+        state.key = undoProgression.key;
+        undoProgression = null;
+        closeSwap();
+        writeForm();
+        rebuild(true);
+        setStatus('Swap undone.');
+      });
+      swapMenu.append(undo);
+    }
+    const r = anchor.getBoundingClientRect();
+    swapMenu.hidden = false;
+    const w = swapMenu.offsetWidth;
+    swapMenu.style.left = `${Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w))}px`;
+    swapMenu.style.top = `${window.scrollY + r.bottom + 4}px`;
+  }
+  document.addEventListener('click', (e) => {
+    if (swapMenu.hidden) return;
+    const t = e.target as HTMLElement;
+    if (!swapMenu.contains(t) && !t.closest('.swap')) closeSwap();
+  });
+  document.addEventListener('keydown', (e) => e.key === 'Escape' && closeSwap());
+
   list.addEventListener('click', (e) => {
+    const swapBtn = (e.target as HTMLElement).closest<HTMLElement>('.swap');
+    if (swapBtn) {
+      e.stopPropagation();
+      openSwap(Number(swapBtn.dataset.k), swapBtn);
+      return;
+    }
     const li = (e.target as HTMLElement).closest('li');
     if (li) seek(Number(li.dataset.t) + 0.001);
   });

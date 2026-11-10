@@ -228,3 +228,17 @@ describe('small voice counts', () => {
     }
   });
 });
+
+describe('chord alternatives', () => {
+  it("offers the next chord's dominant first, never the chord itself, with reasons", async () => {
+    const { generateScore, resolveConfig, chordAlternatives } = await import('../src/engine');
+    const s = generateScore(resolveConfig({ seed: 7 }));
+    for (let k = 1; k < s.chords.length - 1; k++) {
+      const alts = chordAlternatives(s, k);
+      expect(alts.length).toBeGreaterThan(3);
+      expect(alts[0].chord.root).toBe((s.chords[k + 1].root + 7) % 12);
+      expect(alts.some((a) => a.chord.root === s.chords[k].root && a.name === s.chords[k].name)).toBe(false);
+      for (const a of alts) expect(a.why.length).toBeGreaterThan(3);
+    }
+  });
+});
