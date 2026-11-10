@@ -735,3 +735,297 @@ function luminanceOf(c: string): number {
   const n = parseInt(c.slice(1), 16);
   return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
 }
+
+// ---------------------------------------------------------------------------
+// Kaleidoscope
+// ---------------------------------------------------------------------------
+
+/**
+ * Each voice is a coloured shard: its angle within the wedge is its note, its distance from the
+ * middle its register, its colour the note's. The shards are mirrored round into a mandala whose
+ * symmetry is the number of different notes in the chord: a unison is a single mirrored pair, a
+ * triad 3-fold, a 9th chord 5-fold. A chord change re-folds the pattern (crossfading from the
+ * old symmetry to the new); glides slide shards across. The whole thing turns slowly; kicks
+ * breathe it outward.
+ */
+export function drawKaleidoscope(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea) {
+  const { cx, cy, u } = a;
+  const R = a.R * 0.92;
+  const drum = drumPulse(score, t);
+  const { lo, span } = skyRange(score);
+  const now = chordAt(score, t);
+  const dark = luminanceOf(st.background) < 0.45;
+  const foldOf = (c: Score['chords'][number] | null) => (c ? new Set(c.notes.map((n) => mod12(Math.round(n)))).size : 1);
+  const V = score.config.voices;
+  const shards = Array.from({ length: V }, (_, v) => {
+    const p = pitchAt(score, v, t);
+    return { p, level: levelAt(score, v, t), v };
+  });
+  const spin = 0.04 * t;
+  const breathe = 1 + 0.06 * drum.kick;
+  const pattern = (fold: number, opacity: number) => {
+    if (opacity < 0.01) return;
+    const wedge = Math.PI / Math.max(1, fold);
+    for (let k = 0; k < 2 * Math.max(1, fold); k++) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(spin + k * wedge);
+      if (k % 2) ctx.scale(1, -1);
+      for (const s of shards) {
+        if (s.level < 0.02) continue;
+        const pc = ((s.p % 12) + 12) % 12;
+        const ang = (pc / 12) * wedge * 0.94 + wedge * 0.03;
+        const r = R * (0.12 + 0.78 * Math.max(0, Math.min(1, (s.p - lo) / span))) * breathe;
+        const x = Math.cos(ang) * r;
+        const y = Math.sin(ang) * r;
+        const size = R * (0.05 + 0.05 * s.level) * (0.8 + 0.4 * hash(s.v, 3));
+        const rot = s.p * 0.9 + s.v;
+        ctx.fillStyle = alpha(st.pcColor(mod12(Math.round(s.p))), (dark ? 0.3 : 0.5) * opacity);
+        ctx.strokeStyle = alpha(dark ? '#ffffff' : st.ink, 0.22 * opacity);
+        ctx.lineWidth = Math.max(1, 0.8 * u);
+        ctx.beginPath();
+        for (let i = 0; i < 3; i++) {
+          const q = rot + (i * Math.PI * 2) / 3 + (i === 1 ? 0.5 : 0);
+          const rr = size * (i === 2 ? 1.25 : 1);
+          if (i) ctx.lineTo(x + Math.cos(q) * rr, y + Math.sin(q) * rr);
+          else ctx.moveTo(x + Math.cos(q) * rr, y + Math.sin(q) * rr);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  };
+  ctx.save();
+  // The tube: a dark disc, the pattern glowing inside it, and a rim.
+  const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+  bg.addColorStop(0, dark ? alpha('#ffffff', 0.05) : alpha(st.ink, 0.04));
+  bg.addColorStop(1, dark ? 'rgba(0,0,0,0.35)' : alpha(st.ink, 0.1));
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.fillStyle = bg;
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  if (dark) ctx.globalCompositeOperation = 'lighter';
+  const fNow = foldOf(now.c);
+  const fPrev = foldOf(now.prev);
+  if (fPrev !== fNow && now.x < 1) {
+    pattern(fPrev, 1 - now.x);
+    pattern(fNow, now.x);
+  } else pattern(fNow, 1);
+  ctx.restore();
+  ctx.strokeStyle = alpha(st.text, 0.3);
+  ctx.lineWidth = Math.max(2, 3 * u);
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Lava lamp
+// ---------------------------------------------------------------------------
+
+/**
+ * The classic lamp: a chrome cone base, a tapered glass bottle, a little cone cap, coloured
+ * liquid lit from below. Each note sounding is a blob of wax at its pitch's height (low at the
+ * bottom); voices on the same note fuse into one bigger blob. Blobs follow their notes slowly,
+ * with weight, stretching tall as they rise or sink, and melt together when they meet; a molten
+ * pool always sits at the bottom. Kicks flare the bulb and wobble the wax.
+ */
+interface LavaBuffer {
+  w: number;
+  h: number;
+  canvas: HTMLCanvasElement | OffscreenCanvas;
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+  img: ImageData;
+}
+let lava: LavaBuffer | null = null;
+function lavaBuffer(w: number, h: number): LavaBuffer {
+  if (lava && lava.w === w && lava.h === h) return lava;
+  const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h });
+  const c = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+  lava = { w, h, canvas, ctx: c, img: c.createImageData(w, h) };
+  return lava;
+}
+
+export function drawLavaLamp(ctx: CanvasRenderingContext2D, score: Score, t: number, _st: ViewStyle, a: ViewArea, lite = false) {
+  const { cx, u } = a;
+  const drum = drumPulse(score, t);
+  const { lo, span } = skyRange(score);
+  const V = score.config.voices;
+  // Proportions of the classic lamp.
+  const total = (a.bottom - a.top) * 0.96;
+  const top = a.top + (a.bottom - a.top - total) / 2;
+  const capH = total * 0.13;
+  const glassH = total * 0.6;
+  const baseH = total - capH - glassH;
+  const gTop = top + capH;
+  const gBot = gTop + glassH;
+  const wMax = Math.min(a.width * 0.22, total * 0.19);
+  /** Glass half-width at height fraction f (0 bottom, 1 top): a little swell low down, tapering up. */
+  const glassHW = (f: number) => {
+    const swell = f < 0.28 ? 0.84 + 0.16 * Math.sin((f / 0.28) * (Math.PI / 2)) : 1 - 0.56 * ((f - 0.28) / 0.72) ** 1.15;
+    return wMax * swell;
+  };
+  const yOf = (f: number) => gBot - f * glassH;
+
+  // Blobs: one per note sounding (voices on it fuse), at its height, following with weight.
+  const smoothP = (v: number, time: number) => {
+    let s = 0;
+    let w = 0;
+    for (let i = 0; i < 9; i++) {
+      const age = i * 0.2;
+      const k = Math.exp(-age / 0.6);
+      s += pitchAt(score, v, time - age) * k;
+      w += k;
+    }
+    return s / w;
+  };
+  const groups = new Map<number, { p: number; pPrev: number; n: number; level: number }>();
+  for (let v = 0; v < V; v++) {
+    const p = smoothP(v, t);
+    const key = Math.round(p * 2);
+    const g = groups.get(key) ?? { p: 0, pPrev: 0, n: 0, level: 0 };
+    g.p += p;
+    g.pPrev += smoothP(v, t - 0.15);
+    g.n++;
+    g.level = Math.max(g.level, levelAt(score, v, t));
+    groups.set(key, g);
+  }
+  const blobs = [...groups.values()].sort((x, y) => x.p - y.p).map((g, i) => {
+    const p = g.p / g.n;
+    const vel = (p - g.pPrev / g.n) / 0.15; // semitones per second
+    const f = 0.1 + 0.78 * Math.max(0, Math.min(1, (p - lo) / span));
+    const r = wMax * (0.12 + 0.05 * Math.sqrt(g.n)) * (0.75 + 0.25 * g.level) * (1 + 0.08 * drum.kick * Math.sin(t * 25 + i));
+    const sy = 1 + Math.min(1.3, Math.abs(vel) * 0.12);
+    const room = glassHW(f) - r * 0.8;
+    // Neighbouring notes sit on alternate sides, so blobs spread across the glass.
+    const x = cx + Math.max(-room, Math.min(room, glassHW(f) * 0.5 * Math.sin(i * 2.4 + 0.13 * t + 0.4 * Math.sin(0.07 * t + i))));
+    return { x, y: yOf(f), r, sx: 1 / Math.sqrt(sy), sy };
+  });
+  // The molten pool at the bottom.
+  blobs.push({ x: cx, y: gBot + wMax * 0.1, r: wMax * 0.36, sx: 1.9, sy: 0.5 });
+
+  // Render the wax and liquid into a buffer covering the glass.
+  const scale = lite ? 0.35 : 0.55;
+  const bw = Math.max(40, Math.round(wMax * 2 * scale));
+  const bh = Math.max(80, Math.round(glassH * scale));
+  const buf = lavaBuffer(bw, bh);
+  const data = buf.img.data;
+  const flare = 1 + 0.35 * drum.kick;
+  for (let j = 0; j < bh; j++) {
+    const y = gTop + (j / (bh - 1)) * glassH;
+    const f = (gBot - y) / glassH;
+    const hw = glassHW(f);
+    // The liquid: lit from the bulb below, deep violet higher up.
+    const lift = Math.pow(Math.max(0, f), 0.8);
+    const lr = (150 - 90 * lift) * flare;
+    const lg = (40 - 15 * lift) * flare;
+    const lb = (120 + 20 * lift) * flare;
+    for (let i = 0; i < bw; i++) {
+      const x = cx - wMax + (i / (bw - 1)) * wMax * 2;
+      const o = (j * bw + i) * 4;
+      if (Math.abs(x - cx) > hw) {
+        data[o + 3] = 0;
+        continue;
+      }
+      let field = 0;
+      for (const b of blobs) {
+        const dx = (x - b.x) / b.sx;
+        const dy = (y - b.y) / b.sy;
+        field += (b.r * b.r) / (dx * dx + dy * dy + 1);
+      }
+      // Edge darkening of the glass (it's a curved bottle).
+      const edge = 1 - 0.45 * Math.pow(Math.abs(x - cx) / hw, 3);
+      if (field > 1) {
+        // Wax: hot and bright inside, deeper at the skin.
+        const k = Math.min(1, (field - 1) * 0.9);
+        data[o] = Math.min(255, (235 + 20 * k) * edge * flare);
+        data[o + 1] = Math.min(255, (70 + 120 * k) * edge * flare);
+        data[o + 2] = Math.min(255, (40 + 40 * k) * edge);
+        data[o + 3] = 255;
+      } else {
+        const glow = Math.max(0, field - 0.55) * 1.6; // the wax lights the liquid around it
+        data[o] = Math.min(255, (lr + 90 * glow) * edge);
+        data[o + 1] = Math.min(255, (lg + 40 * glow) * edge);
+        data[o + 2] = Math.min(255, (lb + 10 * glow) * edge);
+        data[o + 3] = 255;
+      }
+    }
+  }
+  buf.ctx.putImageData(buf.img, 0, 0);
+
+  ctx.save();
+  // Light the lamp throws around it.
+  const halo = ctx.createRadialGradient(cx, gBot, 0, cx, gBot, wMax * 4);
+  halo.addColorStop(0, `rgba(255,120,80,${0.16 * flare})`);
+  halo.addColorStop(1, 'rgba(255,120,80,0)');
+  ctx.fillStyle = halo;
+  ctx.fillRect(cx - wMax * 4, gBot - wMax * 4, wMax * 8, wMax * 8);
+  // The glass contents.
+  const glass = new Path2D();
+  for (let k = 0; k <= 40; k++) {
+    const f = k / 40;
+    const p = { x: cx - glassHW(f), y: yOf(f) };
+    if (k) glass.lineTo(p.x, p.y);
+    else glass.moveTo(p.x, p.y);
+  }
+  for (let k = 40; k >= 0; k--) glass.lineTo(cx + glassHW(k / 40), yOf(k / 40));
+  glass.closePath();
+  ctx.save();
+  ctx.clip(glass);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(buf.canvas as CanvasImageSource, cx - wMax, gTop, wMax * 2, glassH);
+  // Glass highlights: a long streak on the left, a thin one on the right.
+  const streak = ctx.createLinearGradient(cx - wMax, 0, cx + wMax, 0);
+  streak.addColorStop(0.12, 'rgba(255,255,255,0)');
+  streak.addColorStop(0.2, 'rgba(255,255,255,0.28)');
+  streak.addColorStop(0.27, 'rgba(255,255,255,0)');
+  streak.addColorStop(0.8, 'rgba(255,255,255,0)');
+  streak.addColorStop(0.84, 'rgba(255,255,255,0.12)');
+  streak.addColorStop(0.88, 'rgba(255,255,255,0)');
+  ctx.fillStyle = streak;
+  ctx.fillRect(cx - wMax, gTop, wMax * 2, glassH);
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = Math.max(1, 1.2 * u);
+  ctx.stroke(glass);
+  // Chrome: the cap and the base, brushed metal with a bright vertical highlight.
+  const chrome = (x0: number, x1: number) => {
+    const g = ctx.createLinearGradient(x0, 0, x1, 0);
+    g.addColorStop(0, '#3a3a40');
+    g.addColorStop(0.22, '#c9cbd2');
+    g.addColorStop(0.32, '#f4f5f8');
+    g.addColorStop(0.45, '#8c8f98');
+    g.addColorStop(0.75, '#5a5c63');
+    g.addColorStop(1, '#2c2c31');
+    return g;
+  };
+  const capTopW = glassHW(1) * 0.55;
+  ctx.fillStyle = chrome(cx - glassHW(1), cx + glassHW(1));
+  ctx.beginPath();
+  ctx.moveTo(cx - glassHW(1) * 1.04, gTop);
+  ctx.lineTo(cx + glassHW(1) * 1.04, gTop);
+  ctx.lineTo(cx + capTopW, top);
+  ctx.lineTo(cx - capTopW, top);
+  ctx.closePath();
+  ctx.fill();
+  const bTopW = glassHW(0) * 1.04;
+  const bBotW = wMax * 1.55;
+  ctx.fillStyle = chrome(cx - bBotW, cx + bBotW);
+  ctx.beginPath();
+  ctx.moveTo(cx - bTopW, gBot);
+  ctx.lineTo(cx + bTopW, gBot);
+  ctx.lineTo(cx + bBotW, gBot + baseH);
+  ctx.lineTo(cx - bBotW, gBot + baseH);
+  ctx.closePath();
+  ctx.fill();
+  // A lip where the glass meets the base.
+  ctx.fillStyle = chrome(cx - bTopW, cx + bTopW);
+  ctx.fillRect(cx - bTopW * 1.04, gBot - 3 * u, bTopW * 2.08, 6 * u);
+  ctx.restore();
+}

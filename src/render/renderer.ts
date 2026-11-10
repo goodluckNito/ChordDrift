@@ -6,7 +6,7 @@ import { midiToHz, mod12 } from '../engine/theory';
 import { fontStack } from './fonts';
 import { mulberry32 } from '../engine/rng';
 import { drawChladni, drawConstellation, type ViewArea, type ViewStyle } from './harmony-views';
-import { drawCity, drawMarbling, drawMurmuration } from './novel-views';
+import { drawCity, drawKaleidoscope, drawLavaLamp, drawMarbling, drawMurmuration } from './novel-views';
 
 /**
  * Pitch-versus-time plot with a moving camera. Everything is a pure function of
@@ -1515,7 +1515,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   }
 
   const freqs = soundingPitches(score, t).map(midiToHz);
-  const harmonyView = ['chladni', 'constellation', 'marbling', 'murmur', 'city'].includes(cfg.video.view);
+  const harmonyView = ['chladni', 'constellation', 'marbling', 'murmur', 'city', 'kaleido', 'lava'].includes(cfg.video.view);
   if (harmonyView) {
     const vs: ViewStyle = {
       ink: st.ink,
@@ -1542,6 +1542,8 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     else if (view === 'marbling') drawMarbling(ctx, score, t, vs, area);
     else if (view === 'murmur') drawMurmuration(ctx, score, t, vs, area, lite);
     else if (view === 'city') drawCity(ctx, score, t, vs, area);
+    else if (view === 'kaleido') drawKaleidoscope(ctx, score, t, vs, area);
+    else if (view === 'lava') drawLavaLamp(ctx, score, t, vs, area, lite);
     else drawConstellation(ctx, score, t, vs, area);
   } else if (cfg.video.view === 'waterfall') drawWaterfall(ctx, score, t, st, lay);
   else if (cfg.video.view === 'spiral') {
