@@ -303,102 +303,119 @@ export function drawMarbling(ctx: CanvasRenderingContext2D, score: Score, t: num
 // ---------------------------------------------------------------------------
 
 /**
- * One flock, led by the voices. The leaders sit at their notes' heights, strung across the sky in
- * order from the bass up, and the flock is a ribbon of birds through them: it stretches between the
- * lowest and highest voices, bunches where voices cluster (the same number of birds between each
- * pair of neighbours, so close voices make dense knots), and draws into one ball on a unison. The
- * leaders follow their notes slowly, with weight, and birds trail behind them, so a chord change
- * is a sweeping turn of the whole flock. Kicks make it pulse; snares send a ripple along it.
+ * One flock that takes the shape of the chord. Around an invisible clock of the twelve notes,
+ * every voice leads from its note's angle (a little further out the higher it is), and the birds
+ * stream round the polygon the chord's notes make, gathering in knots at each note. So each kind of
+ * chord has its own figure in any key: a major triad one triangle, a minor triad its mirror image,
+ * a 7th chord a four-sided shape, a unison one ball; changing the root turns the figure. The
+ * leaders follow their notes slowly, with weight, and the birds trail behind, so a chord change is
+ * the whole flock wheeling into the next shape. Kicks make it pulse, snares send a ripple round it.
  */
 export function drawMurmuration(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false) {
-  const { u } = a;
+  const { cx, cy, u, tu } = a;
   const W = a.width;
-  const top = a.top + 40 * u;
-  const bottom = a.bottom - 60 * u;
+  const Rr = Math.min(W * 0.36, (a.bottom - a.top) * 0.38);
   const { lo, span } = skyRange(score);
   const V = score.config.voices;
   const drum = drumPulse(score, t);
-  const BIRDS = lite ? 600 : 1500;
-  // A leader's height follows its note with weight: an average of where the note was over the
-  // last couple of seconds, recent moments counting most.
+  const BIRDS = lite ? 700 : 1600;
+  // A leader follows its note with weight: an average of where the note was over the last
+  // couple of seconds, recent moments counting most.
   const smoothP = (v: number, time: number) => {
     let s = 0;
     let w = 0;
     for (let i = 0; i < 10; i++) {
-      const age = i * 0.18;
-      const k = Math.exp(-age / 0.55);
+      const age = i * 0.16;
+      const k = Math.exp(-age / 0.5);
       s += pitchAt(score, v, time - age) * k;
       w += k;
     }
     return s / w;
   };
-  // How wide the chord is (smoothed too): a wide chord strings the flock across the sky, a unison
-  // draws it into one ball.
-  const width = (time: number) => {
-    let s = 0;
-    for (let i = 0; i < 6; i++) {
-      const ps = Array.from({ length: V }, (_, v) => pitchAt(score, v, time - i * 0.25));
-      s += Math.max(...ps) - Math.min(...ps);
+  // The figure at a moment: the distinct notes' places round the clock, in order of angle.
+  const figure = (time: number) => {
+    const pts: { x: number; y: number; ang: number; n: number }[] = [];
+    for (let v = 0; v < V; v++) {
+      if (levelAt(score, v, time) < 0.03) continue;
+      const p = smoothP(v, time);
+      const ang = -Math.PI / 2 + (Math.PI * 2 * p) / 12;
+      const r = Rr * (0.72 + 0.4 * Math.max(0, Math.min(1, (p - lo) / span)));
+      const x = cx + Math.cos(ang) * r;
+      const y = cy + Math.sin(ang) * r;
+      const near = pts.find((q) => Math.hypot(q.x - x, q.y - y) < Rr * 0.06);
+      if (near) near.n++;
+      else pts.push({ x, y, ang: ((ang % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2), n: 1 });
     }
-    return Math.min(1, s / 6 / 24);
+    pts.sort((p, q) => p.ang - q.ang);
+    // Perimeter, for spacing birds evenly round it.
+    const seg: number[] = [];
+    let per = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const b = pts[(i + 1) % pts.length];
+      const d = pts.length > 1 ? Math.hypot(b.x - pts[i].x, b.y - pts[i].y) : 0;
+      seg.push(d);
+      per += d;
+    }
+    return { pts, seg, per };
   };
-  const leader = (v: number, time: number, spread: number) => {
-    const p = smoothP(v, time);
-    const f = V > 1 ? v / (V - 1) - 0.5 : 0;
-    // Strung across the sky from the bass up, the string itself slowly swaying.
-    const x = W / 2 + W * 0.62 * spread * f + W * 0.12 * Math.sin(0.11 * time + f * 2.4) + W * 0.05 * Math.sin(0.23 * time - f * 4);
-    const y = bottom - ((p - lo) / span) * (bottom - top);
-    return { x, y };
-  };
-  // Leaders at a few lags, so trailing birds follow where the flock was.
   const LAGS = 6;
   const lagStep = 0.12;
-  const leaders = Array.from({ length: LAGS }, (_, j) => {
-    const spread = width(t - j * lagStep);
-    return Array.from({ length: V }, (_, v) => leader(v, t - j * lagStep, spread));
-  });
-  const pulse = 1 + 0.5 * drum.kick;
+  const figs = Array.from({ length: LAGS }, (_, j) => figure(t - j * lagStep));
+  const pulse = 1 + 0.45 * drum.kick;
   const rippleAge = drum.snare > 0.02 ? Math.max(0, t - drum.snareAt) : -1;
 
   ctx.save();
+  // The clock, barely there: twelve ticks and the note names, to read the figure by.
+  ctx.fillStyle = alpha(st.text, 0.22);
+  ctx.font = `500 ${13 * tu}px ${st.font}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const now = chordAt(score, t);
+  for (let pc = 0; pc < 12; pc++) {
+    const ang = -Math.PI / 2 + (Math.PI * 2 * pc) / 12;
+    ctx.fillText(nameOf(score, pc, now.c), cx + Math.cos(ang) * Rr * 1.36, cy + Math.sin(ang) * Rr * 1.36);
+  }
   ctx.strokeStyle = alpha(st.ink, 0.7);
   ctx.lineWidth = Math.max(1, 1.3 * u);
   ctx.lineCap = 'round';
   ctx.beginPath();
   for (let b = 0; b < BIRDS; b++) {
-    // A place along the ribbon (between two neighbouring voices) and across it.
-    const along = hash(b, 1) * (V - 1);
-    const i0 = Math.min(V - 2, Math.floor(along));
-    const f = along - i0;
     const lag = Math.min(LAGS - 1.001, hash(b, 2) * hash(b, 3) * (LAGS - 1));
     const j0 = Math.floor(lag);
     const lf = lag - j0;
-    const at = (j: number) => {
-      const L = leaders[j];
-      const p0 = L[Math.max(0, i0)];
-      const p1 = L[Math.min(V - 1, i0 + 1)];
-      return { x: p0.x + (p1.x - p0.x) * f, y: p0.y + (p1.y - p0.y) * f, dx: p1.x - p0.x, dy: p1.y - p0.y };
+    // Most birds stream round the outline (circling slowly); the rest gather at the notes.
+    const knot = hash(b, 1) < 0.4;
+    const flow = (hash(b, 4) + t * 0.035 * (0.7 + 0.6 * hash(b, 5))) % 1;
+    const place = (fig: ReturnType<typeof figure>) => {
+      const { pts, seg, per } = fig;
+      if (!pts.length) return { x: cx, y: cy, dx: 1, dy: 0 };
+      if (knot || per < Rr * 0.05) {
+        const q = pts[Math.floor(hash(b, 6) * pts.length)];
+        return { x: q.x, y: q.y, dx: 1, dy: 0 };
+      }
+      let d = flow * per;
+      let i = 0;
+      while (i < seg.length - 1 && d > seg[i]) d -= seg[i++];
+      const A = pts[i];
+      const B = pts[(i + 1) % pts.length];
+      const f = seg[i] > 0 ? d / seg[i] : 0;
+      return { x: A.x + (B.x - A.x) * f, y: A.y + (B.y - A.y) * f, dx: B.x - A.x, dy: B.y - A.y };
     };
-    const A = at(j0);
-    const B = at(j0 + 1);
-    const x0 = A.x + (B.x - A.x) * lf;
-    const y0 = A.y + (B.y - A.y) * lf;
-    // Across the ribbon: thick in the middle, thinning to the edges; waves of density run along it.
-    const len = Math.hypot(A.dx, A.dy);
-    const nx = len > 1e-3 ? -A.dy / len : 0;
-    const ny = len > 1e-3 ? A.dx / len : 1;
-    const g = (hash(b, 4) + hash(b, 5) + hash(b, 6)) / 1.5 - 1;
-    // Along the ribbon too, so knots and the ball have body (and a unison isn't a line).
-    const g2 = (hash(b, 7) + hash(b, 8) + hash(b, 9)) / 1.5 - 1;
-    const wave = Math.sin(along * 2.2 - t * 1.4) * 0.5 + 0.5;
-    const ripple = rippleAge >= 0 ? Math.exp(-(((along / (V - 1)) - rippleAge * 1.5) ** 2) * 30) * drum.snare : 0;
-    const thick = W * (0.03 + 0.03 * wave + 0.04 * ripple) * pulse;
-    // A little wander of each bird, so the flock shimmers.
-    const wx = Math.sin(t * 1.7 + b * 1.3) * 3 * u;
-    const wy = Math.cos(t * 1.3 + b * 2.1) * 3 * u;
-    const x = x0 + nx * g * thick + ny * g2 * thick * 0.8 + wx;
-    const y = y0 + ny * g * thick * 0.75 - nx * g2 * thick * 0.6 + wy;
-    const hd = Math.atan2(A.dy, A.dx) + 0.6 * Math.sin(b + t);
+    const P = place(figs[j0]);
+    const Qp = place(figs[j0 + 1]);
+    const x0 = P.x + (Qp.x - P.x) * lf;
+    const y0 = P.y + (Qp.y - P.y) * lf;
+    const len = Math.hypot(P.dx, P.dy) || 1;
+    const nx = -P.dy / len;
+    const ny = P.dx / len;
+    const g = (hash(b, 7) + hash(b, 8) + hash(b, 9)) / 1.5 - 1;
+    const g2 = (hash(b, 10) + hash(b, 11)) - 1;
+    const wave = 0.5 + 0.5 * Math.sin(flow * Math.PI * 8 - t * 1.6);
+    const ripple = rippleAge >= 0 ? Math.exp(-((flow - ((rippleAge * 0.8) % 1)) ** 2) * 60) * drum.snare : 0;
+    const thick = Rr * (knot ? 0.1 : 0.045 + 0.04 * wave + 0.06 * ripple) * pulse;
+    const x = x0 + (knot ? Math.cos(b) * g : nx * g) * thick + (knot ? 0 : (P.dx / len) * g2 * thick * 0.6) + Math.sin(t * 1.7 + b * 1.3) * 2.5 * u;
+    const y = y0 + (knot ? Math.sin(b * 1.7) * g : ny * g) * thick + (knot ? 0 : (P.dy / len) * g2 * thick * 0.6) + Math.cos(t * 1.3 + b * 2.1) * 2.5 * u;
+    const hd = Math.atan2(P.dy, P.dx) + 0.6 * Math.sin(b + t);
     const l = 2 * u;
     ctx.moveTo(x - Math.cos(hd) * l, y - Math.sin(hd) * l);
     ctx.lineTo(x + Math.cos(hd) * l, y + Math.sin(hd) * l);
@@ -852,85 +869,163 @@ function luminanceOf(c: string): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Each voice is a coloured shard: its angle within the wedge is its note, its distance from the
- * middle its register, its colour the note's. The shards are mirrored round into a mandala whose
- * symmetry is the number of different notes in the chord: a unison is a single mirrored pair, a
- * triad 3-fold, a 9th chord 5-fold. A chord change re-folds the pattern (crossfading from the
- * old symmetry to the new); glides slide shards across. The whole thing turns slowly; kicks
- * breathe it outward.
+ * A real kaleidoscope: a chamber of backlit glass (faceted shards and glossy beads in jewel
+ * colours, blended like light through glass), mirrored round into the full circle and seen
+ * through an eyepiece. Every voice is a jewel: its note sets its colour and its angle in the
+ * chamber, its register how far out it sits, its level its size; voices on one note pile up into
+ * a cluster. The mirrors fold once per different note in the chord (at least three), so chord
+ * changes re-fold the pattern (crossfading); glides slide jewels across, the whole thing turns
+ * slowly. Kicks flash it, snares shake the glass, hats sparkle.
  */
-export function drawKaleidoscope(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea) {
+let chamber: { q: number; canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D } | null = null;
+function chamberCanvas(q: number) {
+  if (!chamber || chamber.q !== q) {
+    const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(q, q) : Object.assign(document.createElement('canvas'), { width: q, height: q });
+    chamber = { q, canvas, ctx: canvas.getContext('2d') as unknown as CanvasRenderingContext2D };
+  }
+  chamber.ctx.setTransform(1, 0, 0, 1, 0, 0);
+  chamber.ctx.clearRect(0, 0, q, q);
+  return chamber;
+}
+/** Jewel colour for a note: around the circle of fifths, fully saturated. */
+const jewel = (pc: number, l = 56, a = 1) => `hsla(${(mod12(pc * 7) * 30 + 15) % 360}, 92%, ${l}%, ${a})`;
+
+export function drawKaleidoscope(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false) {
   const { cx, cy, u } = a;
   const R = a.R * 0.92;
   const drum = drumPulse(score, t);
   const { lo, span } = skyRange(score);
   const now = chordAt(score, t);
-  const dark = luminanceOf(st.background) < 0.45;
-  const foldOf = (c: Score['chords'][number] | null) => (c ? new Set(c.notes.map((n) => mod12(Math.round(n)))).size : 1);
+  const foldOf = (c: Score['chords'][number] | null) => Math.max(3, Math.min(9, c ? new Set(c.notes.map((n) => mod12(Math.round(n)))).size : 3));
   const V = score.config.voices;
-  const shards = Array.from({ length: V }, (_, v) => {
-    const p = pitchAt(score, v, t);
-    return { p, level: levelAt(score, v, t), v };
-  });
-  const spin = 0.04 * t;
-  const breathe = 1 + 0.06 * drum.kick;
-  const pattern = (fold: number, opacity: number) => {
+  const Q = lite ? 300 : 520;
+  const half = Q / 2;
+  const spin = 0.035 * t;
+
+  // Paint the chamber once per fold count: jewels laid out in polar coordinates round its centre.
+  const paintChamber = (fold: number) => {
+    const ch = chamberCanvas(Q);
+    const c = ch.ctx;
+    const wedge = Math.PI / fold;
+    c.translate(half, half);
+    // Backlight.
+    const back = c.createRadialGradient(0, 0, 0, 0, 0, half);
+    back.addColorStop(0, `rgba(40,30,60,${0.9 + 0.1 * drum.kick})`);
+    back.addColorStop(1, 'rgba(6,4,12,1)');
+    c.fillStyle = back;
+    c.fillRect(-half, -half, Q, Q);
+    c.globalCompositeOperation = 'screen';
+    for (let v = 0; v < V; v++) {
+      const p = pitchAt(score, v, t);
+      const level = levelAt(score, v, t);
+      if (level < 0.03) continue;
+      const pc = ((p % 12) + 12) % 12;
+      const reg = Math.max(0, Math.min(1, (p - lo) / span));
+      // Angle in the wedge by note (a little either side spills over the mirror, as glass does).
+      const shake = drum.snare * 0.04 * Math.sin(t * 60 + v * 7);
+      const ang = -0.05 + (pc / 12) * (wedge + 0.1) + shake + 0.08 * Math.sin(0.2 * t + v);
+      const r = half * (0.1 + 0.82 * reg) + hash(v, 2) * half * 0.06;
+      const x = Math.cos(ang) * r;
+      const y = Math.sin(ang) * r;
+      const size = half * (0.07 + 0.07 * level) * (0.8 + 0.4 * hash(v, 3));
+      const col = mod12(Math.round(p));
+      // A faceted shard: an irregular polygon with a light-to-deep gradient and a bright edge.
+      const sides = 4 + Math.floor(hash(v, 4) * 3);
+      const rot = p * 0.7 + v + 0.15 * t;
+      c.beginPath();
+      for (let i = 0; i < sides; i++) {
+        const q = rot + (i / sides) * Math.PI * 2;
+        const rr = size * (0.55 + 0.6 * hash(v, i, 5));
+        if (i) c.lineTo(x + Math.cos(q) * rr, y + Math.sin(q) * rr);
+        else c.moveTo(x + Math.cos(q) * rr, y + Math.sin(q) * rr);
+      }
+      c.closePath();
+      const g = c.createLinearGradient(x - size, y - size, x + size, y + size);
+      g.addColorStop(0, jewel(col, 78, 0.95));
+      g.addColorStop(0.5, jewel(col, 52, 0.85));
+      g.addColorStop(1, jewel(col, 30, 0.8));
+      c.fillStyle = g;
+      c.fill();
+      c.strokeStyle = 'rgba(255,255,255,0.45)';
+      c.lineWidth = Math.max(1, Q / 400);
+      c.stroke();
+      // A glossy bead beside it, in a neighbouring shade.
+      const bx = x + Math.cos(rot * 1.7) * size * 1.1;
+      const by = y + Math.sin(rot * 1.7) * size * 1.1;
+      const br = size * (0.28 + 0.2 * hash(v, 6));
+      const bg = c.createRadialGradient(bx - br * 0.35, by - br * 0.35, br * 0.05, bx, by, br);
+      bg.addColorStop(0, 'rgba(255,255,255,0.95)');
+      bg.addColorStop(0.3, jewel(col + 1, 62, 0.9));
+      bg.addColorStop(1, jewel(col + 1, 28, 0.6));
+      c.fillStyle = bg;
+      c.beginPath();
+      c.arc(bx, by, br, 0, Math.PI * 2);
+      c.fill();
+    }
+    // Hats: sparkles in the glass.
+    if (drum.hat > 0.05) {
+      c.fillStyle = `rgba(255,255,255,${0.8 * drum.hat})`;
+      for (let i = 0; i < 14; i++) {
+        const ang = hash(i, 9, Math.floor(t * 8)) * wedge;
+        const r = hash(i, 10, Math.floor(t * 8)) * half * 0.9;
+        c.fillRect(Math.cos(ang) * r, Math.sin(ang) * r, Q / 260, Q / 260);
+      }
+    }
+    c.globalCompositeOperation = 'source-over';
+    return ch.canvas;
+  };
+  // Mirror the chamber's wedge round the circle.
+  const mirror = (fold: number, opacity: number) => {
     if (opacity < 0.01) return;
-    const wedge = Math.PI / Math.max(1, fold);
-    for (let k = 0; k < 2 * Math.max(1, fold); k++) {
+    const img = paintChamber(fold);
+    const wedge = Math.PI / fold;
+    const zoom = 1 + 0.04 * drum.kick;
+    ctx.globalAlpha = opacity;
+    for (let k = 0; k < 2 * fold; k++) {
       ctx.save();
       ctx.translate(cx, cy);
-      ctx.rotate(spin + k * wedge);
+      // Odd wedges are mirror images: turned one wedge further, then flipped back across their edge.
+      ctx.rotate(spin + (k % 2 ? k + 1 : k) * wedge);
       if (k % 2) ctx.scale(1, -1);
-      for (const s of shards) {
-        if (s.level < 0.02) continue;
-        const pc = ((s.p % 12) + 12) % 12;
-        const ang = (pc / 12) * wedge * 0.94 + wedge * 0.03;
-        const r = R * (0.12 + 0.78 * Math.max(0, Math.min(1, (s.p - lo) / span))) * breathe;
-        const x = Math.cos(ang) * r;
-        const y = Math.sin(ang) * r;
-        const size = R * (0.05 + 0.05 * s.level) * (0.8 + 0.4 * hash(s.v, 3));
-        const rot = s.p * 0.9 + s.v;
-        ctx.fillStyle = alpha(st.pcColor(mod12(Math.round(s.p))), (dark ? 0.3 : 0.5) * opacity);
-        ctx.strokeStyle = alpha(dark ? '#ffffff' : st.ink, 0.22 * opacity);
-        ctx.lineWidth = Math.max(1, 0.8 * u);
-        ctx.beginPath();
-        for (let i = 0; i < 3; i++) {
-          const q = rot + (i * Math.PI * 2) / 3 + (i === 1 ? 0.5 : 0);
-          const rr = size * (i === 2 ? 1.25 : 1);
-          if (i) ctx.lineTo(x + Math.cos(q) * rr, y + Math.sin(q) * rr);
-          else ctx.moveTo(x + Math.cos(q) * rr, y + Math.sin(q) * rr);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-      }
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, R * 1.02, -0.002, wedge + 0.002);
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(img as CanvasImageSource, -R * zoom, -R * zoom, 2 * R * zoom, 2 * R * zoom);
       ctx.restore();
     }
+    ctx.globalAlpha = 1;
   };
+
   ctx.save();
-  // The tube: a dark disc, the pattern glowing inside it, and a rim.
-  const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
-  bg.addColorStop(0, dark ? alpha('#ffffff', 0.05) : alpha(st.ink, 0.04));
-  bg.addColorStop(1, dark ? 'rgba(0,0,0,0.35)' : alpha(st.ink, 0.1));
   ctx.beginPath();
   ctx.arc(cx, cy, R, 0, Math.PI * 2);
-  ctx.fillStyle = bg;
+  ctx.fillStyle = '#05030a';
   ctx.fill();
   ctx.save();
   ctx.clip();
-  if (dark) ctx.globalCompositeOperation = 'lighter';
   const fNow = foldOf(now.c);
   const fPrev = foldOf(now.prev);
   if (fPrev !== fNow && now.x < 1) {
-    pattern(fPrev, 1 - now.x);
-    pattern(fNow, now.x);
-  } else pattern(fNow, 1);
+    mirror(fPrev, 1);
+    mirror(fNow, now.x);
+  } else mirror(fNow, 1);
+  // The kick's flash, and the eyepiece: a vignette and a dark rim.
+  if (drum.kick > 0.02) {
+    ctx.fillStyle = `rgba(255,255,255,${0.08 * drum.kick})`;
+    ctx.fillRect(cx - R, cy - R, 2 * R, 2 * R);
+  }
+  const vig = ctx.createRadialGradient(cx, cy, R * 0.55, cx, cy, R);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(0,0,0,0.75)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(cx - R, cy - R, 2 * R, 2 * R);
   ctx.restore();
-  ctx.strokeStyle = alpha(st.text, 0.3);
-  ctx.lineWidth = Math.max(2, 3 * u);
+  ctx.strokeStyle = alpha(st.ink, 0.85);
+  ctx.lineWidth = Math.max(4, 10 * u);
   ctx.beginPath();
-  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.arc(cx, cy, R + 4 * u, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 }
