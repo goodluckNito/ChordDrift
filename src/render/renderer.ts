@@ -5,7 +5,7 @@ import { PALETTES, type ColorBy, type Theme } from '../engine/themes';
 import { midiToHz, mod12 } from '../engine/theory';
 import { fontStack } from './fonts';
 import { mulberry32 } from '../engine/rng';
-import { drawChladni, drawCompass, drawConstellation, drawFifths, type ViewArea, type ViewStyle } from './harmony-views';
+import { drawChladni, drawConstellation, type ViewArea, type ViewStyle } from './harmony-views';
 
 /**
  * Pitch-versus-time plot with a moving camera. Everything is a pure function of
@@ -1050,7 +1050,7 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
   // so several turns stack up as concentric rings instead of one short arc.
   const sink = period / Math.log(zoom ? 1.5 : 1.45); // e-folding time
   // Three turns of history at most (13 voices × many turns was a wall of rings), and two of future.
-  const memory = zoom ? sink * Math.log(1.8) : 3 * period; // how far back trails go
+  const memory = zoom ? sink * Math.log(1.8) : 2 * period; // how far back trails go
   // The future spirals in inside the present ring and interleaves with it, so only a short glimpse.
   const ahead = zoom ? Math.min(60, 0.75 * period) : 0; // how far ahead (zoom only)
   /**
@@ -1060,7 +1060,7 @@ function drawOrbit(ctx: CanvasRenderingContext2D, score: Score, t: number, st: S
    * around the centre carrying the fade within the turn (turns meet at the hand, so it's seamless).
    * Zooming, the future fades the same way ahead of the hand. Ages < 0 are the future.
    */
-  const KEEP = 0.3;
+  const KEEP = 0.1;
   /** Ahead, it fades faster: the future is a hint of what's coming, not a second set of rings. */
   const KEEP_AHEAD = 0.08;
   const TURNS = Math.max(1, Math.ceil(Math.max(memory, ahead) / period));
@@ -1514,7 +1514,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   }
 
   const freqs = soundingPitches(score, t).map(midiToHz);
-  const harmonyView = ['chladni', 'fifths', 'constellation', 'compass'].includes(cfg.video.view);
+  const harmonyView = cfg.video.view === 'chladni' || cfg.video.view === 'constellation';
   if (harmonyView) {
     const vs: ViewStyle = { ink: st.ink, accent: st.accent, text: th.text, font: st.font, lw: st.lw, pcColor: (pc) => (st.colorBy === 'none' ? st.ink : pitchColor(pc, st)) };
     const area: ViewArea = {
@@ -1525,8 +1525,6 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       tu,
     };
     if (cfg.video.view === 'chladni') drawChladni(ctx, score, t, vs, area, lite);
-    else if (cfg.video.view === 'compass') drawCompass(ctx, score, t, vs, area);
-    else if (cfg.video.view === 'fifths') drawFifths(ctx, score, t, vs, area);
     else drawConstellation(ctx, score, t, vs, area);
   } else if (cfg.video.view === 'waterfall') drawWaterfall(ctx, score, t, st, lay);
   else if (cfg.video.view === 'spiral') {

@@ -77,9 +77,9 @@ export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = '
     ['spiral', 3],
     ['waterfall', 1.5],
     ['chladni', 1.2],
-    ['fifths', 1.2],
+    ['constellation', 1.2], // (was the circle of fifths: same draw, so songs keep their music)
     ['constellation', 1.2],
-  ] as ['timeline' | 'spiral' | 'waterfall' | 'chladni' | 'fifths' | 'constellation', number][]);
+  ] as ['timeline' | 'spiral' | 'waterfall' | 'chladni' | 'constellation', number][]);
   const theme = randomTheme(r);
   let tempo = 0;
   const out: DeepPartial<ChordDriftConfig> = {
@@ -172,8 +172,6 @@ export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = '
       voicing: { inversion: 0 },
     } as DeepPartial<ChordDriftConfig>);
   }
-  // The compass came later: it shares the circle of fifths' share of songs (drawn last, so nothing else changes).
-  if (out.video?.view === 'fifths' && r() < 0.5) out.video = { ...out.video, view: 'compass' };
   return out;
 }
 
