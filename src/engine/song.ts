@@ -12,6 +12,8 @@
  *   Without brackets a full part has every drum and a soft part none.
  * - `{E,dorian,jazz}` sets the part's key (tonic), scale and/or style. A repeat with another key
  *   (or +N) is transposed; one with another scale or style is a new variation with its own chords.
+ * - `{climb}` walks the bass up the scale, one step per chord, harmonising each step.
+ *   `{release}` holds one long suspended dominant (V7sus4) for the whole part, resolving into the next.
  * - `+N` / `-N` moves the part N semitones from the home key (a repeat is transposed).
  * - `|` between parts collapses every voice into a unison, holds, and blooms
  *   out into the next part. `>` resolves straight into it. Nothing between
@@ -33,6 +35,10 @@ export interface SongSection {
   key: string | null;
   scale: string | null;
   style: string | null;
+  /** The bass climbs the scale a step per chord. */
+  climb: boolean;
+  /** One held sus dominant for the whole part. */
+  release: boolean;
   /** Length in bars of 4 beats. */
   bars: number;
   /** Collapse into a unison before this part (always false for the first). */
@@ -53,6 +59,7 @@ export const SONG_PRESETS: { name: string; form: string }[] = [
   { name: 'Long drops', form: 'intro8 > drop!16 | drop!16+1 > lift!8[kh] | break8[h] > drop!8+1' },
   { name: 'Rondo', form: 'A8 | B8 | A8 | C8 | A8' },
   { name: 'Climb', form: 'A4 > A4+2 > A4+4 > A!8+5' },
+  { name: 'Long arc', form: 'theme8 > chorus!8 | memory8[h] > chorus!8 > ascent4[kh]{climb} | light!8 > release2{release} > chorus!8 > end4' },
 ];
 
 const SECTION = /^([A-Za-z][A-Za-z']*)((?::?\d{1,3}|!|[+-]\d{1,2}|\[[kshcrKSHCR]*\]|\{[^}]*\})*)$/;
@@ -81,15 +88,19 @@ export function parseSongForm(text: string): SongForm {
     let key: string | null = null;
     let scale: string | null = null;
     let style: string | null = null;
+    let climb = false;
+    let release = false;
     for (const [, n, bang, sh, kit, opts] of m[2].matchAll(/:?(\d{1,3})|(!)|([+-]\d{1,2})|\[([a-zA-Z]*)\]|\{([^}]*)\}/g)) {
       if (opts !== undefined) {
         for (const o of opts.split(',').map((x) => x.trim()).filter(Boolean)) {
           const scaleId = Object.keys(SCALES).find((id) => id.toLowerCase() === o.toLowerCase());
           const styleId = STYLE_IDS.find((id) => id.toLowerCase() === o.toLowerCase().replace(/[\s-]/g, ''));
-          if (/^[A-Ga-g][#b]?$/.test(o) && parsePc(o[0].toUpperCase() + o.slice(1)) !== null) key = o[0].toUpperCase() + o.slice(1);
+          if (/^climb$/i.test(o)) climb = true;
+          else if (/^release$/i.test(o)) release = true;
+          else if (/^[A-Ga-g][#b]?$/.test(o) && parsePc(o[0].toUpperCase() + o.slice(1)) !== null) key = o[0].toUpperCase() + o.slice(1);
           else if (scaleId) scale = scaleId;
           else if (styleId) style = styleId;
-          else errors.push(`"${o}" in ${m[1]} isn't a key, scale or style`);
+          else errors.push(`"${o}" in ${m[1]} isn't a key, scale, style, climb or release`);
         }
         continue;
       }
@@ -98,7 +109,7 @@ export function parseSongForm(text: string): SongForm {
       else if (bang) full = true;
       else if (sh) shift = Math.max(-24, Math.min(24, Number(sh)));
     }
-    sections.push({ name: m[1].toLowerCase(), label: m[1], full, shift, drums, key, scale, style, bars, collapse: sections.length > 0 && pending === '|' });
+    sections.push({ name: m[1].toLowerCase(), label: m[1], full, shift, drums, key, scale, style, climb, release, bars, collapse: sections.length > 0 && pending === '|' });
     pending = null;
     if (sections.length >= 32) {
       errors.push('at most 32 parts');

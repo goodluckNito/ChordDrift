@@ -110,7 +110,8 @@ export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = '
     endNote: pick(r, ['tonic+1oct', 'tonic+1oct', 'tonic+2oct', 'tonic', 'tonic-2oct', 'start']),
     loop: r() < 0.2,
     endless: false,
-    song: { enabled: song, form: pick(r, SONG_PRESETS).form },
+    // (The original forms, so word songs keep their shape: Long arc joined the presets later.)
+    song: { enabled: song, form: pick(r, SONG_PRESETS.filter((p) => p.name !== 'Long arc')).form },
     motion: { transition },
     rhythm: {
       tempo: (tempo = Math.round(between(r, 56, 104, 1))),

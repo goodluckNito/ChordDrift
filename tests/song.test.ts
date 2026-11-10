@@ -117,4 +117,30 @@ describe('song endings', () => {
     expect([0, 10].includes(b.at(-1)!.root)).toBe(true); // tension in F: on V (C) or iv (B♭), not F
     expect(part(2).at(-1)!.root).toBe(0); // the close lands on C
   });
+
+  const song = (form: string, extra = {}) => resolveConfig({ seed: 11, key: 'C', passing: 0, song: { enabled: true, form }, ...extra });
+
+  it('climbs the bass from the tonic to the dominant in {climb} parts', () => {
+    const s = generateScore(song('A4 > up4{climb} | B4', { rhythm: { chords: 'h', tempo: 100 } }));
+    const climb = s.chords.filter((c) => c.section === 1);
+    const bass = climb.map((c) => Math.min(...c.notes));
+    for (let i = 1; i < bass.length; i++) expect(bass[i]).toBeGreaterThanOrEqual(bass[i - 1]);
+    expect(bass[0] % 12).toBe(0);
+    expect(bass.at(-1)! - bass[0]).toBe(7);
+    expect(climb.at(-1)!.root).toBe(7);
+    // After a climb the unison waits high on the dominant, and the next part opens on its tonic.
+    const u = s.chords.find((c) => c.unison)!;
+    expect(u.root).toBe(7);
+    expect(s.chords[u.index + 1].root).toBe(0);
+  });
+
+  it('holds one sus dominant for a {release} part, then comes home', () => {
+    const s = generateScore(song('A4 > R2{release} > B4'));
+    const r = s.chords.filter((c) => c.section === 1);
+    expect(r.length).toBe(1);
+    expect(r[0].root).toBe(7);
+    expect(r[0].intervals.slice(0, 4)).toEqual([0, 5, 7, 10]);
+    expect(s.chords.find((c) => c.section === 2)!.root).toBe(0);
+    expect(parseSongForm('A{climb} B{release} C{kazoo}').errors.length).toBe(1);
+  });
 });

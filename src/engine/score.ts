@@ -9,7 +9,7 @@ import { DEGREE_OFFSETS, SCALES, mod12, parseNote, parsePc, pcName, scaleSteps, 
 import { STYLES, type StyleId } from './styles';
 import { parseSongForm, type SongSection } from './song';
 import { parseChop, type ChopPattern } from './chop';
-import { chordName, romanName } from './chords';
+import { chordName, romanName, stackChord, typicalSize } from './chords';
 import { spreadTemplate, voiceChord, voiceLeadingCost, type VoicingRules } from './voicing';
 
 /** One glide of one voice, in MIDI pitch space. */
@@ -161,9 +161,9 @@ class ScoreBuilder {
   private melody: MelodyGenerator | null = null;
   /** Song mode: the chord plan, the parts, and a generator per distinct part. */
   private song: {
-    items: { kind: 'unison' | 'chord'; section: number; local: number; slot: number; fromEnd: number }[];
+    items: { kind: 'unison' | 'chord'; section: number; local: number; slot: number; fromEnd: number; dominant?: boolean }[];
     sections: SongSection[];
-    parts: Map<string, { walker: ProgressionWalker; cadence: ProgressionWalker; specs: ChordSpec[]; count: number; tonic: number }>;
+    parts: Map<string, { walker: ProgressionWalker; cadence: ProgressionWalker; specs: ChordSpec[]; bass: (number | undefined)[]; count: number; tonic: number }>;
     /** Per section: the ending it plays (written chords in its key), resolved lazily. */
     endings: ({ text: string; specs: ChordSpec[] | null } | null)[];
   } | null = null;
@@ -171,6 +171,7 @@ class ScoreBuilder {
   /** addChord calls so far (chords from the plan; passing chords are extra). */
   private step = 0;
   private passingRng: Rng;
+  private climbRng: Rng;
   /** A written progression: play exactly its chords. */
   private written = false;
   /** Index into the chord rhythm (collapses don't use a slot of it). */
@@ -207,8 +208,8 @@ class ScoreBuilder {
     }
     const songForm = cfg.song.enabled ? parseSongForm(cfg.song.form) : null;
     if (songForm && songForm.sections.length) {
-      const parts = new Map<string, { walker: ProgressionWalker; cadence: ProgressionWalker; specs: ChordSpec[]; count: number; tonic: number }>();
-      const items: { kind: 'unison' | 'chord'; section: number; local: number; slot: number; fromEnd: number }[] = [];
+      const parts = new Map<string, { walker: ProgressionWalker; cadence: ProgressionWalker; specs: ChordSpec[]; bass: (number | undefined)[]; count: number; tonic: number }>();
+      const items: { kind: 'unison' | 'chord'; section: number; local: number; slot: number; fromEnd: number; dominant?: boolean }[] = [];
       // Parts last whole bars. Chords change on the chord rhythm (once a bar without one),
       // restarting at each part; the last chord is cut to end on the part's last bar line.
       const rhythm = durs.length ? durs : [4];
@@ -220,6 +221,8 @@ class ScoreBuilder {
       songForm.sections.forEach((sec, i) => {
         const slots: number[] = [];
         let left = sec.bars * 4;
+        // A release is one chord held for the whole part.
+        if (sec.release) slots.push(left * beat), (left = 0);
         for (let r = 0; left > 1e-6 && slots.length < 512; r++) {
           const b = Math.min(rhythm[r % rhythm.length], left);
           slots.push(b * beat);
@@ -236,12 +239,21 @@ class ScoreBuilder {
           // A styled part plays its planned phrases, then repeats them to fill its bars.
           if (pcfg.style !== 'none' && !tokens.length) count = Math.min(count, walker.planPiece(Math.max(1, Math.round(count / 4))));
           const cadence = new ProgressionWalker({ ...pcfg, style: 'none' }, mod12(tonic), stream(seed, `cadence:${id}`), []);
-          part = { walker, cadence, specs: [], count, tonic };
+          part = { walker, cadence, specs: [], bass: [], count, tonic };
           parts.set(id, part);
         }
         if (sec.collapse) items.push({ kind: 'unison', section: i, local: 0, slot: collapseSlot, fromEnd: 0 });
         slots.forEach((slot, j) => items.push({ kind: 'chord', section: i, local: j, slot, fromEnd: slots.length - 1 - j }));
       });
+      // A collapse lands on the next part's tonic, or now and then high on its dominant, so the
+      // unison itself is the last tension before the part blooms home (always after a climb or a
+      // release, which lead there). Its own stream, so nothing else about the song changes.
+      const collapseRng = stream(seed, 'song-collapse');
+      for (const it of items) {
+        if (it.kind !== 'unison') continue;
+        const before = songForm.sections[it.section - 1];
+        it.dominant = collapseRng() < 0.3 || !!(before && (before.climb || before.release));
+      }
       // Endings that make the joins mean something (free generation only; styles and written
       // progressions have their own cadences).
       const endingRng = stream(seed, 'song-endings');
@@ -253,14 +265,17 @@ class ScoreBuilder {
           const roll = endingRng();
           return fit.length ? fit[Math.floor(roll * fit.length)] : '';
         };
-        if (tokens.length || (sec.style ?? cfg.style) !== 'none') return null;
+        if (tokens.length || (sec.style ?? cfg.style) !== 'none' || sec.climb || sec.release) return null;
         const steps = scaleSteps(sec.scale ?? cfg.scale);
         const minor = steps.includes(3) && !steps.includes(4);
         const next = songForm.sections[i + 1];
         let text: string;
         if (!next) {
           // The close: a lift, a minor plagal, a climbing bass, a backdoor, or a plain cadence (minor may end on a Picardy major).
-          text = minor ? pickOne(['bVI bVII i', 'iv V i', 'bII i', 'bVI bVII I', 'iv bVII i']) : pickOne(['bVI bVII I', 'IV iv I', 'IV V vi bVII I', 'iv bVII I', 'ii V I']);
+          text = minor ? pickOne(['bVI bVII i', 'iv V i', 'bII i', 'bVI bVII I', 'iv bVII i']) : pickOne(['bVI bVII I', 'IV iv I', 'IV V vi bVII I', 'iv bVII I', 'ii V I', 'IV bII I']);
+        } else if (next.release && !next.collapse) {
+          // Into a held sus dominant: a pre-dominant, so the release is the arrival on V.
+          text = minor ? pickOne(['iv', 'bVI', 'ii']) : pickOne(['IV', 'ii', 'vi']);
         } else if (next.collapse) {
           // Leave tension hanging; the unison resolves it.
           text = minor ? pickOne(['bVI V', 'iv V', 'bII V', 'bVI bVII']) : pickOne(['IV V', 'bVI V', 'ii V', 'IV iv']);
@@ -280,6 +295,7 @@ class ScoreBuilder {
     this.staggerRng = stream(seed, 'stagger');
     this.inversionRng = stream(seed, 'inversion');
     this.passingRng = stream(seed, 'passing');
+    this.climbRng = stream(seed, 'song-climb');
     this.current = new Array<number>(V).fill(startNote);
     this.nextChange = cfg.timing.intro;
 
@@ -414,17 +430,23 @@ class ScoreBuilder {
     };
     let spec: ChordSpec;
     let notes: number[];
+    /** Climb and release parts choose their own bass; random inversions leave them alone. */
+    let fixedBass: number | undefined;
+    let fixed = false;
     if (song && item && unison) {
       // Collapse: every voice converges on the next part's tonic, near where the voices are now.
       const next = song.sections[item.section];
-      const pc = mod12(partTonic(next, score.keyPc));
+      const tonic = mod12(partTonic(next, score.keyPc));
+      const pc = item.dominant ? mod12(tonic + 7) : tonic;
       const sorted = [...this.current].sort((a, b) => a - b);
       const median = sorted[Math.floor(sorted.length / 2)];
       let u = median - mod12(median - pc);
       if (median - u > 6) u += 12;
+      // On the dominant it rises an octave: a high held note waiting to come home.
+      if (item.dominant && u + 12 <= cfg.range.upper[1]) u += 12;
       u = Math.max(cfg.range.bass[0], Math.min(cfg.range.upper[1], u));
       const scale = next.scale ?? this.walker.scale;
-      spec = { root: pc, intervals: [0], tonic: pc, scale, name: `unison ${spellNote(u, pc, scale)}`, roman: '—', origin: 'cadence' };
+      spec = { root: pc, intervals: [0], tonic, scale, name: `unison ${spellNote(u, tonic, scale)}`, roman: item.dominant ? 'V' : '—', origin: 'cadence' };
       notes = new Array<number>(V).fill(u);
     } else if (song && item) {
       const sec = song.sections[item.section];
@@ -432,7 +454,63 @@ class ScoreBuilder {
       let base: ChordSpec;
       const ending = song.endings[item.section];
       const endLen = ending ? ending.text.split(/\s+/).length : 0;
-      if (ending && item.fromEnd < endLen) {
+      if (sec.climb || sec.release) {
+        const idx = item.local;
+        if (!part.specs[idx]) {
+          const steps = scaleSteps(part.walker.scale);
+          const size = typicalSize(Math.max(1, Math.min(5, cfg.complexity)));
+          const make = (c: { root: number; intervals: number[] }, origin: ChordSpec['origin']): ChordSpec => ({
+            ...c,
+            tonic: part.tonic,
+            scale: part.walker.scale,
+            name: chordName(c, part.tonic, part.walker.scale),
+            roman: romanName(c, part.tonic),
+            origin,
+          });
+          if (sec.release) {
+            // The long suspended dominant: V7sus4, with the 9th once chords get colourful.
+            part.specs[idx] = make({ root: mod12(part.tonic + 7), intervals: size >= 5 ? [0, 5, 7, 10, 14] : [0, 5, 7, 10] }, 'cadence');
+          } else {
+            // Climb: the bass walks up from the tonic to the dominant (1 2 3 4 5, with a chromatic ♯4
+            // when there's room: Horizon's A → A♯ → B), spread over the part's chords. Each step is
+            // harmonised by a chord with it as root, 3rd or 5th (I, I/3 → ii, IV/4…); the first is
+            // the tonic and the last the dominant itself, which the next part (or unison) answers.
+            const c = item.local + item.fromEnd + 1;
+            const five = steps.findIndex((x) => x === 7);
+            const top = five > 0 ? five : Math.min(4, steps.length - 1);
+            const path: (number | 'sharp4')[] = [];
+            for (let i = 0; i <= top; i++) path.push(i);
+            if (c > path.length && top > 0 && steps[top] - steps[top - 1] === 2) path.splice(top, 0, 'sharp4');
+            const at = c <= 1 ? 0 : Math.round((idx * (path.length - 1)) / (c - 1));
+            const step = path[Math.min(path.length - 1, at)];
+            const roll = this.climbRng();
+            if (step === 'sharp4') {
+              const bass = mod12(part.tonic + steps[top] - 1);
+              part.specs[idx] = make({ root: bass, intervals: [0, 3, 6, 9] }, 'passing');
+              part.bass[idx] = bass;
+            } else {
+              let over = step === 0 || step === top ? 0 : roll < 0.45 ? 0 : roll < 0.85 ? 2 : 4;
+              const prevSpec = part.specs[idx - 1];
+              const same = (o: number) => {
+                const ch = stackChord(part.tonic, part.walker.scale, step - o, size);
+                return !!prevSpec && prevSpec.root === ch.root && prevSpec.intervals.join() === ch.intervals.join();
+              };
+              // Two chords on one bass step: the second re-harmonises it rather than repeating.
+              if (same(over)) over = [0, 2, 4].find((o) => !same(o)) ?? over;
+              part.specs[idx] = make(stackChord(part.tonic, part.walker.scale, step - over, size), 'scale');
+              part.bass[idx] = mod12(part.tonic + steps[step]);
+            }
+          }
+        }
+        base = part.specs[idx];
+        fixedBass = part.bass[idx];
+        if (fixedBass !== undefined) fixedBass = mod12(fixedBass + partTonic(sec, score.keyPc) - part.tonic);
+      } else if (item.local === 0 && k > 0 && (song.items[k - 1].dominant || song.sections[song.items[k - 1].section].release)) {
+        // Home: after a unison on the dominant or a held sus dominant, the part opens on its tonic.
+        const size = typicalSize(Math.max(1, Math.min(5, cfg.complexity)));
+        const c = stackChord(part.tonic, part.walker.scale, 0, size);
+        base = { ...c, tonic: part.tonic, scale: part.walker.scale, name: chordName(c, part.tonic, part.walker.scale), roman: romanName(c, part.tonic), origin: 'cadence' };
+      } else if (ending && item.fromEnd < endLen) {
         // The part's ending for this join, in the part's own key (then transposed like the rest).
         ending.specs ??= part.cadence.resolveText(ending.text);
         base = ending.specs[endLen - 1 - item.fromEnd];
@@ -452,7 +530,12 @@ class ScoreBuilder {
       }
       const d = partTonic(sec, score.keyPc) - part.tonic;
       spec = d ? transposeSpec(base, d) : base;
-      notes = voiceChord(spec, ref, rules, this.voicingRng);
+      // A climb is voiced from the lowest tonic upwards (it may rise past the bass range's top).
+      const lowTonic = cfg.range.bass[0] + mod12(spec.tonic - cfg.range.bass[0]);
+      const vr = sec.climb ? { ...rules, bass: [lowTonic, lowTonic + 8] as [number, number] } : rules;
+      notes = voiceChord(spec, ref, vr, this.voicingRng, fixedBass);
+      if (fixedBass !== undefined && fixedBass !== mod12(spec.root)) spec = { ...spec, name: `${spec.name}/${spellPc(fixedBass, spec.tonic, spec.scale)}` };
+      if (sec.climb || sec.release) fixed = true;
       this.songTonic = spec.tonic;
     } else {
       spec = this.walker.next(k, this.total, cost);
@@ -464,7 +547,7 @@ class ScoreBuilder {
     if (!unison && k > 0) {
       const roll = this.inversionRng();
       const pick = this.inversionRng();
-      if (roll < cfg.voicing.inversion) {
+      if (roll < cfg.voicing.inversion && !fixed) {
         const has = (i: number[]) => spec.intervals.map(mod12).find((x) => i.includes(x));
         const options: [number, number][] = [];
         const third = has([3, 4]);
@@ -705,7 +788,8 @@ function transposeSpec(spec: ChordSpec, d: number): ChordSpec {
 
 /** A part's identity: its name, plus scale/style when it changes them (a variation gets its own chords). */
 function partId(sec: SongSection): string {
-  return sec.scale || sec.style ? `${sec.name}{${sec.scale ?? ''},${sec.style ?? ''}}` : sec.name;
+  const kind = sec.climb ? ',climb' : sec.release ? ',release' : '';
+  return sec.scale || sec.style || kind ? `${sec.name}{${sec.scale ?? ''},${sec.style ?? ''}${kind}}` : sec.name;
 }
 
 /** A part's tonic as a pitch number (not reduced mod 12): its own key or the piece's, plus its shift. */
