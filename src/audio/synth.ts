@@ -15,7 +15,7 @@ import { midiToHz } from '../engine/theory';
 const CONTROL_RATE = 250; // Hz; linear interpolation between points at this rate is inaudible
 
 /** Rough loudness compensation: saw and square carry far more energy than a sine. */
-export const WAVE_GAIN: Record<Wave, number> = { warm: 0.62, sine: 1, triangle: 0.95, sawtooth: 0.75, square: 0.6 };
+export const WAVE_GAIN: Record<Wave, number> = { warm: 0.62, sine: 0.62, triangle: 0.7, sawtooth: 0.72, square: 0.6 };
 
 /**
  * "Warm": a harmonic-rich wave matched to the reference recordings — 2nd
@@ -79,6 +79,20 @@ export function makeImpulse(ctx: BaseAudioContext, seed: number, seconds = 3.4, 
   return buf;
 }
 
+/** Linear up to the knee (-3 dBFS), then a smooth curve that approaches full scale and never passes it. */
+function softClipCurve(): Float32Array<ArrayBuffer> {
+  const n = 4096;
+  const knee = 0.708;
+  const curve = new Float32Array(new ArrayBuffer(n * 4));
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 4 - 2; // the shaper's input range is -1..1; this covers ±2 (overs up to +6 dB)
+    const ax = Math.abs(x);
+    const y = ax <= knee ? ax : knee + (1 - knee) * Math.tanh((ax - knee) / (1 - knee));
+    curve[i] = Math.sign(x) * y;
+  }
+  return curve;
+}
+
 export function createMaster(ctx: BaseAudioContext, score: Score, destination: AudioNode): Master {
   const a = score.config.audio;
   const input = ctx.createGain();
@@ -95,24 +109,23 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
   // Wetter settings get a longer tail (kept moderate: long convolutions cost CPU on phones).
   convolver.buffer = makeImpulse(ctx, score.seed, 2.8 + 2.4 * Math.max(0, a.reverb - 0.3), Math.min(1, 0.04 + a.width * 0.8));
 
-  // The limiter matters most at unison, where all voices add up in phase. For
-  // sustained chords it rides gently; for plucks it must only catch peaks and
-  // let go fast, or it flattens every strike and pumps between them (which
-  // smears the attacks and makes the pulse feel loose).
+  // Peak safety: a soft clipper, perfectly linear below -3 dBFS and rounding off only what goes
+  // above. No gain riding: the browser's compressor (with its automatic make-up gain) was engaged
+  // almost all the time, modulating the gain within single cycles of the low voices, which is
+  // audible distortion on pure tones (the "crunch" on phones).
   const pluck = score.config.motion.transition === 'pluck';
-  const limiter = ctx.createDynamicsCompressor();
-  limiter.threshold.value = pluck ? -3 : -6;
-  limiter.knee.value = pluck ? 2 : 6;
-  limiter.ratio.value = pluck ? 20 : 12;
-  limiter.attack.value = pluck ? 0.001 : 0.003;
-  limiter.release.value = pluck ? 0.05 : 0.25;
+  const limiter = ctx.createWaveShaper();
+  limiter.curve = softClipCurve();
+  limiter.oversample = '4x';
+  // The shaper reads -1..1, so halve the signal into it (the curve is written for ±2: overs up to +6 dB).
+  const limiterIn = ctx.createGain();
+  limiterIn.gain.value = 0.5;
+  limiterIn.connect(limiter);
 
   const out = ctx.createGain();
   out.gain.value = a.gain;
-  // Headroom for strikes going into the faster limiter.
-  // Into the limiter with some headroom, so it catches peaks instead of riding the whole mix
-  // (with a big sub, constant gain reduction flattened the chords in the loud parts).
-  input.gain.value = pluck ? 0.8 : 0.85;
+  // Levels are staged so peaks rarely reach the clipper's knee.
+  input.gain.value = pluck ? 0.85 : 1.0;
 
   // Warmth: gentle tanh saturation (gain-compensated) before the reverb split.
   let tone: AudioNode = lowpass;
@@ -140,11 +153,11 @@ export function createMaster(ctx: BaseAudioContext, score: Score, destination: A
     shelf.gain.value = a.bass;
     input.connect(shelf).connect(lowpass);
   } else input.connect(lowpass);
-  tone.connect(dry).connect(limiter);
-  tone.connect(convolver).connect(wet).connect(limiter);
+  tone.connect(dry).connect(limiterIn);
+  tone.connect(convolver).connect(wet).connect(limiterIn);
   limiter.connect(out).connect(destination);
   const direct = ctx.createGain();
-  direct.connect(limiter);
+  direct.connect(limiterIn);
   const reverbSend = ctx.createGain();
   reverbSend.gain.value = 1.4;
   reverbSend.connect(convolver);
@@ -272,7 +285,7 @@ export class VoiceBank {
       // Drums skip the chords' tone filter but share the limiter and reverb; the bank's bus gates them.
       this.drumBus = ctx.createGain();
       // Drums sit under the chords (they used to match the whole chord mix, which buried it on small speakers).
-      this.drumBus.gain.value = d.level;
+      this.drumBus.gain.value = d.level * 0.55;
       const gate = ctx.createGain();
       this.drumBus.connect(gate).connect(master.direct);
       this.drumSend = ctx.createGain();
@@ -674,7 +687,7 @@ export class LivePlayer {
   /** Output stage that outlives individual master chains: volume → speakers, with level taps. */
   /** Small-speaker voicing (phones): cut the low end they can't play, tame the top, keep headroom. */
   private smallSpeaker = false;
-  private speakerNodes: { hp: BiquadFilterNode; low: BiquadFilterNode; high: BiquadFilterNode; comp: DynamicsCompressorNode; trim: GainNode } | null = null;
+  private speakerNodes: { hp: BiquadFilterNode; low: BiquadFilterNode; high: BiquadFilterNode; trim: GainNode } | null = null;
 
   setSmallSpeaker(on: boolean) {
     this.smallSpeaker = on;
@@ -689,9 +702,8 @@ export class LivePlayer {
     n.hp.frequency.value = on ? 140 : 10;
     n.low.gain.value = on ? -3 : 0; // the boxy 200–300 Hz region
     n.high.gain.value = on ? -2.5 : 0; // harshness up top
-    n.comp.threshold.value = on ? -14 : 0;
-    n.comp.ratio.value = on ? 3 : 1;
-    n.trim.gain.value = on ? 0.85 : 1;
+    // No compressor here (gain riding distorts pure tones); just a little more headroom.
+    n.trim.gain.value = on ? 0.8 : 1;
   }
 
   private outputStage(ctx: AudioContext): GainNode {
@@ -708,13 +720,9 @@ export class LivePlayer {
       const high = ctx.createBiquadFilter();
       high.type = 'highshelf';
       high.frequency.value = 7000;
-      const comp = ctx.createDynamicsCompressor();
-      comp.knee.value = 8;
-      comp.attack.value = 0.005;
-      comp.release.value = 0.2;
       const trim = ctx.createGain();
-      this.volumeNode.connect(hp).connect(low).connect(high).connect(comp).connect(trim).connect(ctx.destination);
-      this.speakerNodes = { hp, low, high, comp, trim };
+      this.volumeNode.connect(hp).connect(low).connect(high).connect(trim).connect(ctx.destination);
+      this.speakerNodes = { hp, low, high, trim };
       this.applySpeaker();
       const split = ctx.createChannelSplitter(2);
       trim.connect(split);
