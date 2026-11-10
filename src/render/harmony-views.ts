@@ -346,15 +346,34 @@ export function drawFifths(ctx: CanvasRenderingContext2D, score: Score, t: numbe
 // Constellation
 // ---------------------------------------------------------------------------
 
+const skyCache = new WeakMap<Score, { lo: number; span: number; n: number }>();
+
+/**
+ * The sky's register range: the whole piece's, so stars never rescale as the music moves
+ * (a moving camera range made every star lurch in or out). Grows only if an endless piece
+ * wanders past it.
+ */
+function skyRange(score: Score): { lo: number; span: number } {
+  const hit = skyCache.get(score);
+  if (hit && hit.n === score.chords.length) return hit;
+  let lo = Math.min(score.startNote, score.endNote);
+  let hi = Math.max(score.startNote, score.endNote);
+  for (const c of score.chords) for (const n of c.notes) (lo = Math.min(lo, n)), (hi = Math.max(hi, n));
+  const span = Math.max(18, hi - lo + 4);
+  const sky = { lo: (lo + hi) / 2 - span / 2, span, n: score.chords.length };
+  skyCache.set(score, sky);
+  return sky;
+}
+
 const INTERVALS = ['P8', 'm2', 'M2', 'm3', 'M3', 'P4', 'TT', 'P5', 'm6', 'M6', 'm7', 'M7'];
 
-export function drawConstellation(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, extent: { lo: number; hi: number }) {
+export function drawConstellation(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea) {
   const { cx, cy, u, tu } = a;
   const R = a.R * 0.9;
-  const span = Math.max(18, extent.hi - extent.lo + 4);
-  const lo = (extent.lo + extent.hi) / 2 - span / 2;
+  const { lo, span } = skyRange(score);
   const star = (p: number, scale = 1) => {
-    const ang = -Math.PI / 2 + (mod12(p) / 12) * Math.PI * 2 + (p - Math.round(p)) * (Math.PI / 6);
+    // Continuous in p, so a gliding note sweeps smoothly round from one spoke to the next.
+    const ang = -Math.PI / 2 + (p / 12) * Math.PI * 2;
     const r = R * (0.12 + 0.88 * Math.max(0, Math.min(1.05, (p - lo) / span))) * scale;
     return { x: cx + Math.cos(ang) * r, y: cy + Math.sin(ang) * r };
   };
@@ -384,7 +403,7 @@ export function drawConstellation(ctx: CanvasRenderingContext2D, score: Score, t
     ctx.fillText(nameOf(score, pc, now.c), cx + Math.cos(ang) * (R * 1.02 + 22 * tu), cy + Math.sin(ang) * (R * 1.02 + 22 * tu));
   }
 
-  const figure = (pitches: number[], lineA: number, dotA: number, scale: number, labels: boolean) => {
+  const figure = (pitches: number[], lineA: number, dotA: number, scale: number, labelA: number) => {
     const ps = [...pitches].sort((x, y) => x - y);
     const pts = ps.map((p) => star(p, scale));
     ctx.lineJoin = 'round';
@@ -396,11 +415,11 @@ export function drawConstellation(ctx: CanvasRenderingContext2D, score: Score, t
       ctx.moveTo(pts[i - 1].x, pts[i - 1].y);
       ctx.lineTo(pts[i].x, pts[i].y);
       ctx.stroke();
-      if (labels) {
+      if (labelA > 0.01) {
         const iv = INTERVALS[mod12(Math.round(ps[i] - ps[i - 1]))];
         const mx = (pts[i - 1].x + pts[i].x) / 2;
         const my = (pts[i - 1].y + pts[i].y) / 2;
-        ctx.fillStyle = alpha(st.text, 0.75 * lineA);
+        ctx.fillStyle = alpha(st.text, 0.75 * lineA * labelA);
         ctx.font = `500 ${13 * tu}px ${st.font}`;
         ctx.fillText(Math.round(ps[i] - ps[i - 1]) === 0 ? 'U' : iv, mx, my - 9 * tu);
       }
@@ -412,16 +431,24 @@ export function drawConstellation(ctx: CanvasRenderingContext2D, score: Score, t
       ctx.fill();
     });
   };
-  // Ghosts: the last few chords, smaller and fainter the older they are.
+  // Ghosts: the last few chords, smaller and fainter the older they are. Ages run continuously
+  // through each change (a chord eases back into the ghosts as the next one arrives, and the
+  // oldest fades out), so nothing pops.
   const k = now.k;
-  for (let n = Math.max(0, k - 4); n < k; n++) {
-    const age = k - n;
+  const MAX = 4;
+  for (let n = Math.max(0, k - MAX - 1); n < k; n++) {
     const c = score.chords[n];
     if (c.unison) continue;
-    figure(c.notes, 0.22 / age, 0.3 / age, Math.pow(0.94, age), false);
+    const age = k - n - 1 + now.x;
+    if (age <= 0.001) continue;
+    const fade = Math.max(0, Math.min(1, MAX + 1 - age)) * Math.min(1, age * 2);
+    figure(c.notes, (0.22 / (1 + age * 0.8)) * fade, (0.3 / (1 + age * 0.8)) * fade, Math.pow(0.94, age), 0);
   }
-  // The chord sounding now (gliding voices move between shapes), with interval labels.
+  // The chord sounding now (gliding voices move between shapes). Interval labels fade out
+  // while the voices glide (their values would flicker) and back in once the chord settles.
   const pitches = soundingPitches(score, t);
-  figure(pitches, 0.85, 1, 1, true);
+  const off = pitches.reduce((m, p) => Math.max(m, Math.abs(p - Math.round(p))), 0);
+  const settle = 1 - Math.min(1, off * 5);
+  figure(pitches, 0.85, 1, 1, settle * settle);
   ctx.restore();
 }

@@ -1468,7 +1468,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     };
     if (cfg.video.view === 'tonnetz') drawTonnetz(ctx, score, t, vs, area);
     else if (cfg.video.view === 'fifths') drawFifths(ctx, score, t, vs, area);
-    else drawConstellation(ctx, score, t, vs, area, cameraExtent(score, t));
+    else drawConstellation(ctx, score, t, vs, area);
   } else if (cfg.video.view === 'waterfall') drawWaterfall(ctx, score, t, st, lay);
   else if (cfg.video.view === 'spiral') {
     if (cfg.video.spiral === 'fly') drawTunnel(ctx, score, t, st, lay);
