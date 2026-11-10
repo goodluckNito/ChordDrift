@@ -13,12 +13,18 @@ import { chordName, romanName, stackChord, typicalSize } from './chords';
 import { spreadTemplate, voiceChord, voiceLeadingCost, type VoicingRules } from './voicing';
 
 /** One glide of one voice, in MIDI pitch space. */
+/** Glide shapes: lazy starts slow and lands fast, eager leaps off and settles, overshoot sails a
+ * little past and settles back, strike jumps with a fresh attack, grace scoops in from a semitone off. */
+export const GLIDE = { lazy: 1, eager: 2, overshoot: 3, strike: 4, grace: 5 } as const;
+
 export interface Move {
   /** Start time including the per-voice stagger (s). */
   t0: number;
   d: number;
   p0: number;
   p1: number;
+  /** Glide shape (see GLIDE in motion.ts); absent = the plain easing. */
+  shape?: number;
 }
 
 export interface ScoreChord extends ChordSpec {
@@ -88,6 +94,8 @@ export interface Score {
   strikes: { onsets: number[]; length: number } | null;
   /** Shortest time between pattern strikes (s), Infinity without a pattern. */
   strikeGap: number;
+  /** True once any voice re-strikes a note (Strikes in Timing), so levels follow the strikes. */
+  struck: boolean;
   /** Parsed drum rows when drums are on. */
   drums: DrumRows | null;
   /** Melody line (empty when the melody is off). Grows over time when endless. */
@@ -172,6 +180,8 @@ class ScoreBuilder {
   private step = 0;
   private passingRng: Rng;
   private climbRng: Rng;
+  /** Glide shapes and strikes (its own stream, so the feel never changes the notes). */
+  private articRng: Rng;
   /** A written progression: play exactly its chords. */
   private written = false;
   /** Index into the chord rhythm (collapses don't use a slot of it). */
@@ -296,6 +306,7 @@ class ScoreBuilder {
     this.inversionRng = stream(seed, 'inversion');
     this.passingRng = stream(seed, 'passing');
     this.climbRng = stream(seed, 'song-climb');
+    this.articRng = stream(seed, 'articulation');
     this.current = new Array<number>(V).fill(startNote);
     this.nextChange = cfg.timing.intro;
 
@@ -323,6 +334,7 @@ class ScoreBuilder {
       pitchRange: [startNote, startNote],
       strikes: cfg.motion.transition === 'pluck' ? strikeOnsets(cfg.rhythm.pluck) : null,
       strikeGap: Infinity,
+      struck: false,
       drums: cfg.drums.enabled ? parseDrumRows(cfg.drums) : null,
       melody: [],
       sections: [],
@@ -647,6 +659,8 @@ class ScoreBuilder {
     // the strike, so the attack hits the new chord (on the beat, with a rhythm).
     const pluck = cfg.motion.transition === 'pluck' && !bloom;
     let span = 0;
+    // Glide feel and strikes shape ordinary changes only (not the bloom, the arrival or a re-bloom).
+    const articulate = !bloom && !reBloom && !unison && cfg.motion.transition === 'glide' && (cfg.motion.feel === 'varied' || cfg.motion.strikes > 0);
     for (let v = 0; v < V; v++) {
       // Release-&-swell transitions don't glide: the new chord fades in on its own voices (see layerAt).
       if (crossfade) break;
@@ -664,8 +678,28 @@ class ScoreBuilder {
       }
       // The bloom fans out with a slight stagger but every voice lands together.
       let d = bloom ? T.bloom - delay : unison ? T.arrival : reBloom ? T.bloom : T.glide * (1 + leap / 12);
+      let shape: number | undefined;
+      if (articulate) {
+        const r1 = this.articRng();
+        const r2 = this.articRng();
+        const r3 = this.articRng();
+        if (r1 < cfg.motion.strikes) {
+          // A strike: the voice re-attacks its new note instead of sliding (staggered, like a strum);
+          // now and then it scoops into it from a semitone off.
+          const grace = r2 < 0.3 && leap > 1;
+          const sd = grace ? Math.max(0.02, Math.min(0.14, slot * 0.85 - delay)) : 0.003;
+          score.moves[v].push({ t0: t + delay, d: sd, p0, p1, shape: grace ? GLIDE.grace : GLIDE.strike });
+          score.struck = true;
+          span = Math.max(span, delay + sd);
+          continue;
+        }
+        if (cfg.motion.feel === 'varied') {
+          shape = r2 < 0.3 ? GLIDE.lazy : r2 < 0.6 ? GLIDE.eager : r2 < 0.8 ? GLIDE.overshoot : undefined;
+          d *= 0.65 + 0.8 * r3;
+        }
+      }
       if (!bloom) d = Math.max(0.02, Math.min(d, slot * 0.85 - delay));
-      score.moves[v].push({ t0: t + delay, d, p0, p1 });
+      score.moves[v].push(shape === undefined ? { t0: t + delay, d, p0, p1 } : { t0: t + delay, d, p0, p1, shape });
       span = Math.max(span, delay + d);
     }
     if (crossfade) {

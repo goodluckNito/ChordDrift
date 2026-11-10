@@ -1,5 +1,5 @@
 import type { Easing } from './config';
-import type { Score } from './score';
+import { GLIDE, type Move, type Score } from './score';
 import { drumHitsBetween, type DrumHit, type DrumVoice } from './drums';
 import { chopSteps } from './chop';
 import { midiToHz } from './theory';
@@ -43,7 +43,65 @@ export function pitchAt(score: Score, v: number, t: number): number {
   if (idx < 0) return score.startNote;
   const m = moves[idx];
   if (t >= m.t0 + m.d) return m.p1;
-  return m.p0 + (m.p1 - m.p0) * ease((t - m.t0) / m.d, score.config.motion.easing);
+  return glidePitch(m, (t - m.t0) / m.d, score.config.motion.easing);
+}
+
+/** Pitch part-way (x in 0..1) through a move, following its shape. */
+function glidePitch(m: Move, x: number, easing: Easing): number {
+  const dp = m.p1 - m.p0;
+  switch (m.shape) {
+    case GLIDE.lazy:
+      return m.p0 + dp * ease(Math.pow(x, 1.7), easing);
+    case GLIDE.eager:
+      return m.p0 + dp * ease(1 - Math.pow(1 - x, 1.7), easing);
+    case GLIDE.overshoot: {
+      // Sails past the note by up to half a semitone, then settles back onto it.
+      const amt = Math.min(0.45, 0.08 * Math.abs(dp) + 0.12) * Math.sign(dp);
+      const bump = x > 0.6 ? Math.sin((Math.PI * (x - 0.6)) / 0.4) : 0;
+      return m.p0 + dp * ease(x, easing) + amt * bump;
+    }
+    case GLIDE.grace: {
+      // Jumps to a semitone short of the note, then slides the last step.
+      const s = Math.sign(dp);
+      return m.p1 - s + s * ease(x, easing);
+    }
+    default:
+      return m.p0 + dp * ease(x, easing);
+  }
+}
+
+/**
+ * Level of a voice around its strikes (Strikes in Timing): it releases just before the strike,
+ * re-attacks on the new note, dips a little as the attack rings off, then swells back. 1 elsewhere.
+ */
+export function strikeEnvAt(score: Score, v: number, t: number): number {
+  if (!score.struck || v < 0) return 1;
+  const moves = score.moves[v];
+  const PRE = 0.035;
+  let lo = 0;
+  let hi = moves.length - 1;
+  let idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (moves[mid].t0 - PRE <= t) {
+      idx = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  let g = 1;
+  for (let i = Math.max(0, idx - 1); i <= idx; i++) {
+    const m = moves[i];
+    if (m.shape !== GLIDE.strike && m.shape !== GLIDE.grace) continue;
+    const x = t - m.t0;
+    const ATT = 0.02;
+    let e: number;
+    if (x < 0) e = 1 - 0.85 * (1 + x / PRE);
+    else if (x < ATT) e = 0.15 + 0.85 * (x / ATT);
+    else if (x < 0.3) e = 1 - 0.22 * ((x - ATT) / (0.3 - ATT));
+    else e = 1 - 0.22 * Math.max(0, 1 - (x - 0.3) / 1.2);
+    g *= e;
+  }
+  return g;
 }
 
 export function pitchesAt(score: Score, t: number): number[] {
@@ -150,6 +208,10 @@ export function melodyAt(score: Score, t: number): { p: number; g: number } | nu
  *   breath — slow overlapping waves, slightly out of phase per voice
  */
 export function swellAt(score: Score, v: number, t: number): number {
+  return baseSwellAt(score, v, t) * strikeEnvAt(score, v, t);
+}
+
+function baseSwellAt(score: Score, v: number, t: number): number {
   const a = score.config.audio;
   if (a.swell === 'off' || a.swellDepth <= 0) return 1;
   const tl = score.timeline;
@@ -360,7 +422,7 @@ export function levelAt(score: Score, v: number, t: number): number {
 /** True when lines should be drawn with varying thickness. */
 export function hasDynamics(score: Score): boolean {
   const d = score.config.drums;
-  return (score.chop !== null && score.config.chop.chords) || score.config.audio.swell !== 'off' || score.config.motion.transition === 'pluck' || (d.enabled && (d.duck.kick || d.duck.snare) && d.duck.depth > 0);
+  return score.struck || (score.chop !== null && score.config.chop.chords) || score.config.audio.swell !== 'off' || score.config.motion.transition === 'pluck' || (d.enabled && (d.duck.kick || d.duck.snare) && d.duck.depth > 0);
 }
 
 /** When drums play: from the moment the bloom lands to the arrival (forever when endless; the whole loop when looping). */
@@ -594,7 +656,7 @@ export function voiceHits(score: Score, v: number, a: number, b: number): { t: n
   }
   for (let i = lo; i < moves.length && moves[i].t0 <= b; i++) {
     const e = moves[i].t0 + moves[i].d;
-    if (e >= a && e <= b) out.push({ t: e, strike: false });
+    if (e >= a && e <= b) out.push({ t: e, strike: moves[i].shape === GLIDE.strike || moves[i].shape === GLIDE.grace });
   }
   // Release-&-swell: a new chord "lands" when it has swelled in.
   if (score.config.motion.transition === 'swell') {

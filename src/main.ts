@@ -838,14 +838,32 @@ function startApp() {
     if (!t) return;
     const mood = $<HTMLSelectElement>('#mood').value as SongMood;
     const patch = songFromText(t, mood);
-    const keep = { width: state.video.width, height: state.video.height, fps: state.video.fps };
-    state = resolveConfig({ ...patch, video: { ...(patch.video ?? {}), ...keep } } as DeepPartial<ChordDriftConfig>);
+    // The output format always stays; with the view kept, the whole visualizer does (and its colours, if asked).
+    const kept = $<HTMLSelectElement>('#keep').value;
+    const keep = kept !== 'none' ? { ...state.video } : { width: state.video.width, height: state.video.height, fps: state.video.fps };
+    const theme = kept === 'look' ? { ...state.theme } : patch.theme;
+    state = resolveConfig({ ...patch, theme, video: { ...(patch.video ?? {}), ...keep } } as DeepPartial<ChordDriftConfig>);
     applyAutoFormat();
     writeForm();
     rebuild(false);
     $<HTMLInputElement>('#words').value = t;
     setStatus(`"${t}": ${score.keyName} ${score.scaleName}${state.style !== 'none' ? `, ${STYLES[state.style].name}` : ''} — ${score.chords.slice(0, 6).map((c) => c.name).join(' → ')}${score.chords.length > 6 ? ' …' : ''}`);
   }
+  // Keep: songs made from words (or the dice) can keep the current visualizer, and its colours.
+  const keepSelect = $<HTMLSelectElement>('#keep');
+  try {
+    const saved = localStorage.getItem('chord-drift.keep');
+    if (saved && ['none', 'view', 'look'].includes(saved)) keepSelect.value = saved;
+  } catch {
+    /* storage unavailable */
+  }
+  keepSelect.addEventListener('change', () => {
+    try {
+      localStorage.setItem('chord-drift.keep', keepSelect.value);
+    } catch {
+      /* ignore */
+    }
+  });
   const moodSelect = $<HTMLSelectElement>('#mood');
   try {
     const saved = localStorage.getItem('chord-drift.mood');

@@ -172,6 +172,11 @@ export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = '
       voicing: { inversion: 0 },
     } as DeepPartial<ChordDriftConfig>);
   }
+  // Glide feel and strikes come from their own stream, so adding them changed no other choice.
+  const ra = stream(hashSeed(0, String(seed)), 'articulation');
+  const feel = ra() < (mood === 'adventurous' ? 0.65 : 0.5) ? 'varied' : 'even';
+  const strikes = mood === 'pure' ? 0 : ra() < (chill ? 0.3 : 0.5) ? between(ra, 0.1, chill ? 0.25 : 0.45) : 0;
+  out.motion = { ...out.motion, feel, strikes };
   return out;
 }
 

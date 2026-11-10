@@ -116,7 +116,14 @@ export interface ChordDriftConfig {
     /** Chance (0..1) that a chord is voiced as an inversion: the lowest voice or two jump up an octave, crossing the others. */
     inversion: number;
   };
-  motion: { easing: Easing; transition: Transition };
+  motion: {
+    easing: Easing;
+    transition: Transition;
+    /** Glide feel: even = every glide the same curve · varied = each glide its own shape and speed (lazy, eager, overshooting). */
+    feel: 'even' | 'varied';
+    /** Chance (0..1) that a moving voice re-strikes its new note (sometimes scooping into it) instead of gliding. Glide changes only. */
+    strikes: number;
+  };
   rhythm: {
     /** Beats (quarter notes) per minute, for chord and melody rhythms. */
     tempo: number;
@@ -260,7 +267,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
     release: 2.6,
   },
   voicing: { pedalBonus: 1.5, bassWeight: 0.3, movePenalty: 2, mudFloor: 48, minGap: 3, maxCopies: 3, candidates: 24, inversion: 0 },
-  motion: { easing: 'smootherstep', transition: 'glide' },
+  motion: { easing: 'smootherstep', transition: 'glide', feel: 'even', strikes: 0 },
   rhythm: { tempo: 54, chords: '?', pluck: 'e' },
   melody: { enabled: false, style: 'solo', rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6, notes: '' },
   audio: { wave: 'warm', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 10000, width: 0.12, gain: 0.9, sub: 0.4, warmth: 0, bass: 2, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
@@ -402,6 +409,8 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   const legacyPluck = (partial as { audio?: { envelope?: string } }).audio?.envelope === 'pluck';
   if (legacyPluck && !(partial as { motion?: { transition?: string } }).motion?.transition) c.motion.transition = 'pluck';
   if (!['glide', 'swell', 'pluck'].includes(c.motion.transition)) c.motion.transition = 'glide';
+  if (c.motion.feel !== 'varied') c.motion.feel = 'even';
+  c.motion.strikes = Number.isFinite(c.motion.strikes) ? Math.max(0, Math.min(1, c.motion.strikes)) : 0;
   c.voicing.candidates = Math.max(1, Math.round(c.voicing.candidates));
   return c;
 }

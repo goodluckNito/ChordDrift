@@ -62,6 +62,13 @@
               <option value="adventurous">Adventurous — any scale, style and sound</option>
             </select>
           </label>
+          <label class="words-mood" title="What Make and 🎲 leave alone: lock the visualizer so new songs keep it, with fresh colours or your current ones">Keep
+            <select id="keep">
+              <option value="none" selected>Nothing — each song picks its own view and colours</option>
+              <option value="view">🔒 The view — new colours each time</option>
+              <option value="look">🔒 The view and its colours</option>
+            </select>
+          </label>
         </header>
 
         <div class="settings-tools">
@@ -409,6 +416,15 @@
             </label>
             <label data-transition="glide">Stagger (s) <output></output>
               <input data-path="timing.stagger" type="range" min="0" max="1" step="0.05" />
+            </label>
+            <label data-transition="glide" title="Even: every glide follows the same curve. Varied: each glide has its own shape and speed (some start lazily and land fast, some leap off and settle, some sail a little past the note and settle back)">Glide feel
+              <select data-path="motion.feel">
+                <option value="even">Even</option>
+                <option value="varied">Varied</option>
+              </select>
+            </label>
+            <label data-transition="glide" title="Chance that a moving voice re-strikes its new note (staggered like a strum, sometimes scooping into it from a semitone off) instead of gliding">Strikes <output></output>
+              <input data-path="motion.strikes" type="range" min="0" max="1" step="0.05" />
             </label>
             <label>Bloom (s) <output></output>
               <input data-path="timing.bloom" type="range" min="1" max="6" step="0.1" />
