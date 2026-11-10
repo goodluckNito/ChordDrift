@@ -64,12 +64,17 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   };
   const bulges = Array.from({ length: V }, (_, v) => ({ f: smoothF(v), amp: levelAt(score, v, t) * (v === 0 ? 0.3 : 0.55), v }));
   const W0 = 0.05;
-  /** The funnel's radius at height f: narrow at the bottom, wide at the top, swelling where the voices are. */
+  /**
+   * The funnel's radius at height f: always a tornado (a thin point at the bottom flaring to a wide
+   * top). The voices only ripple its edge a little where they are (never more than ~8%), so the
+   * silhouette keeps its shape; they show as bands of brighter, denser, coloured glitter instead.
+   */
   const radiusAt = (f: number) => {
     let swell = 0;
     for (const b of bulges) swell += b.amp * Math.exp(-(((f - b.f) / W0) ** 2));
-    const base = halfW * (0.06 + 0.4 * Math.pow(Math.max(0, f), 0.8));
-    return Math.min(halfW * 0.95, base * (1 + 0.15 * drum.kick) + halfW * 0.4 * Math.tanh(swell * 0.8));
+    const ff = Math.max(0, f);
+    const base = halfW * (0.035 + 0.86 * Math.pow(ff, 1.65));
+    return Math.min(halfW * 0.95, base * (1 + 0.12 * drum.kick) * (1 + 0.08 * Math.tanh(swell)));
   };
   /** Which voice tints the glitter at height f (the one swelling it most), and how strongly. */
   const tintAt = (f: number) => {
@@ -118,8 +123,16 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const N = lite ? 700 : 1700;
   const draw = (front: boolean) => {
     for (let b = 0; b < N; b++) {
-      // Spread evenly up the column, rising slowly as it spins.
-      const f = (hash(b, 1) + t * (0.025 + 0.02 * hash(b, 2))) % 1;
+      // Half the glitter spreads evenly up the column, rising slowly as it spins; the other half
+      // gathers round the voices' heights, so each note is a bright band in the funnel.
+      let f: number;
+      if (b % 2 === 0) f = (hash(b, 1) + t * (0.025 + 0.02 * hash(b, 2))) % 1;
+      else {
+        const bv = bulges[Math.floor(hash(b, 8) * bulges.length)];
+        const g = (hash(b, 1) + hash(b, 9) + hash(b, 10)) / 1.5 - 1;
+        f = Math.max(0.01, Math.min(0.99, bv.f + g * W0 * 1.4 + 0.012 * Math.sin(t * 2 + b)));
+        if (bv.amp < 0.03 && hash(b, 11) < 0.7) continue;
+      }
       const rr = radiusAt(f) * (0.55 + 0.5 * Math.sqrt(hash(b, 3))) * (1 + 0.4 * drum.snare * hash(b, 4));
       const omega = ((1.2 * halfW) / Math.max(rr, halfW * 0.06)) * 0.5 * spin;
       const th = hash(b, 5) * Math.PI * 2 + t * omega;
@@ -130,8 +143,8 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       const tint = tintAt(f);
       const sparkle = Math.max(0, Math.cos(th * 3 + b)) ** 8 + drum.hat * hash(b, Math.floor(t * 10));
       const size = (front ? 2.3 : 1.5) * u * (0.7 + 0.6 * hash(b, 6));
-      ctx.fillStyle = tint.v >= 0 && hash(b, 7) < 0.35 + 0.65 * tint.w ? st.voiceColor(tint.v) : st.ink;
-      ctx.globalAlpha = Math.min(1, (front ? 0.8 : 0.3) + 0.6 * sparkle);
+      ctx.fillStyle = tint.v >= 0 && hash(b, 7) < 0.25 + 0.75 * tint.w ? st.voiceColor(tint.v) : st.ink;
+      ctx.globalAlpha = Math.min(1, (front ? 0.7 : 0.25) + 0.25 * tint.w + 0.6 * sparkle);
       ctx.fillRect(x - size, y - size * 0.6, size * 2, size * 1.2);
     }
     ctx.globalAlpha = 1;

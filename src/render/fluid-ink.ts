@@ -202,7 +202,7 @@ function stepSim(s: Sim, score: Score, time: number) {
     const y = ny - 3;
     const wob = Math.sin(time * 1.3 + vc * 2.1) * 0.25;
     // The ink's colour is its note's (round the circle of fifths), so each chord pours its own colours.
-    splat(s, x, y, 2.2, wob * 0.1, -0.5 * level, noteInk(p), 0.035 * level);
+    splat(s, x, y, 2.2, wob * 0.1, -0.5 * level, noteInk(p), 0.022 * level);
   }
   // Drums: a kick pushes the water outward from the bottom; a snare spins up a whirlpool.
   for (const h of drumHits(score, time, time + DT)) {
@@ -234,7 +234,7 @@ function stepSim(s: Sim, score: Score, time: number) {
     s.u[k] *= drag;
     s.v[k] *= drag;
   }
-  const fade = Math.exp(-DT / 6);
+  const fade = Math.exp(-DT / 14);
   for (const d of [s.r, s.g, s.b]) {
     s.tmp.set(d);
     advect(s, 0, d, s.tmp, s.u, s.v);

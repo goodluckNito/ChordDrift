@@ -62,7 +62,10 @@ vec3 chamber(vec2 p, float wedge) {
     float size = g.z;
     float d = poly(q, size, sides);
     vec3 jc = hsv(g.w, 0.85, 1.0);
-    if (d < 0.0) {
+    // Anti-aliased edge: coverage over about a pixel.
+    float aa = fwidth(d) * 1.2 + 1e-5;
+    float cover = smoothstep(aa, -aa, d);
+    if (cover > 0.0) {
       // Facets: brightness steps round the gem and toward its table; a bright rim; a sparkle.
       float fa = floor((atan(q.y, q.x) + PI) / (2.0 * PI) * sides);
       float facet = 0.55 + 0.45 * fract(sin(fa * 12.9898 + g2.y * 78.233) * 43758.5453);
@@ -71,17 +74,19 @@ vec3 chamber(vec2 p, float wedge) {
       vec3 gemc = jc * (0.3 + 0.6 * facet) * (0.7 + 0.4 * table) + rim * 0.4;
       float sparkle = pow(max(0.0, sin(fa * 3.0 + t * 2.0 + g2.y * 20.0)), 30.0) * (0.6 + hat);
       gemc += sparkle;
-      col = 1.0 - (1.0 - col) * (1.0 - gemc * (0.38 + 0.32 * g2.x));
+      col = 1.0 - (1.0 - col) * (1.0 - gemc * (0.38 + 0.32 * g2.x) * cover);
     }
     glow += jc * exp(-max(d, 0.0) / (size * 0.35)) * 0.08 * g2.x;
     // A glossy bead beside it.
     vec2 bq = q - vec2(size * 1.25, 0.0);
     float br = size * 0.32;
     float bd = length(bq) - br;
-    if (bd < 0.0) {
+    float baa = fwidth(bd) * 1.2 + 1e-5;
+    float bcover = smoothstep(baa, -baa, bd);
+    if (bcover > 0.0) {
       vec3 bc = hsv(fract(g.w + 0.08), 0.8, 0.9);
       float spec = pow(max(0.0, 1.0 - length(bq + vec2(br * 0.35, -br * 0.35)) / (br * 0.6)), 3.0);
-      col = 1.0 - (1.0 - col) * (1.0 - (bc * (0.5 + 0.5 * smoothstep(br, 0.0, length(bq))) + spec));
+      col = 1.0 - (1.0 - col) * (1.0 - (bc * (0.5 + 0.5 * smoothstep(br, 0.0, length(bq))) + spec) * bcover);
     }
   }
   return col + glow;
@@ -90,11 +95,14 @@ vec3 chamber(vec2 p, float wedge) {
 // Fold a point into the mirror wedge and look into the chamber.
 vec3 scope(vec2 p, float fold) {
   float wedge = PI / fold;
-  float r = length(p);
+  float r = length(p) / (1.0 + 0.05 * kick);
+  // Beyond the chamber's edge the pattern mirrors outward again (as a real kaleidoscope repeats),
+  // so it reaches every edge of the frame.
+  r = 1.0 - abs(mod(r + 1.0, 2.0) - 1.0);
   float a = atan(p.y, p.x) - spin;
   a = mod(a, 2.0 * wedge);
   if (a > wedge) a = 2.0 * wedge - a;
-  return chamber(vec2(cos(a), sin(a)) * r / (1.0 + 0.05 * kick), wedge);
+  return chamber(vec2(cos(a), sin(a)) * r, wedge);
 }
 
 vec3 view(vec2 p) {
@@ -105,7 +113,7 @@ vec3 view(vec2 p) {
 
 void main() {
   // The whole frame: the mandala reaches its corners (1 = the half-diagonal).
-  vec2 p = (uv * 2.0 - 1.0) * vec2(aspect, 1.0) / sqrt(aspect * aspect + 1.0);
+  vec2 p = (uv * 2.0 - 1.0) * vec2(aspect, 1.0) / sqrt(aspect * aspect + 1.0) * 0.9;
   float r = length(p);
   // Colour fringing toward the edge: red and blue looked up slightly in and out.
   float ca = 0.006 * r * r;
@@ -115,7 +123,7 @@ void main() {
   col.b = view(p * (1.0 + ca)).b;
   col += vec3(0.08) * kick;
   // A soft vignette toward the corners.
-  col *= 0.35 + 0.65 * smoothstep(1.05, 0.45, r);
+  col *= 0.6 + 0.4 * smoothstep(1.1, 0.4, r);
   o = vec4(col, 1.0);
 }`;
 
@@ -183,7 +191,7 @@ export function drawKaleidoscopeGL(ctx: CanvasRenderingContext2D, score: Score, 
   // Render the whole frame (capped), then draw it over the frame in screen space.
   const Wc = ctx.canvas.width;
   const Hc = ctx.canvas.height;
-  const pw = Math.max(64, Math.min(lite ? 640 : 1280, Wc));
+  const pw = Math.max(64, Math.min(lite ? 960 : 1600, Wc));
   const ph = Math.round((pw * Hc) / Wc);
   if (K.canvas.width !== pw || K.canvas.height !== ph) {
     K.canvas.width = pw;

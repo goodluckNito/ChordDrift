@@ -187,7 +187,7 @@ void main() {
   vec3 c = texture(dye, uv).rgb;
   float amt = c.r + c.g + c.b;
   // The thinnest wisps fade right back to clear water instead of tinting everything.
-  float cover = 1.0 - exp(-max(0.0, amt - 0.025) * 1.5);
+  float cover = 1.0 - exp(-max(0.0, amt - 0.008) * 1.5);
   float mx = max(max(c.r, c.g), c.b);
   vec3 hue = mx > 1e-4 ? c / mx * 0.94 : vec3(0.0);
   // Thickness as a height: light from the upper left, so folds and filaments catch the light.
@@ -344,7 +344,7 @@ function stepSim(S: GLState, score: Score, time: number) {
     vVals.push([wob * 30, 260 * level, 0, 0.0009]);
     const col = noteInk(p);
     dPts.push([x, 0.05]);
-    dVals.push([col[0] * 0.016 * level, col[1] * 0.016 * level, col[2] * 0.016 * level, 0.0006]);
+    dVals.push([col[0] * 0.011 * level, col[1] * 0.011 * level, col[2] * 0.011 * level, 0.0006]);
   }
   for (const h of drumHits(score, time, time + DT)) {
     if (h.voice === 'kick') {
@@ -382,7 +382,7 @@ function stepSim(S: GLState, score: Score, time: number) {
   S.vel.swap();
   pass(S, S.progs.advect, S.vel.write, { vel: S.vel.read, src: S.vel.read }, { texel: vt, velTexel: vt, dt: DT, decay: 0.995, walls: 1 });
   S.vel.swap();
-  pass(S, S.progs.advect, S.dye.write, { vel: S.vel.read, src: S.dye.read }, { texel: [1 / S.dye.read.w, 1 / S.dye.read.h], dt: DT, decay: Math.exp(-DT / 4.5), walls: 0, velTexel: vt });
+  pass(S, S.progs.advect, S.dye.write, { vel: S.vel.read, src: S.dye.read }, { texel: [1 / S.dye.read.w, 1 / S.dye.read.h], dt: DT, decay: Math.exp(-DT / 14), walls: 0, velTexel: vt });
   S.dye.swap();
   S.step++;
 }
