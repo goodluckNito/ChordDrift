@@ -159,6 +159,12 @@ export interface MidiFile {
   /** Beats per minute of the first tempo event (120 if none). */
   tempo: number;
   name: string;
+  /** Per channel: its first General MIDI program (0–127), when the file sets one. */
+  programs: Record<number, number>;
+  /** Per channel: the name of the track its notes came from, when the track has one. */
+  trackNames: Record<number, string>;
+  /** Beats per bar from the first time signature (4 if none). */
+  beatsPerBar: number;
 }
 
 export function readMidi(data: ArrayBuffer | Uint8Array): MidiFile {
@@ -198,6 +204,9 @@ export function readMidi(data: ArrayBuffer | Uint8Array): MidiFile {
   const notes: MidiNote[] = [];
   let tempo = 0;
   let name = '';
+  const programs: Record<number, number> = {};
+  const trackNames: Record<number, string> = {};
+  let beatsPerBar = 0;
   for (let tr = 0; tr < ntrks && pos + 8 <= b.length; tr++) {
     const id = str(4);
     const len = u(4);
@@ -208,6 +217,8 @@ export function readMidi(data: ArrayBuffer | Uint8Array): MidiFile {
     }
     let tick = 0;
     let status = 0;
+    let trackName = '';
+    const channels = new Set<number>();
     const open = new Map<number, { tick: number; vel: number }[]>();
     const close = (ch: number, p: number, at: number) => {
       const stack = open.get(ch * 128 + p);
@@ -224,6 +235,8 @@ export function readMidi(data: ArrayBuffer | Uint8Array): MidiFile {
         const l = readVlq();
         if (type === 0x51 && l === 3 && !tempo) tempo = 60e6 / ((b[pos] << 16) | (b[pos + 1] << 8) | b[pos + 2]);
         if (type === 0x03 && !name && tr === 0) name = String.fromCharCode(...b.subarray(pos, pos + l)).trim();
+        if (type === 0x03 && !trackName) trackName = String.fromCharCode(...b.subarray(pos, pos + l)).trim();
+        if (type === 0x58 && l >= 2 && !beatsPerBar) beatsPerBar = (b[pos] * 4) / 2 ** b[pos + 1];
         pos += l;
         if (type === 0x2f) break;
         continue;
@@ -237,7 +250,9 @@ export function readMidi(data: ArrayBuffer | Uint8Array): MidiFile {
       const ch = s & 0x0f;
       const d1 = b[pos++];
       const d2 = kind === 0xc0 || kind === 0xd0 ? 0 : b[pos++];
+      if (kind === 0xc0 && programs[ch] === undefined) programs[ch] = d1;
       if (kind === 0x90 && d2 > 0) {
+        channels.add(ch);
         const k = ch * 128 + d1;
         if (!open.has(k)) open.set(k, []);
         open.get(k)!.push({ tick, vel: d2 });
@@ -245,10 +260,11 @@ export function readMidi(data: ArrayBuffer | Uint8Array): MidiFile {
     }
     // Notes left hanging end at the end of the track.
     for (const [k, stack] of open) for (const on of stack) if (tick > on.tick) notes.push({ start: on.tick / ppq, length: (tick - on.tick) / ppq, pitch: k % 128, vel: on.vel, channel: Math.floor(k / 128) });
+    for (const ch of channels) if (trackName && !trackNames[ch]) trackNames[ch] = trackName;
     pos = end;
   }
   notes.sort((x, y) => x.start - y.start || x.pitch - y.pitch);
-  return { notes, tempo: Math.round(tempo || 120), name };
+  return { notes, tempo: Math.round(tempo || 120), name, programs, trackNames, beatsPerBar: beatsPerBar || 4 };
 }
 
 function indexOf(b: Uint8Array, s: string): number {
@@ -342,6 +358,26 @@ export function beatsToNotation(beats: number): string {
   return parts.join('+');
 }
 
+/** General MIDI programs (0–127), for saying what an import heard. */
+export const GM_NAMES = (
+  'Piano,Bright piano,Electric grand,Honky-tonk,Electric piano,Electric piano 2,Harpsichord,Clavinet,' +
+  'Celesta,Glockenspiel,Music box,Vibraphone,Marimba,Xylophone,Tubular bells,Dulcimer,' +
+  'Drawbar organ,Percussive organ,Rock organ,Church organ,Reed organ,Accordion,Harmonica,Bandoneon,' +
+  'Nylon guitar,Steel guitar,Jazz guitar,Clean guitar,Muted guitar,Overdrive guitar,Distortion guitar,Guitar harmonics,' +
+  'Acoustic bass,Finger bass,Pick bass,Fretless bass,Slap bass,Slap bass 2,Synth bass,Synth bass 2,' +
+  'Violin,Viola,Cello,Contrabass,Tremolo strings,Pizzicato strings,Harp,Timpani,' +
+  'Strings,Strings 2,Synth strings,Synth strings 2,Choir,Voice,Synth voice,Orchestra hit,' +
+  'Trumpet,Trombone,Tuba,Muted trumpet,French horn,Brass,Synth brass,Synth brass 2,' +
+  'Soprano sax,Alto sax,Tenor sax,Baritone sax,Oboe,English horn,Bassoon,Clarinet,' +
+  'Piccolo,Flute,Recorder,Pan flute,Bottle,Shakuhachi,Whistle,Ocarina,' +
+  'Square lead,Saw lead,Calliope,Chiff lead,Charang,Voice lead,Fifths lead,Bass lead,' +
+  'New age pad,Warm pad,Polysynth,Choir pad,Bowed pad,Metallic pad,Halo pad,Sweep pad,' +
+  'Rain,Soundtrack,Crystal,Atmosphere,Brightness,Goblins,Echoes,Sci-fi,' +
+  'Sitar,Banjo,Shamisen,Koto,Kalimba,Bagpipe,Fiddle,Shanai,' +
+  'Tinkle bell,Agogo,Steel drums,Woodblock,Taiko,Melodic tom,Synth drum,Reverse cymbal,' +
+  'Fret noise,Breath,Seashore,Bird,Telephone,Helicopter,Applause,Gunshot'
+).split(',');
+
 const DRUM_MAP: Record<number, DrumVoice> = {
   35: 'kick', 36: 'kick',
   37: 'snare', 38: 'snare', 39: 'snare', 40: 'snare',
@@ -356,89 +392,228 @@ export interface MidiImport {
   key: string;
   tempo: number;
   drums: boolean;
+  /** What it heard and chose, for the status line: e.g. "melody: SOPRANO (Choir) → sine lead". */
+  notes: string[];
 }
 
-/** Turn a MIDI file into a progression, chord rhythm, tempo, key and (optionally) drum patterns. */
-export function midiToConfig(file: MidiFile, maxChords = 64): MidiImport {
-  const pitched = file.notes.filter((n) => n.channel !== 9);
-  if (!pitched.length) throw new Error('no notes outside the drum channel');
+interface Part {
+  channel: number;
+  notes: MidiNote[];
+  program: number;
+  name: string;
+  medianPitch: number;
+  /** Fraction of the part's sounding time with only one of its notes at once. */
+  mono: number;
+  time: number;
+}
+
+/** What a part sounds like, for choosing the chords' sound. */
+type Family = 'piano' | 'mallets' | 'organ' | 'guitar' | 'bass' | 'harp' | 'pizzicato' | 'strings' | 'choir' | 'brass' | 'reed' | 'pipe' | 'lead' | 'pad' | 'other';
+function familyOf(program: number): Family {
+  if (program === 46) return 'harp';
+  if (program === 45) return 'pizzicato';
+  if (program >= 52 && program <= 54) return 'choir';
+  return (['piano', 'mallets', 'organ', 'guitar', 'bass', 'strings', 'strings', 'brass', 'reed', 'pipe', 'lead', 'pad', 'pad', 'other', 'mallets', 'other'] as Family[])[Math.floor(program / 8)];
+}
+
+/** The chords' sound for an accompaniment family: how changes sound, the envelope, wave and room. */
+function soundFor(f: Family): { patch: DeepPartial<ChordDriftConfig>; says: string } {
+  const pluck = (decay: number, sustain: number, wave: string, reverb: number, says: string, lowpass = 9000) => ({
+    patch: { motion: { transition: 'pluck' }, audio: { envelope: 'pluck', attack: 0.004, decay, sustain, wave, reverb, lowpass, swell: 'off' } } as DeepPartial<ChordDriftConfig>,
+    says,
+  });
+  const held = (transition: string, wave: string, reverb: number, says: string, extra: DeepPartial<ChordDriftConfig['audio']> = {}) => ({
+    patch: { motion: { transition }, audio: { envelope: 'sustain', wave, reverb, swell: 'off', lowpass: 9000, ...extra } } as DeepPartial<ChordDriftConfig>,
+    says,
+  });
+  switch (f) {
+    case 'piano': return pluck(1.3, 0.22, 'triangle', 0.3, 'plucked, piano-like');
+    case 'mallets': return pluck(0.8, 0.04, 'sine', 0.45, 'struck, bell-like');
+    case 'harp': return pluck(1.8, 0.08, 'triangle', 0.55, 'plucked, harp-like');
+    case 'pizzicato': return pluck(0.35, 0, 'triangle', 0.4, 'short plucks');
+    case 'guitar': return pluck(1, 0.15, 'sawtooth', 0.3, 'strummed', 5200);
+    case 'organ': return held('glide', 'square', 0.45, 'held, organ-like', { lowpass: 4500 });
+    case 'strings': return held('swell', 'warm', 0.55, 'bowed (swelling between chords)');
+    case 'choir': return held('swell', 'sine', 0.6, 'sung (swelling between chords)');
+    case 'brass': return held('swell', 'sawtooth', 0.4, 'brassy, held', { lowpass: 3800 });
+    case 'reed': return held('swell', 'square', 0.4, 'reedy, held', { lowpass: 3500 });
+    case 'pipe': return held('swell', 'sine', 0.5, 'breathy, held');
+    case 'pad': return held('glide', 'warm', 0.65, 'a gliding pad', { swell: 'breath' });
+    case 'lead': return held('glide', 'sawtooth', 0.35, 'a gliding synth', { lowpass: 5000 });
+    default: return held('glide', 'warm', 0.4, 'gliding');
+  }
+}
+
+/** The melody's wave and portamento for its instrument. */
+function leadFor(f: Family): { wave: string; glide: number } {
+  switch (f) {
+    case 'choir': case 'pipe': return { wave: 'sine', glide: 0.12 };
+    case 'strings': return { wave: 'triangle', glide: 0.1 };
+    case 'brass': case 'lead': return { wave: 'sawtooth', glide: 0.05 };
+    case 'reed': return { wave: 'square', glide: 0.06 };
+    case 'organ': return { wave: 'square', glide: 0.02 };
+    default: return { wave: 'triangle', glide: 0.015 };
+  }
+}
+
+const MELODY_NAME = /sopran|melod|lead|vocal|voice|voce|canto|sing|tune|solo|tema|theme|violin ?1|flute|flauto/i;
+const BASS_NAME = /bass|basso|contrabb|cello/i;
+
+/**
+ * Turn a MIDI file into a piece that follows it: the tune (the highest, mostly one-note-at-a-time
+ * part, or one named like a melody) as a written melody, chords from the other parts at the
+ * harmonic rhythm the music actually moves at (a beat, two beats or a bar), with the bass note kept
+ * as a slash chord, the tempo, key and drum patterns, and a sound chosen from the instruments
+ * (a harp or piano accompaniment plucks on its own strike rhythm, strings and choirs swell, pads
+ * glide; the melody's wave follows its instrument).
+ */
+export function midiToConfig(file: MidiFile, maxChords = 192): MidiImport {
+  const said: string[] = [];
+  const pitchedAll = file.notes.filter((n) => n.channel !== 9);
+  if (!pitchedAll.length) throw new Error('no notes outside the drum channel');
+  // Parts by channel; timpani and percussive programs don't make chords or tunes.
+  const parts: Part[] = [];
+  for (const ch of [...new Set(pitchedAll.map((n) => n.channel))]) {
+    const program = file.programs[ch] ?? 0;
+    if (program === 47 || program >= 112) continue;
+    const ns = pitchedAll.filter((n) => n.channel === ch);
+    const ps = ns.map((n) => n.pitch).sort((a, b) => a - b);
+    let monoTime = 0;
+    let time = 0;
+    for (const n of ns) {
+      time += n.length;
+      const overl = ns.some((m) => m !== n && m.start < n.start + n.length - 0.05 && m.start + m.length > n.start + 0.05);
+      if (!overl) monoTime += n.length;
+    }
+    parts.push({ channel: ch, notes: ns, program, name: file.trackNames[ch] ?? '', medianPitch: ps[ps.length >> 1], mono: time ? monoTime / time : 0, time });
+  }
+  if (!parts.length) throw new Error('no melodic parts');
+  const label = (p: Part) => `${p.name || `channel ${p.channel + 1}`} (${GM_NAMES[p.program]})`;
+
+  // The tune: high, mostly one note at a time, long enough, or named like one.
+  let melody: Part | null = null;
+  if (parts.length >= 2) {
+    const ranked = parts
+      .filter((p) => p.notes.length >= 8 && familyOf(p.program) !== 'bass' && !BASS_NAME.test(p.name))
+      .map((p) => ({ p, score: p.medianPitch / 12 + p.mono * 3 + (MELODY_NAME.test(p.name) ? 4 : 0) }))
+      .sort((a, b) => b.score - a.score);
+    if (ranked.length && ranked[0].p.mono > 0.6) melody = ranked[0].p;
+  }
+  const harmonyParts = parts.filter((p) => p !== melody);
+  const pitched = (harmonyParts.length ? harmonyParts : parts).flatMap((p) => p.notes).sort((a, b) => a.start - b.start);
+
   const total = new Array(12).fill(0);
-  for (const n of pitched) total[mod12(n.pitch)] += n.length;
+  for (const n of pitchedAll) total[mod12(n.pitch)] += n.length;
   const key = detectKey(total);
   const flats = prefersFlats(key.tonic, key.scale);
+  const bar = Math.max(2, Math.round(file.beatsPerBar));
 
-  const base = Math.floor(pitched[0].start + 1e-6);
+  // Where the chords start: the first beat with two or more notes sounding together.
   const last = Math.max(...pitched.map((n) => n.start + n.length));
-  const cells = Math.min(4096, Math.ceil(last - base - 1e-6));
-  // One chord guess per beat. A lone pitch class (a unison or a bass note) is not a chord.
-  const guesses: ({ name: string; root: number } | null)[] = [];
-  for (let c = 0; c < cells; c++) {
-    const a = base + c;
+  const weightsIn = (a: number, b: number) => {
     const w = new Array(12).fill(0);
-    let bass: { p: number; o: number } | null = null;
     for (const n of pitched) {
-      const o = Math.min(a + 1, n.start + n.length) - Math.max(a, n.start);
-      if (o <= 0.05) continue;
-      w[mod12(n.pitch)] += o;
-      if (!bass || n.pitch < bass.p) bass = { p: n.pitch, o };
+      const o = Math.min(b, n.start + n.length) - Math.max(a, n.start);
+      if (o > 0.02) w[mod12(n.pitch)] += o;
     }
-    const distinct = w.filter((x) => x > 0.05).length;
-    if (bass) w[mod12(bass.p)] += bass.o * 0.5;
-    guesses.push(distinct < 2 ? null : nameChord(w, bass ? mod12(bass.p) : null, flats));
-  }
-  const first = guesses.findIndex((g) => g !== null);
-  if (first < 0) throw new Error('no chords found (only single notes)');
-  const origin = base + first;
-  // Merge repeats; empty beats extend the chord before them.
-  const segs: { name: string; root: number; beats: number }[] = [];
-  // Beats after the last chord (a closing unison, a fade) don't stretch it.
-  let lastChord = guesses.length - 1;
-  while (guesses[lastChord] === null) lastChord--;
-  for (const g of guesses.slice(first, lastChord + 1)) {
-    if (segs.length && (g === null || segs[segs.length - 1].name === g.name)) {
-      segs[segs.length - 1].beats += 1;
-      continue;
+    return w;
+  };
+  let origin = Math.floor(pitched[0].start + 1e-6);
+  while (origin < last && weightsIn(origin, origin + 1).filter((x) => x > 0.05).length < 2) origin++;
+  if (origin >= last) throw new Error('no chords found (only single notes)');
+
+  /** The bass at a moment: the lowest harmony note sounding just after it. */
+  const bassAt = (a: number, b: number) => {
+    let low: number | null = null;
+    for (const n of pitched) if (n.start < Math.min(b, a + 0.6) && n.start + n.length > a + 0.05 && (low === null || n.pitch < low)) low = n.pitch;
+    return low;
+  };
+  const chordPcs = (name: string, root: number) => {
+    const tok = parseProgression(name.split('/')[0]).tokens[0];
+    const ivs = tok && tok.kind === 'chord' && tok.intervals ? tok.intervals : [0, 4, 7];
+    return new Set(ivs.map((i) => mod12(root + i)));
+  };
+  // Try the harmonic rhythms: chords every beat, two beats, or bar; keep the one that explains the
+  // notes best without changing more than it needs to.
+  const segment = (g: number) => {
+    const start = Math.floor(origin / g) * g;
+    const segs: { name: string; root: number; beats: number }[] = [];
+    let fit = 0;
+    let weight = 0;
+    // Beats with no chord (a rest, a lone note) extend the chord before them, but only if another
+    // chord follows: a closing unison or fade doesn't stretch the last chord.
+    let empty = 0;
+    for (let a = start; a < last - 0.05; a += g) {
+      const w = weightsIn(a, a + g);
+      const sum = w.reduce((x, y) => x + y, 0);
+      const low = bassAt(a, a + g);
+      if (sum < 0.1 || w.filter((x) => x > 0.05).length < 2) {
+        empty += g;
+        continue;
+      }
+      if (segs.length && empty) segs[segs.length - 1].beats += empty;
+      empty = 0;
+      // Named from the notes alone (the bass doesn't pull the root to itself: inversions stay inversions).
+      const c = nameChord(w, null, flats);
+      if (!c) continue;
+      const pcs = chordPcs(c.name, c.root);
+      fit += w.reduce((x, y, pc) => x + (pcs.has(pc) ? y : 0), 0);
+      weight += sum;
+      const name = low !== null && mod12(low) !== c.root ? `${c.name}/${pcName(mod12(low), flats)}` : c.name;
+      if (segs.length && segs[segs.length - 1].name === name) segs[segs.length - 1].beats += g;
+      else segs.push({ name, root: c.root, beats: g });
     }
-    if (g) segs.push({ ...g, beats: 1 });
-  }
-  // A one-beat chord on the same root as a neighbour is a colour change or a smeared change: fold it in.
-  for (let i = segs.length - 1; i >= 0 && segs.length > 1; i--) {
-    if (segs[i].beats !== 1) continue;
-    const prev = segs[i - 1];
-    const next = segs[i + 1];
-    if (prev && prev.root === segs[i].root) {
-      prev.beats += 1;
-      segs.splice(i, 1);
-    } else if (next && next.root === segs[i].root) {
-      next.beats += 1;
-      segs.splice(i, 1);
-    }
-  }
-  // Lone single-beat chords between two of the same chord are passing notes.
-  for (let i = segs.length - 2; i > 0; i--) {
-    if (segs[i].beats === 1 && segs[i - 1].name === segs[i + 1].name) {
-      segs[i - 1].beats += 1 + segs[i + 1].beats;
-      segs.splice(i, 2);
-    }
-  }
-  // Merging can leave neighbours equal again.
-  for (let i = segs.length - 1; i > 0; i--) {
-    if (segs[i].name === segs[i - 1].name) {
-      segs[i - 1].beats += segs[i].beats;
-      segs.splice(i, 1);
-    }
-  }
-  const used = segs.slice(0, maxChords);
+    const span = Math.max(1, last - start);
+    return { segs, start, score: (weight ? fit / weight : 0) - 0.05 * ((segs.length / span) * bar) };
+  };
+  const options = [...new Set([1, 2, bar])].map((g) => ({ g, ...segment(g) }));
+  const best = options.reduce((a, b) => (b.score > a.score + 0.005 || (Math.abs(b.score - a.score) <= 0.005 && b.g > a.g) ? b : a));
+  const used = best.segs.slice(0, maxChords);
+  if (!used.length) throw new Error('no chords found');
   const chords = used.map((s) => s.name);
+  const chordStart = best.start;
+  said.push(`chords every ${best.g === bar ? 'bar' : best.g === 1 ? 'beat' : `${best.g} beats`}, bass notes kept`);
 
   const keyName = KEY_NAMES[key.tonic];
+  const tempo = Math.max(30, Math.min(300, file.tempo));
   const patch: DeepPartial<ChordDriftConfig> = {
     key: keyName,
     scale: key.scale,
+    style: 'none',
     progression: chords.join(' '),
     endless: false,
-    rhythm: { tempo: Math.max(30, Math.min(300, file.tempo)), chords: used.map((s) => beatsToNotation(s.beats)).join(' ') },
+    song: { enabled: false },
+    voicing: { inversion: 0 },
+    passing: 0,
+    rhythm: { tempo, chords: used.map((s) => beatsToNotation(s.beats)).join(' ') },
   };
+
+  // The chords' sound, from the accompaniment's main instrument (by how much it plays).
+  const acc = harmonyParts.filter((p) => familyOf(p.program) !== 'bass').sort((a, b) => b.time - a.time)[0] ?? harmonyParts[0];
+  if (acc) {
+    const fam = familyOf(acc.program);
+    const s = soundFor(fam);
+    Object.assign(patch, { motion: s.patch.motion, audio: s.patch.audio });
+    if (s.patch.motion?.transition === 'pluck') {
+      // Strike on the accompaniment's own rhythm (eighths at the busiest, so arpeggios don't become tremolo).
+      const onsets = [...new Set(acc.notes.map((n) => Math.round(n.start * 4) / 4))].sort((a, b) => a - b);
+      const gaps = onsets.slice(1).map((o, i) => o - onsets[i]).filter((g) => g > 0).sort((a, b) => a - b);
+      const gap = gaps.length ? gaps[gaps.length >> 1] : 1;
+      patch.rhythm!.pluck = gap <= 0.6 ? 'e' : gap <= 1.2 ? 'q' : 'h';
+    }
+    said.push(`chords from ${label(acc)} → ${s.says}`);
+  }
+
+  // The tune, as written.
+  if (melody) {
+    const notes = melody.notes
+      .filter((n) => n.start + 0.01 >= chordStart)
+      .map((n) => `${n.pitch}:${+(n.start - chordStart).toFixed(3)}:${+n.length.toFixed(3)}`)
+      .join(' ');
+    const lead = leadFor(familyOf(melody.program));
+    patch.melody = { enabled: true, notes, wave: lead.wave as never, glide: lead.glide, level: 0.65 };
+    said.push(`melody from ${label(melody)} → ${lead.wave} lead`);
+  } else patch.melody = { enabled: false, notes: '' };
 
   // Drums: 16th-note steps from where the chords start; each row repeats every 1, 2 or 4 bars.
   const drums = file.notes.filter((n) => n.channel === 9 && DRUM_MAP[n.pitch]);
@@ -448,7 +623,7 @@ export function midiToConfig(file: MidiFile, maxChords = 64): MidiImport {
       const steps = new Array(64).fill('.');
       for (const n of drums) {
         if (DRUM_MAP[n.pitch] !== voice) continue;
-        const i = Math.round((n.start - origin) * 4);
+        const i = Math.round((n.start - chordStart) * 4);
         if (i < 0 || i >= 64) continue;
         const open = n.pitch === 46;
         steps[i] = open ? (n.vel >= 110 ? 'O' : 'o') : n.vel >= 110 ? 'X' : 'x';
@@ -462,6 +637,6 @@ export function midiToConfig(file: MidiFile, maxChords = 64): MidiImport {
       rows[voice] = s.slice(0, period);
     }
     patch.drums = { enabled: true, ...rows };
-  }
-  return { patch, chords, key: `${keyName} ${key.scale}`, tempo: patch.rhythm!.tempo as number, drums: drums.length > 0 };
+  } else patch.drums = { enabled: false };
+  return { patch, chords, key: `${keyName} ${key.scale}`, tempo, drums: drums.length > 0, notes: said };
 }

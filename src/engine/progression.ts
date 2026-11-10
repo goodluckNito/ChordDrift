@@ -14,6 +14,8 @@ export interface ChordSpec extends Chord {
   name: string;
   roman: string;
   origin: ChordOrigin;
+  /** A written slash bass (pitch class), when the progression asked for one. */
+  bass?: number;
 }
 
 /**
@@ -195,6 +197,7 @@ export class ProgressionWalker {
       else chord = this.familyChord(root, wantMinor ?? false);
     }
     const spec = this.spec(chord, origin);
+    if (token.bass !== undefined) spec.bass = token.bass;
     if (keyChange) spec.roman += ` (→ ${tonicName(this.tonic, this.scale)} ${this.scale === 'minor' ? 'minor' : this.scale === 'major' ? 'major' : SCALES[this.scale].name})`;
     return spec;
   }

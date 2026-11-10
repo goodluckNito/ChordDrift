@@ -346,7 +346,11 @@ class ScoreBuilder {
       onsets.forEach((o, i) => (gap = Math.min(gap, (i + 1 < onsets.length ? onsets[i + 1] : onsets[0] + length) - o)));
       this.score.strikeGap = gap * beat;
     }
-    if (cfg.melody.enabled) {
+    const written = cfg.melody.enabled ? parseWrittenMelody(cfg.melody.notes, gridStart, beat) : [];
+    if (written.length) {
+      // A written melody (a MIDI import's tune) plays exactly as written.
+      this.score.melody = written;
+    } else if (cfg.melody.enabled) {
       this.melody = new MelodyGenerator(cfg, gridStart, melodyRhythm.steps, stream(seed, 'melody-rhythm'), stream(seed, 'melody-pitch'));
       this.score.melody = this.melody.notes;
     }
@@ -541,6 +545,12 @@ class ScoreBuilder {
       spec = this.walker.next(k, this.total, cost);
       notes = voiceChord(spec, ref, rules, this.voicingRng);
     }
+    // A written slash bass ("Em7/D"): that note in the bass (and no random inversion on top).
+    if (!unison && spec.bass !== undefined && fixedBass === undefined) {
+      notes = voiceChord(spec, ref, rules, this.voicingRng, spec.bass);
+      if (mod12(spec.bass) !== mod12(spec.root)) spec = { ...spec, name: `${spec.name}/${spellPc(spec.bass, spec.tonic, spec.scale)}` };
+      fixed = true;
+    }
     // Inversion: now and then a chord puts its 3rd, 5th (or 7th) in the bass instead of its root
     // (C/E, C/G), voiced from the current chord like any other change. It draws on its own random
     // stream, so the setting changes nothing else about the piece.
@@ -718,6 +728,11 @@ class ScoreBuilder {
     }
     const arrivalEnd = arrivalStart + T.arrival;
     const musicEnd = arrivalEnd + T.outro;
+    if (!this.melody && score.melody.length) {
+      // A written melody stops where the progression does (the arrival is the chords' own ending).
+      score.melody = score.melody.filter((n) => n.t < arrivalStart);
+      for (const n of score.melody) n.d = Math.min(n.d, arrivalStart - n.t);
+    }
     // Loops always come home: if the arrival went up (or down), every voice
     // glides back to the starting unison after a short hold, then it wraps.
     let loopEnd = arrivalEnd + T.outro;
@@ -783,7 +798,7 @@ export function generateScore(input: DeepPartial<ChordDriftConfig> | ChordDriftC
 function transposeSpec(spec: ChordSpec, d: number): ChordSpec {
   const root = mod12(spec.root + d);
   const tonic = mod12(spec.tonic + d);
-  return { ...spec, root, tonic, name: chordName({ root, intervals: spec.intervals }, tonic, spec.scale) };
+  return { ...spec, root, tonic, name: chordName({ root, intervals: spec.intervals }, tonic, spec.scale), ...(spec.bass !== undefined ? { bass: mod12(spec.bass + d) } : {}) };
 }
 
 /** A part's identity: its name, plus scale/style when it changes them (a variation gets its own chords). */
@@ -796,3 +811,22 @@ function partId(sec: SongSection): string {
 function partTonic(sec: SongSection, keyPc: number): number {
   return (sec.key ? parsePc(sec.key) ?? keyPc : keyPc) + sec.shift;
 }
+
+/** A written melody ("pitch:start:length" in beats from the first chord) as melody notes. */
+export function parseWrittenMelody(text: string, gridStart: number, beat: number): MelodyNote[] {
+  const out: MelodyNote[] = [];
+  for (const tok of text.trim().split(/\s+/)) {
+    const m = /^(\d{1,3}):(-?[\d.]+):([\d.]+)$/.exec(tok);
+    if (!m) continue;
+    const p = Number(m[1]);
+    const start = Number(m[2]);
+    const len = Number(m[3]);
+    if (!(p >= 0 && p <= 127) || !(len > 0) || start < 0) continue;
+    out.push({ t: gridStart + start * beat, d: len * beat, p });
+  }
+  out.sort((x, y) => x.t - y.t);
+  // Overlaps (two notes at once) keep the later one: the melody is one line.
+  for (let i = 0; i + 1 < out.length; i++) if (out[i].t + out[i].d > out[i + 1].t) out[i].d = Math.max(0.01, out[i + 1].t - out[i].t);
+  return out;
+}
+

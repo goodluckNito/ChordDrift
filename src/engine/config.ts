@@ -141,6 +141,11 @@ export interface ChordDriftConfig {
     wave: Wave;
     /** 0..1 level relative to the chords. */
     level: number;
+    /**
+     * A written melody (from a MIDI import): notes as "pitch:start:length", start and length in
+     * beats from the first chord, space separated. When set, it plays instead of a generated melody.
+     */
+    notes: string;
   };
   audio: {
     wave: Wave;
@@ -257,7 +262,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   voicing: { pedalBonus: 1.5, bassWeight: 0.3, movePenalty: 2, mudFloor: 48, minGap: 3, maxCopies: 3, candidates: 24, inversion: 0 },
   motion: { easing: 'smootherstep', transition: 'glide' },
   rhythm: { tempo: 54, chords: '?', pluck: 'e' },
-  melody: { enabled: false, style: 'solo', rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
+  melody: { enabled: false, style: 'solo', rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6, notes: '' },
   audio: { wave: 'warm', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 10000, width: 0.12, gain: 0.9, sub: 0.4, warmth: 0, bass: 2, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
   theme: { ...THEME_PRESETS.paper },
   drums: {
@@ -285,7 +290,7 @@ export type DeepPartial<T> = {
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
-function deepMerge<T>(base: T, patch: unknown): T {
+export function deepMerge<T>(base: T, patch: unknown): T {
   if (!isPlainObject(patch) || !isPlainObject(base)) return (patch === undefined ? base : patch) as T;
   const out: Record<string, unknown> = { ...base };
   for (const [k, v] of Object.entries(patch)) {
@@ -337,6 +342,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.melody.enabled = Boolean(c.melody.enabled);
   if (c.melody.style !== 'free') c.melody.style = 'solo';
   c.melody.rhythm = String(c.melody.rhythm ?? '');
+  c.melody.notes = String(c.melody.notes ?? '').slice(0, 60000);
   c.melody.density = Math.max(0, Math.min(1, Number(c.melody.density)));
   if (!(c.melody.register in REGISTERS)) c.melody.register = 'high';
   if (c.melody.fill !== 'gaps') c.melody.fill = 'continuous';

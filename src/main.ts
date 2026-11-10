@@ -30,6 +30,7 @@ import {
   generateScore,
   songFromText,
   midiToConfig,
+  deepMerge,
   readMidi,
   writeMidi,
   pitchesAt,
@@ -567,6 +568,7 @@ function startApp() {
   }
 
   function syncVisibility() {
+    $('#written-melody').hidden = !(state.melody.enabled && state.melody.notes.trim());
     for (const out of form.querySelectorAll('output:not([id])')) {
       const input = out.parentElement!.querySelector('input')!;
       out.textContent = input.value;
@@ -1214,6 +1216,12 @@ function startApp() {
       setStatus(`MIDI export failed: ${(err as Error).message}`);
     }
   });
+  $('#forget-melody').addEventListener('click', () => {
+    state.melody.notes = '';
+    writeForm();
+    rebuild(true);
+    setStatus('The melody is generated again.');
+  });
   $('#midi-import').addEventListener('click', () => $<HTMLInputElement>('#midi-file').click());
   $<HTMLInputElement>('#midi-file').addEventListener('change', async (e) => {
     const input = e.currentTarget as HTMLInputElement;
@@ -1222,9 +1230,10 @@ function startApp() {
     if (!file) return;
     try {
       const imp = midiToConfig(readMidi(await file.arrayBuffer()));
-      const title = file.name.replace(/\.(mid|midi|rmi)$/i, '');
-      loadConfig({ ...state, ...imp.patch, rhythm: { ...state.rhythm, ...imp.patch.rhythm }, drums: { ...state.drums, ...(imp.patch.drums ?? {}) }, title: state.title || title } as never);
-      setStatus(`Imported ${imp.chords.length} chords from ${file.name} · ${imp.key} · ${imp.tempo} bpm${imp.drums ? ' · drums' : ''}.`);
+      const title = file.name.replace(/\.(mid|midi|rmi)$/i, '').replace(/[_-]+/g, ' ');
+      // Deep, so the parts of the sound the import doesn't choose keep your settings.
+      loadConfig(deepMerge(structuredClone(state), { ...imp.patch, title: title || state.title }) as never);
+      setStatus(`Imported ${file.name}: ${imp.chords.length} chords · ${imp.key} · ${imp.tempo} bpm${imp.drums ? ' · drums' : ''} · ${imp.notes.join(' · ')}. Tweak anything in Sound, Melody or Progression.`);
     } catch (err) {
       setStatus(`Couldn't read that MIDI file: ${(err as Error).message}`);
     }

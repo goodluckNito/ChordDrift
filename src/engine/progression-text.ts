@@ -12,7 +12,7 @@
  *
  * Bare numerals, degrees and offsets (no quality) are coloured automatically:
  * stacked from the selected scale at the current complexity.
- * Separators: spaces, commas, "|", "→" or ">". Slash basses ("C/G") are ignored.
+ * Separators: spaces, commas, "|", "→" or ">". A slash bass note ("C/G", "Em7/D") puts that note in the bass.
  */
 import { chordSuffix, romanName, suffixIntervals } from './chords';
 import { mod12, parsePc, romanFor } from './theory';
@@ -25,7 +25,7 @@ export type RootRef =
 
 export type ProgressionToken =
   | { kind: 'wildcard'; text: string }
-  | { kind: 'chord'; text: string; root: RootRef; intervals: number[] | null };
+  | { kind: 'chord'; text: string; root: RootRef; intervals: number[] | null; bass?: number };
 
 export interface ParseResult {
   tokens: ProgressionToken[];
@@ -71,6 +71,13 @@ function minorise(suffix: string): string {
 }
 
 export function parseToken(raw: string): ProgressionToken | string {
+  // A slash bass: a note name after the last "/" ("C/G", "Am7/G"). Anything else after a slash
+  // ("6/9", "V/V") is read as before.
+  const slash = /^(.+)\/([A-G][#b♯♭]?)$/.exec(raw.trim());
+  if (slash) {
+    const inner = parseToken(slash[1]);
+    if (typeof inner !== 'string' && inner.kind === 'chord') return { ...inner, text: raw, bass: parsePc(slash[2].replace('♯', '#').replace('♭', 'b'))! };
+  }
   const text = raw.split('/')[0].trim();
   if (!text) return 'empty chord';
   if (/^[?*_]$/.test(text)) return { kind: 'wildcard', text };
