@@ -130,6 +130,8 @@ export interface ChordDriftConfig {
     /** 0 = sparse, long notes … 1 = busy, short notes (random rhythm only). */
     density: number;
     register: Register;
+    /** solo = long singing lines, one note per chord with approach notes and turns; free = busier random rhythm (or the written rhythm). */
+    style: 'solo' | 'free';
     /** continuous = over everything; gaps = only while chords hold still, resting through changes. */
     fill: 'continuous' | 'gaps';
     /** Portamento between notes (s). */
@@ -250,7 +252,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   voicing: { pedalBonus: 1.5, bassWeight: 0.3, movePenalty: 2, mudFloor: 48, minGap: 3, maxCopies: 3, candidates: 24, inversion: 0 },
   motion: { easing: 'smootherstep', transition: 'glide' },
   rhythm: { tempo: 54, chords: '?', pluck: 'e' },
-  melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
+  melody: { enabled: false, style: 'solo', rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
   audio: { wave: 'warm', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 10000, width: 0.12, gain: 0.9, sub: 0.4, warmth: 0, bass: 2, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
   theme: { ...THEME_PRESETS.paper },
   drums: {
@@ -321,6 +323,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   c.rhythm.chords = String(c.rhythm.chords ?? '');
   c.rhythm.pluck = String(c.rhythm.pluck ?? '');
   c.melody.enabled = Boolean(c.melody.enabled);
+  if (c.melody.style !== 'free') c.melody.style = 'solo';
   c.melody.rhythm = String(c.melody.rhythm ?? '');
   c.melody.density = Math.max(0, Math.min(1, Number(c.melody.density)));
   if (!(c.melody.register in REGISTERS)) c.melody.register = 'high';

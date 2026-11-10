@@ -368,6 +368,13 @@ class ScoreBuilder {
         const i = this.chordIndexAt(t);
         return i >= 0 ? chords[i] : null;
       },
+      nextChangeAfter: (t: number) => {
+        const i = this.chordIndexAt(t);
+        const next = chords[i + 1];
+        if (next) return next.t;
+        // The last chord known so far: its change is the next one the builder will add.
+        return this.total !== null && chords.length >= this.total ? this.nextChange : Math.max(this.nextChange, t + 0.5);
+      },
       changesDuring: (t0: number, t1: number) => {
         const i = Math.max(0, this.chordIndexAt(t1));
         for (let k = i; k >= 0 && k >= i - 2; k--) {
