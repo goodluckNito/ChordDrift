@@ -205,7 +205,9 @@ export interface ChordDriftConfig {
     /** Zoom of the picture (titles and HUD stay put): 1 = normal. */
     zoom: number;
     /** timeline = pitch over time · spiral = pitch on a spiral · waterfall = rotating 3D spectrograph, depth is time */
-    view: 'timeline' | 'spiral' | 'waterfall' | 'chladni' | 'constellation' | 'marbling' | 'murmur';
+    view: 'timeline' | 'spiral' | 'waterfall' | 'chladni' | 'constellation' | 'marbling' | 'murmur' | 'city';
+    /** Night city look. */
+    city: 'neon' | 'blueprint';
     /**
      * Spiral motion. orbit = rotation is time, distance from the centre is pitch, the past spirals inward ·
      * drain = like orbit, but the past sinks into the centre · fly = travel forward through time · inward = pitch-class clock
@@ -273,7 +275,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
     double: false,
     duck: { kick: true, snare: false, depth: 0.5, release: 0.25 },
   },
-  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'orbit', zoom: 1, centerLabel: true },
+  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'orbit', city: 'neon', zoom: 1, centerLabel: true },
 };
 
 export type DeepPartial<T> = {
@@ -315,7 +317,8 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   // Retired views open in the nearest one that's left.
   if (['fifths', 'compass', 'scope'].includes(c.video.view as string)) c.video.view = 'constellation';
   if (['transit', 'ferro', 'pendulum'].includes(c.video.view as string)) c.video.view = 'constellation';
-  if (!['timeline', 'spiral', 'waterfall', 'chladni', 'constellation', 'marbling', 'murmur'].includes(c.video.view)) c.video.view = 'timeline';
+  if (!['timeline', 'spiral', 'waterfall', 'chladni', 'constellation', 'marbling', 'murmur', 'city'].includes(c.video.view)) c.video.view = 'timeline';
+  if (c.video.city !== 'blueprint') c.video.city = 'neon';
   if ((c.video.spiral as string) === 'zoom') c.video.spiral = 'fly'; // older projects
   if (!['orbit', 'drain', 'fly', 'inward'].includes(c.video.spiral)) c.video.spiral = 'orbit';
   c.drums.double = Boolean(c.drums.double);

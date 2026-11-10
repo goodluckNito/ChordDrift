@@ -617,6 +617,7 @@ function startApp() {
     for (const el of form.querySelectorAll<HTMLElement>('[data-palette]')) el.hidden = displayTheme().colorBy === 'none';
     if (displayTheme().colorSeed) $<HTMLSelectElement>('#palette-select').value = 'rolled';
     for (const el of form.querySelectorAll<HTMLElement>('[data-spiral]')) el.hidden = state.video.view !== 'spiral';
+    for (const el of form.querySelectorAll<HTMLElement>('[data-city]')) el.hidden = state.video.view !== 'city';
     const dt = displayTheme();
     themeSelect.value = dt.preset in THEME_PRESETS ? dt.preset : 'custom';
     const fmt = Object.entries(FORMATS).find(([, [w, h]]) => w === state.video.width && h === state.video.height);

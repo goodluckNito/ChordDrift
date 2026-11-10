@@ -341,3 +341,332 @@ export function drawMurmuration(ctx: CanvasRenderingContext2D, score: Score, t: 
   }
   ctx.restore();
 }
+
+// ---------------------------------------------------------------------------
+// Night city
+// ---------------------------------------------------------------------------
+
+/**
+ * Twelve towers, one per note name (C to B, left to right), one floor per octave. A sounding note
+ * is a lit window; the last few chords' windows fade out slowly, so the recent harmony glows.
+ * A voice that moves rides out as a light: along a skybridge at its old floor to the new note's
+ * tower, then up or down its lift, and the window lights as it arrives. Kicks light up the sky,
+ * snares flash the antennas. Two looks: neon (lit windows, reflections in the water) and
+ * blueprint (isometric line drawing).
+ */
+type Cell = { pc: number; oct: number };
+const cellOf = (p: number): Cell => {
+  const r = Math.round(p);
+  return { pc: mod12(r), oct: Math.floor(r / 12) - 1 };
+};
+
+interface CityLights {
+  /** Brightness per window, keyed pc + 12·octave. */
+  lit: Map<number, number>;
+  cars: { from: Cell; to: Cell; f: number; v: number }[];
+}
+
+function cityLights(score: Score, t: number): CityLights {
+  const lit = new Map<number, number>();
+  const light = (c: Cell, b: number) => {
+    const k = c.pc + 12 * c.oct;
+    lit.set(k, Math.max(lit.get(k) ?? 0, b));
+  };
+  const chords = score.chords;
+  let k = 0;
+  while (k + 1 < chords.length && chords[k + 1].t <= t) k++;
+  // Recent chords, fading over a few seconds after they ended.
+  for (let j = Math.max(0, k - 8); j < k; j++) {
+    const end = chords[j + 1].t;
+    const fade = 0.32 * Math.exp(-Math.max(0, t - end) / 2.5);
+    if (fade < 0.02) continue;
+    for (const n of chords[j].notes) light(cellOf(n), fade);
+  }
+  const cars: CityLights['cars'] = [];
+  for (let v = 0; v < score.config.voices; v++) {
+    const level = 0.35 + 0.65 * levelAt(score, v, t);
+    const mv = score.moves[v].find((m) => m.t0 <= t && t < m.t0 + m.d && Math.round(m.p0) !== Math.round(m.p1));
+    if (mv) {
+      const f = Math.max(0, Math.min(1, (pitchAt(score, v, t) - mv.p0) / (mv.p1 - mv.p0)));
+      const from = cellOf(mv.p0);
+      const to = cellOf(mv.p1);
+      cars.push({ from, to, f, v });
+      light(from, level * (1 - f) * 0.8);
+      if (f > 0.85) light(to, level * (f - 0.85) / 0.15);
+    } else light(cellOf(pitchAt(score, v, t)), level);
+  }
+  return { lit, cars };
+}
+
+/** Where a car is along its route: along the skybridge first, then the lift. */
+function carPos(from: { x: number; y: number }, to: { x: number; y: number }, f: number) {
+  const dx = Math.abs(to.x - from.x);
+  const dy = Math.abs(to.y - from.y);
+  const d = (dx + dy) * f;
+  if (d <= dx) return { x: from.x + Math.sign(to.x - from.x) * d, y: from.y };
+  return { x: to.x, y: from.y + Math.sign(to.y - from.y) * (d - dx) };
+}
+
+export function drawCity(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea) {
+  if (score.config.video.city === 'blueprint') drawBlueprintCity(ctx, score, t, st, a);
+  else drawNeonCity(ctx, score, t, st, a);
+}
+
+function octRange(score: Score) {
+  const { lo, span } = skyRange(score);
+  const o0 = Math.floor((lo + 2) / 12) - 1;
+  const o1 = Math.max(o0 + 2, Math.floor((lo + span - 2) / 12) - 1);
+  return { o0, o1, floors: o1 - o0 + 1 };
+}
+
+function drawNeonCity(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea) {
+  const { u } = a;
+  const W = a.width;
+  const H = ctx.canvas.height;
+  const drum = drumPulse(score, t);
+  const { o0, floors } = octRange(score);
+  const margin = W * 0.05;
+  const tw = (W - 2 * margin) / 12;
+  const ground = a.top + (a.bottom - a.top) * 0.74;
+  const floorH = Math.min(tw * 1.1, (ground - a.top - 40 * u) / (floors + 2.6));
+  const extra = (pc: number) => Math.round(hash(pc, 7) * 2.4);
+  const towerX = (pc: number) => margin + pc * tw;
+  const win = (c: Cell) => ({ x: towerX(c.pc) + tw / 2, y: ground - (c.oct - o0 + 0.5) * floorH });
+  const { lit, cars } = cityLights(score, t);
+  const dark = luminanceOf(st.background) < 0.45;
+  const body = dark ? 'rgba(8,10,24,0.92)' : alpha(st.ink, 0.88);
+  const amber = (b: number) => `rgba(255,190,90,${b})`;
+
+  ctx.save();
+  // Sky glow over the city, breathing with the kick.
+  const glow = ctx.createLinearGradient(0, a.top, 0, ground);
+  glow.addColorStop(0, 'rgba(0,0,0,0)');
+  glow.addColorStop(1, dark ? `rgba(90,70,160,${0.18 + 0.25 * drum.kick})` : `rgba(255,170,90,${0.12 + 0.2 * drum.kick})`);
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, a.top, W, ground - a.top);
+  if (dark) {
+    for (let i = 0; i < 80; i++) {
+      const tw2 = 0.15 + 0.45 * hash(i, 3) * (0.7 + 0.3 * Math.sin(t * 1.3 + i) + 0.4 * drum.hat);
+      ctx.fillStyle = `rgba(255,255,255,${Math.max(0, tw2)})`;
+      ctx.fillRect(hash(i, 1) * W, a.top + hash(i, 2) * (ground - a.top) * 0.55, 1.4 * u, 1.4 * u);
+    }
+  }
+  const city = (reflection: boolean) => {
+    for (let pc = 0; pc < 12; pc++) {
+      const x = towerX(pc) + tw * 0.08;
+      const w = tw * 0.84;
+      const n = floors + extra(pc);
+      const top = ground - n * floorH;
+      ctx.fillStyle = body;
+      ctx.fillRect(x, top, w, ground - top);
+      ctx.strokeStyle = dark ? 'rgba(120,140,255,0.16)' : alpha(st.background, 0.15);
+      ctx.lineWidth = Math.max(1, u);
+      ctx.strokeRect(x + 0.5, top + 0.5, w - 1, ground - top);
+      if (!reflection) {
+        // Antennas, flashing with the snare.
+        const ah = (14 + 18 * hash(pc, 1)) * u;
+        ctx.strokeStyle = dark ? 'rgba(160,170,255,0.3)' : alpha(st.ink, 0.5);
+        ctx.beginPath();
+        ctx.moveTo(x + w / 2, top);
+        ctx.lineTo(x + w / 2, top - ah);
+        ctx.stroke();
+        ctx.fillStyle = `rgba(255,77,109,${0.35 + 0.65 * Math.max(drum.snare, (Math.sin(t * 2 + pc) + 1) / 4)})`;
+        ctx.beginPath();
+        ctx.arc(x + w / 2, top - ah, 2.2 * u, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      for (let f = 0; f < n; f++) {
+        const y = ground - (f + 0.5) * floorH;
+        const b = lit.get(pc + 12 * (o0 + f)) ?? 0;
+        const wx = x + w * 0.22;
+        const ww = w * 0.56;
+        const wh = floorH * 0.42;
+        ctx.fillStyle = dark ? 'rgba(70,80,140,0.18)' : alpha(st.background, 0.12);
+        ctx.fillRect(wx, y - wh / 2, ww, wh);
+        if (b > 0.01) {
+          if (!reflection) {
+            ctx.save();
+            ctx.shadowColor = '#ffb347';
+            ctx.shadowBlur = 24 * u * b;
+            ctx.fillStyle = amber(b);
+            ctx.fillRect(wx, y - wh / 2, ww, wh);
+            ctx.restore();
+          } else {
+            ctx.fillStyle = amber(b);
+            ctx.fillRect(wx, y - wh / 2, ww, wh);
+          }
+        }
+      }
+    }
+    // Moving voices: a light along the skybridge, then the lift.
+    for (const car of cars) {
+      const p0 = win(car.from);
+      const p1 = win(car.to);
+      const bridgeY = p0.y + floorH * 0.32;
+      const q0 = { x: p0.x, y: bridgeY };
+      const q1 = { x: p1.x, y: p1.y + floorH * 0.32 };
+      ctx.strokeStyle = amber(0.3);
+      ctx.lineWidth = Math.max(1.5, 2 * u);
+      ctx.beginPath();
+      ctx.moveTo(q0.x, q0.y);
+      ctx.lineTo(q1.x, q0.y);
+      ctx.lineTo(q1.x, q1.y);
+      ctx.stroke();
+      const c = carPos(q0, q1, car.f);
+      ctx.save();
+      if (!reflection) {
+        ctx.shadowColor = '#ffd27a';
+        ctx.shadowBlur = 26 * u;
+      }
+      ctx.fillStyle = '#ffe2a8';
+      ctx.fillRect(c.x - 8 * u, c.y - 5 * u, 16 * u, 10 * u);
+      ctx.restore();
+    }
+  };
+  city(false);
+  // The reflection in the water, then the water itself.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, ground + 6 * u, W, H - ground);
+  ctx.clip();
+  ctx.translate(0, 2 * ground + 6 * u);
+  ctx.scale(1, -1);
+  ctx.globalAlpha = 0.26;
+  city(true);
+  ctx.restore();
+  const water = ctx.createLinearGradient(0, ground + 6 * u, 0, a.bottom + 40 * u);
+  water.addColorStop(0, alpha(st.background, 0.15));
+  water.addColorStop(1, alpha(st.background, 0.96));
+  ctx.fillStyle = water;
+  ctx.fillRect(0, ground + 6 * u, W, a.bottom + 40 * u - ground);
+  // Ripples catching the light (and the kick).
+  for (let i = 0; i < 40; i++) {
+    ctx.fillStyle = amber(0.05 + 0.08 * drum.kick);
+    const y = ground + 14 * u + hash(i, 7) * (a.bottom - ground);
+    ctx.fillRect(((hash(i, 5) * W + t * 12 * (0.5 + hash(i, 9))) % (W + 60)) - 30, y, (24 + 40 * hash(i, 4)) * u, Math.max(1, u));
+  }
+  ctx.restore();
+}
+
+function drawBlueprintCity(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea) {
+  const { u } = a;
+  const W = a.width;
+  const drum = drumPulse(score, t);
+  const { o0, floors } = octRange(score);
+  const extra = (pc: number) => Math.round(hash(pc, 7) * 2);
+  const { lit, cars } = cityLights(score, t);
+  const cell = W / 21;
+  const FH = Math.min(cell * 1.7, (a.bottom - a.top - cell * 6) / (floors + 2.5));
+  const baseY = a.bottom - cell * 3.2;
+  const iso = (x: number, y: number, z: number) => ({ x: W / 2 + (x - y) * 0.866 * cell, y: baseY + (x + y) * 0.5 * cell - z });
+  const gxOf = (pc: number) => pc * 1.25 - 7;
+  const gyOf = (pc: number) => -pc * 0.15;
+  const line = st.text;
+  const glowC = st.accent;
+
+  ctx.save();
+  // The drawing grid, brightening with the kick.
+  ctx.strokeStyle = alpha(line, 0.045 + 0.05 * drum.kick);
+  ctx.lineWidth = Math.max(1, u * 0.8);
+  ctx.beginPath();
+  for (let x = 0; x < W; x += cell * 0.8) {
+    ctx.moveTo(x, a.top);
+    ctx.lineTo(x, a.bottom);
+  }
+  for (let y = a.top; y < a.bottom; y += cell * 0.8) {
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+  }
+  ctx.stroke();
+  const quad = (pts: { x: number; y: number }[]) => {
+    ctx.beginPath();
+    pts.forEach((q, j) => (j ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+    ctx.closePath();
+  };
+  const winQuad = (pc: number, f: number) => {
+    const gx = gxOf(pc);
+    const gy = gyOf(pc) + 1;
+    const z0 = f * FH + FH * 0.27;
+    const z1 = f * FH + FH * 0.73;
+    return [iso(gx + 0.25, gy, z0), iso(gx + 0.75, gy, z0), iso(gx + 0.75, gy, z1), iso(gx + 0.25, gy, z1)];
+  };
+  const edge = alpha(line, 0.5 + 0.3 * drum.snare);
+  for (let pc = 0; pc < 12; pc++) {
+    const gx = gxOf(pc);
+    const gy = gyOf(pc);
+    const n = floors + extra(pc);
+    const h = n * FH;
+    const p = (dx: number, dy: number, z: number) => iso(gx + dx, gy + dy, z);
+    const faces = [
+      [p(0, 1, 0), p(1, 1, 0), p(1, 1, h), p(0, 1, h)],
+      [p(1, 0, 0), p(1, 1, 0), p(1, 1, h), p(1, 0, h)],
+      [p(0, 0, h), p(1, 0, h), p(1, 1, h), p(0, 1, h)],
+    ];
+    faces.forEach((f, i) => {
+      quad(f);
+      ctx.fillStyle = alpha(st.background, 0.85);
+      ctx.fill();
+      ctx.fillStyle = alpha(line, [0.03, 0.06, 0.09][i]);
+      ctx.fill();
+      ctx.strokeStyle = edge;
+      ctx.lineWidth = Math.max(1, u);
+      ctx.stroke();
+    });
+    for (let f = 0; f < n; f++) {
+      const q0 = iso(gx, gy + 1, f * FH);
+      const q1 = iso(gx + 1, gy + 1, f * FH);
+      ctx.strokeStyle = alpha(line, 0.15);
+      ctx.beginPath();
+      ctx.moveTo(q0.x, q0.y);
+      ctx.lineTo(q1.x, q1.y);
+      ctx.stroke();
+      const b = lit.get(pc + 12 * (o0 + f)) ?? 0;
+      quad(winQuad(pc, f));
+      if (b > 0.01) {
+        ctx.save();
+        ctx.shadowColor = glowC;
+        ctx.shadowBlur = 16 * u * b;
+        ctx.fillStyle = alpha(glowC, b);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.strokeStyle = alpha(line, 0.22);
+        ctx.stroke();
+      }
+    }
+  }
+  // Moving voices: a dashed route along the front of the towers, with a bright car.
+  for (const car of cars) {
+    const centre = (c: Cell) => {
+      const w = winQuad(c.pc, c.oct - o0);
+      return { x: (w[0].x + w[2].x) / 2, y: (w[0].y + w[2].y) / 2 };
+    };
+    const p0 = centre(car.from);
+    const p1 = centre(car.to);
+    ctx.setLineDash([6 * u, 5 * u]);
+    ctx.strokeStyle = alpha(glowC, 0.8);
+    ctx.lineWidth = Math.max(1, 1.4 * u);
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(p1.x, p1.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const m = { x: p0.x + (p1.x - p0.x) * car.f, y: p0.y + (p1.y - p0.y) * car.f };
+    ctx.save();
+    ctx.shadowColor = st.background === '#ffffff' ? glowC : '#ffffff';
+    ctx.shadowBlur = 14 * u;
+    ctx.fillStyle = st.ink;
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, 4.5 * u, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+/** 0 (black) … 1 (white) for a hex colour; mid-grey for anything else. */
+function luminanceOf(c: string): number {
+  if (!/^#[0-9a-f]{6}$/i.test(c)) return 0.5;
+  const n = parseInt(c.slice(1), 16);
+  return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+}
