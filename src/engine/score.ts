@@ -2,7 +2,7 @@ import { resolveConfig, type ChordDriftConfig, type DeepPartial } from './config
 import { ProgressionWalker, type ChordSpec } from './progression';
 import { MelodyGenerator, type MelodyNote } from './melody';
 import { parseProgression, type ProgressionToken } from './progression-text';
-import { chordDurations, parseRhythm, strikeOnsets } from './rhythm';
+import { chordDurations, parseRhythm, randomizeSteps, strikeOnsets } from './rhythm';
 import { DRUM_VOICES, parseDrumRows, type DrumRows, type DrumVoice } from './drums';
 import { formatSeed, parseSeed, randInt, stream, uniform, type Rng } from './rng';
 import { DEGREE_OFFSETS, SCALES, mod12, parseNote, parsePc, pcName, scaleSteps, spellNote, spellPc, tonicName } from './theory';
@@ -184,7 +184,7 @@ class ScoreBuilder {
     const parsed = parseProgression(cfg.progression);
     const beat = 60 / cfg.rhythm.tempo;
     const chordRhythm = parseRhythm(cfg.rhythm.chords);
-    const durs = chordDurations(chordRhythm.steps);
+    const durs = chordDurations(randomizeSteps(chordRhythm.steps, stream(seed, 'chord-lengths')));
     this.durations = durs.length ? durs.map((b) => b * beat) : null;
     const melodyRhythm = parseRhythm(cfg.melody.rhythm);
     const gridStart = cfg.timing.intro + cfg.timing.bloom;
@@ -392,9 +392,10 @@ class ScoreBuilder {
     const ref = k === 0 ? spreadTemplate(V, score.startNote, rules) : reBloom ? spreadTemplate(V, this.current[0], rules) : this.current;
     const cost = (c: { root: number; intervals: number[] }) => {
       const v = voiceChord(c, ref, rules, null);
-      // Changes where almost nothing moves read as repeats; nudge the choice away from them.
+      // A change where nothing (or a single voice) moves reads as a repeat; nudge away from those,
+      // but let two- and three-voice changes through: common tones are what makes them smooth.
       const moved = v.reduce((n, x, i) => n + (x !== ref[i] ? 1 : 0), 0);
-      return voiceLeadingCost(ref, v, rules) + (moved <= 1 ? 6 : moved === 2 ? 2.5 : 0);
+      return voiceLeadingCost(ref, v, rules) + (moved === 0 ? 6 : moved === 1 ? 3 : 0);
     };
     let spec: ChordSpec;
     let notes: number[];

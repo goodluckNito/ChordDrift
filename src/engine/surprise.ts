@@ -114,7 +114,8 @@ export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = '
     motion: { transition },
     rhythm: {
       tempo: (tempo = Math.round(between(r, 56, 104, 1))),
-      chords: r() < 0.45 ? '' : pick(r, RHYTHM_PRESETS).chords,
+      // (The original list, so word songs keep their rhythms: '?' joined the presets later.)
+      chords: r() < 0.45 ? '' : pick(r, RHYTHM_PRESETS.filter((p) => p.chords !== '?')).chords,
       pluck: pick(r, STRIKE_PRESETS).pattern,
     },
     melody: { enabled: r() < 0.35, density: between(r, 0.15, 0.7), level: between(r, 0.3, 0.6) },

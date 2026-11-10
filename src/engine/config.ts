@@ -236,7 +236,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   timing: {
     intro: 1.0,
     bloom: 2.7,
-    hold: 2.0,
+    hold: 3.5,
     holdJitter: 0.3,
     glide: 0.8,
     stagger: 0.25,
@@ -249,7 +249,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   },
   voicing: { pedalBonus: 1.5, bassWeight: 0.3, movePenalty: 2, mudFloor: 48, minGap: 3, maxCopies: 3, candidates: 24, inversion: 0 },
   motion: { easing: 'smootherstep', transition: 'glide' },
-  rhythm: { tempo: 76, chords: '', pluck: 'e' },
+  rhythm: { tempo: 54, chords: '?', pluck: 'e' },
   melody: { enabled: false, rhythm: '', density: 0.5, register: 'high', fill: 'continuous', glide: 0.09, wave: 'triangle', level: 0.6 },
   audio: { wave: 'warm', detuneCents: 3, reverb: 0.35, tilt: 0.3, lowpass: 10000, width: 0.12, gain: 0.9, sub: 0.4, warmth: 0, bass: 2, swell: 'off', swellDepth: 0.65, envelope: 'sustain', attack: 0.008, decay: 0.45, sustain: 0.15 },
   theme: { ...THEME_PRESETS.paper },
@@ -317,7 +317,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   for (const k of ['drums', 'chords', 'melody'] as const) c.chop[k] = Boolean(c.chop[k]);
   c.endless = Boolean(c.endless) && !c.song.enabled;
   c.loop = Boolean(c.loop) && !c.endless;
-  c.rhythm.tempo = Math.max(20, Math.min(320, Number(c.rhythm.tempo) || 76));
+  c.rhythm.tempo = Math.max(20, Math.min(320, Number(c.rhythm.tempo) || 54));
   c.rhythm.chords = String(c.rhythm.chords ?? '');
   c.rhythm.pluck = String(c.rhythm.pluck ?? '');
   c.melody.enabled = Boolean(c.melody.enabled);

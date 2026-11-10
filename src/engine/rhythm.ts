@@ -9,12 +9,16 @@
  *   h+e                tie: one note lasting a half plus an eighth
  *   rq  r8  -q         rests (for chord rhythms a rest just extends the chord)
  *   e*4   (q e e)*2    repeat a note or a group
+ *   ?                  a random length decided by the seed (chord rhythms): whole, half or quarter,
+ *                      mostly half; a rhythm of just "?" gives every chord its own random length
  *   |  ,               bar lines and commas are ignored
  */
 
 export interface RhythmStep {
   beats: number;
   rest: boolean;
+  /** "?": the length is drawn by the seed (see randomizeSteps). */
+  random?: boolean;
 }
 
 export interface RhythmParse {
@@ -87,6 +91,11 @@ export function parseRhythm(text: string): RhythmParse {
         continue;
       }
       i++;
+      if (/^\?(\*\d+)?$/.test(tok)) {
+        const times = tok.includes('*') ? Math.min(64, Number(tok.split('*')[1])) : 1;
+        for (let k = 0; k < times && out.length < MAX_STEPS; k++) out.push({ beats: 2, rest: false, random: true });
+        continue;
+      }
       const m = /^(.+?)(?:\*(\d+))?$/.exec(tok)!;
       const note = parseNote(m[1]);
       if (!note) {
@@ -104,6 +113,23 @@ export function parseRhythm(text: string): RhythmParse {
 }
 
 /**
+ * Decide every "?" step with the seed: whole (35%), half (50%) or quarter (15%). A pattern with
+ * random steps is unrolled to at least `min` steps first, so each chord gets its own draw.
+ */
+export function randomizeSteps(steps: RhythmStep[], rng: () => number, min = 64): RhythmStep[] {
+  if (!steps.some((s) => s.random)) return steps;
+  const out: RhythmStep[] = [];
+  while (out.length < min) out.push(...steps.map((s) => ({ ...s })));
+  for (const s of out) {
+    if (!s.random) continue;
+    const x = rng();
+    s.beats = x < 0.35 ? 4 : x < 0.85 ? 2 : 1;
+    s.random = false;
+  }
+  return out;
+}
+
+/**
  * Durations for chord changes: rests and ties just lengthen the current chord.
  * Returns beats per chord.
  */
@@ -118,6 +144,7 @@ export function chordDurations(steps: RhythmStep[]): number[] {
 
 /** Common patterns offered in the UI. Values are notation strings. */
 export const RHYTHM_PRESETS: { name: string; chords: string }[] = [
+  { name: 'Random (whole, half, quarter; mostly half)', chords: '?' },
   { name: 'Free (seconds, no grid)', chords: '' },
   { name: 'Whole notes', chords: 'w' },
   { name: 'Half notes', chords: 'h' },

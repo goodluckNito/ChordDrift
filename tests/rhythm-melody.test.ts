@@ -38,8 +38,13 @@ describe('chord rhythm', () => {
     // Glides fit inside their slots, so moves never overlap.
     for (const m of s.moves) for (let i = 1; i < m.length; i++) expect(m[i].t0).toBeGreaterThanOrEqual(m[i - 1].t0 + m[i - 1].d - 1e-9);
   });
-  it('keeps the default free timing when empty', () => {
-    expect(generateScore({ seed: 2 }).chords.map((c) => c.t)).toEqual(generateScore({ seed: 2, rhythm: { chords: '' } }).chords.map((c) => c.t));
+  it('defaults to random beat-synced lengths (whole, half, quarter); empty is free timing', () => {
+    const s = generateScore({ seed: 2 });
+    const lengths = s.chords.slice(1, -1).map((c, i) => Math.round(((s.chords[i + 2].t - c.t) / s.beat) * 1000) / 1000);
+    for (const b of lengths) expect([1, 2, 4]).toContain(b);
+    expect(new Set(lengths).size).toBeGreaterThan(1);
+    const free = generateScore({ seed: 2, rhythm: { chords: '' } });
+    expect(free.chords.map((c) => c.t)).not.toEqual(s.chords.map((c) => c.t));
   });
 });
 

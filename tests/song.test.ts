@@ -67,7 +67,7 @@ describe('song mode', () => {
   });
 
   it('makes each part last its bars, one chord a bar by default', () => {
-    const s = generateScore(cfg('A4 > B!2 > A1', { rhythm: { tempo: 120 } }));
+    const s = generateScore(cfg('A4 > B!2 > A1', { rhythm: { tempo: 120, chords: '' } }));
     const bar = 2;
     expect((s.sections[1].t - s.gridStart) / bar).toBeCloseTo(4);
     expect((s.sections[2].t - s.gridStart) / bar).toBeCloseTo(6);

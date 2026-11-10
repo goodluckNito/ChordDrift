@@ -64,7 +64,7 @@ describe('swells', () => {
 });
 
 describe('release & swell-in transitions', () => {
-  const cfg = { seed: 2, motion: { transition: 'swell' as const }, timing: { swellIn: 1.5, release: 2.5 } };
+  const cfg = { seed: 2, motion: { transition: 'swell' as const }, rhythm: { chords: '' }, timing: { swellIn: 1.5, release: 2.5 } };
 
   it('picks the same chords and voicings as glide mode', () => {
     const glide = generateScore({ seed: 2 });
