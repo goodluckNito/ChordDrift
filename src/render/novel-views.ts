@@ -9,6 +9,7 @@
 import { levelAt, pitchAt } from '../engine/motion';
 import type { Score } from '../engine/score';
 import { mod12 } from '../engine/theory';
+import { SILHOUETTES } from './silhouettes';
 import { alpha, chordAt, drumPulse, nameOf, skyRange, type ViewArea, type ViewStyle } from './harmony-views';
 
 /** A stable pseudo-random number in [0, 1) from a few integers. */
@@ -360,106 +361,155 @@ type Room = (typeof ROOMS)[number];
 /** How each room's light differs from the theme's lights colour: [brightness, extra blue]. */
 const ROOM_LIGHT: Record<Room, [number, number]> = { bedroom: [0.72, 0], bathroom: [1, 0.35], office: [0.9, 0.2], living: [0.85, 0], kitchen: [1.05, 0.05] };
 
+const silPaths = new Map<string, Path2D>();
+const silPath = (n: string) => {
+  let p = silPaths.get(n);
+  if (!p) silPaths.set(n, (p = new Path2D(SILHOUETTES[n].d)));
+  return p;
+};
+/** Where a silhouette was put: its icon grid's origin and scale, and its outline in the window. */
+interface Placed {
+  ox: number;
+  oy: number;
+  k: number;
+  left: number;
+  top: number;
+  right: number;
+}
+/** Lit bands of lamp silhouettes (icon units, y0..y1): the shade glows, the stand stays dark. */
+const LIT: Record<string, [number, number]> = { lamp: [2, 13], 'floor-lamp': [2, 9], 'floor-lamp-torchiere': [2, 8], lamps: [2, 12], 'ceiling-light': [11, 20] };
+/** Screens (icon units x0, y0, x1, y1): a flickering glow behind the icon shows through its screen. */
+const SCREEN: Record<string, [number, number, number, number]> = {
+  television: [3, 5, 21, 16],
+  'television-classic': [4, 9, 17, 19],
+  monitor: [3, 4, 21, 15],
+  'desktop-classic': [4, 4, 18, 12],
+};
+
 /**
- * Silhouettes of a room inside a lit window (x, y, w, h): a bedroom (bed, nightstand lamp,
- * picture), a bathroom (tub, shower curtain, mirror), an office (desk, glowing monitor, someone
- * working), a living room (sofa, TV glow, floor lamp, someone watching) or a kitchen (counter,
- * cupboards, fridge, pendant lamp). `glow` is the screen colour for monitors and TVs.
+ * A room seen through a lit window: two or three pieces of furniture standing on the floor (a few
+ * have their own light: lamp shades glow, screens flicker), now and then a pet, and in some rooms
+ * someone wandering about. Which pieces, and where, is the window's own habit (from its seed).
  */
 function drawRoom(c: CanvasRenderingContext2D, room: Room, x: number, y: number, w: number, h: number, t: number, seed: number) {
   const ink = 'rgba(34,16,8,0.86)';
-  const X = (f: number) => x + f * w;
-  const Y = (f: number) => y + f * h;
+  const FLOOR = 0.97;
+  const S = 1.2; // furniture scale: big enough to read in a small window
+  const r = (i: number) => hash(seed, i, 77);
+  const pick = <T,>(i: number, xs: readonly T[]) => xs[Math.floor(r(i) * xs.length)];
   const flip = seed % 2 === 1; // mirror half the rooms so neighbours differ
   c.save();
   if (flip) {
     c.translate(x * 2 + w, 0);
     c.scale(-1, 1);
   }
-  c.fillStyle = ink;
-  c.beginPath();
-  switch (room) {
-    case 'bedroom':
-      c.rect(X(0.08), Y(0.72), w * 0.62, h * 0.18); // bed
-      c.rect(X(0.08), Y(0.55), w * 0.06, h * 0.4); // headboard
-      c.ellipse(X(0.22), Y(0.69), w * 0.08, h * 0.05, 0, 0, Math.PI * 2); // pillow
-      c.rect(X(0.76), Y(0.74), w * 0.14, h * 0.26); // nightstand
-      c.rect(X(0.82), Y(0.56), w * 0.025, h * 0.18); // lamp stem
-      c.rect(X(0.34), Y(0.18), w * 0.24, h * 0.18); // picture frame
-      c.fill();
-      // the lamp shade, lit
-      c.fillStyle = 'rgba(255,240,200,0.9)';
+  /** Stand silhouette n centred at cx (fraction of the width), its bottom at `bottom`, `height` tall (fractions of the height). */
+  const place = (n: string, cx: number, bottom: number, height: number, fill = ink, glow?: string): Placed => {
+    const s = SILHOUETTES[n];
+    const [x0, y0, x1, y1] = s.box;
+    const k = (height * S * h) / (y1 - y0);
+    const pw = (x1 - x0) * k;
+    const left = x + cx * w - pw / 2;
+    const top = y + bottom * h - (y1 - y0) * k;
+    const P = { ox: left - x0 * k, oy: top - y0 * k, k, left, top, right: left + pw };
+    c.save();
+    c.translate(P.ox, P.oy);
+    c.scale(k, k);
+    const scr = SCREEN[n];
+    if (scr && glow) {
+      c.fillStyle = glow;
+      c.fillRect(scr[0], scr[1], scr[2] - scr[0], scr[3] - scr[1]);
+    }
+    c.fillStyle = fill;
+    c.fill(silPath(n));
+    const band = LIT[n];
+    if (band) {
       c.beginPath();
-      c.moveTo(X(0.76), Y(0.56));
-      c.lineTo(X(0.93), Y(0.56));
-      c.lineTo(X(0.89), Y(0.44));
-      c.lineTo(X(0.8), Y(0.44));
-      c.fill();
+      c.rect(-1, band[0], 26, band[1] - band[0]);
+      c.clip();
+      c.fillStyle = 'rgba(255,238,196,0.95)';
+      c.fill(silPath(n));
+    }
+    c.restore();
+    return P;
+  };
+  const screenGlow = (rate: number) => `rgba(140,185,255,${(0.65 + 0.35 * Math.abs(Math.sin(t * rate + seed * 1.7))).toFixed(3)})`;
+  /** A plain block (nightstand, TV cabinet) standing on the floor; returns its top (fraction). */
+  const block = (cx: number, bw: number, bh: number) => {
+    c.fillStyle = ink;
+    c.fillRect(x + (cx - bw / 2) * w, y + (FLOOR - bh * S) * h, bw * w, bh * S * h + h * 0.03);
+    return FLOOR - bh * S;
+  };
+  let walker = r(1) < 0.3;
+  switch (room) {
+    case 'bedroom': {
+      place(pick(2, ['bed', 'bed-double', 'bed', 'bed-king']), 0.36, FLOOR, 0.3);
+      if (r(3) < 0.2) place('teddy-bear', 0.2, FLOOR - 0.17 * S, 0.12);
+      const side = pick(4, ['nightstand', 'dresser', 'wardrobe', 'floor-lamp'] as const);
+      if (side === 'nightstand') place('lamp', 0.86, block(0.86, 0.18, 0.16), 0.2);
+      else if (side === 'dresser') {
+        place('dresser', 0.84, FLOOR, 0.3);
+        if (r(5) < 0.5) place('lamp', 0.84, FLOOR - 0.29 * S, 0.16);
+      } else if (side === 'wardrobe') place('wardrobe', 0.85, FLOOR, 0.6);
+      else place('floor-lamp', 0.87, FLOOR, 0.62);
       break;
-    case 'bathroom':
-      c.roundRect(X(0.1), Y(0.7), w * 0.56, h * 0.18, h * 0.06); // tub
-      c.rect(X(0.14), Y(0.88), w * 0.04, h * 0.08);
-      c.rect(X(0.58), Y(0.88), w * 0.04, h * 0.08);
-      c.rect(X(0.08), Y(0.12), w * 0.6, h * 0.025); // curtain rail
-      c.moveTo(X(0.08), Y(0.14));
-      c.lineTo(X(0.26), Y(0.14));
-      c.quadraticCurveTo(X(0.2), Y(0.45), X(0.24), Y(0.7));
-      c.lineTo(X(0.08), Y(0.7));
-      c.rect(X(0.78), Y(0.62), w * 0.14, h * 0.38); // sink cabinet
-      c.fill();
-      c.fillStyle = 'rgba(220,240,255,0.55)'; // mirror
-      c.fillRect(X(0.77), Y(0.24), w * 0.16, h * 0.26);
+    }
+    case 'bathroom': {
+      if (r(2) < 0.6) place('bathtub', 0.36, FLOOR, 0.38);
+      else place('shower', 0.3, FLOOR, 0.62);
+      place(r(3) < 0.7 ? 'toilet' : 'washing-machine', 0.8, FLOOR, r(3) < 0.7 ? 0.3 : 0.36);
+      if (r(4) < 0.6) place('mirror', 0.8, 0.44, 0.3, 'rgba(220,240,255,0.55)');
+      walker = false;
       break;
+    }
     case 'office': {
-      c.rect(X(0.1), Y(0.66), w * 0.75, h * 0.05); // desk
-      c.rect(X(0.14), Y(0.71), w * 0.04, h * 0.29);
-      c.rect(X(0.77), Y(0.71), w * 0.04, h * 0.29);
-      c.rect(X(0.42), Y(0.58), w * 0.04, h * 0.08); // monitor stand
-      c.arc(X(0.62), Y(0.46), Math.min(w, h) * 0.1, 0, Math.PI * 2); // someone working
-      c.roundRect(X(0.5), Y(0.56), w * 0.25, h * 0.3, w * 0.08);
-      c.rect(X(0.06), Y(0.1), w * 0.3, h * 0.03); // shelf
-      c.rect(X(0.08), Y(0.02), w * 0.05, h * 0.08);
-      c.rect(X(0.15), Y(0.04), w * 0.04, h * 0.06);
-      c.fill();
-      // the monitor's glow, flickering a little
-      const f = 0.75 + 0.25 * Math.sin(t * 3.1 + seed);
-      c.fillStyle = `rgba(150,200,255,${0.85 * f})`;
-      c.fillRect(X(0.28), Y(0.38), w * 0.32, h * 0.2);
+      const deskTop = FLOOR - 0.28 * S;
+      place('desk', 0.38, FLOOR, 0.28);
+      place(pick(2, ['monitor', 'desktop-classic']), 0.3, deskTop + 0.01, 0.2, ink, screenGlow(3.1));
+      if (r(3) < 0.4) place('desk-lamp', 0.6, deskTop + 0.01, 0.18);
+      if (r(4) < 0.55) place('chair-rolling', 0.72, FLOOR, 0.34);
+      else place('bookshelf', 0.84, FLOOR, 0.5);
       break;
     }
     case 'living': {
-      c.roundRect(X(0.06), Y(0.7), w * 0.5, h * 0.2, h * 0.05); // sofa
-      c.roundRect(X(0.04), Y(0.62), w * 0.08, h * 0.32, h * 0.03);
-      c.roundRect(X(0.5), Y(0.62), w * 0.08, h * 0.32, h * 0.03);
-      c.arc(X(0.3), Y(0.6), Math.min(w, h) * 0.09, 0, Math.PI * 2); // someone watching
-      c.rect(X(0.68), Y(0.78), w * 0.26, h * 0.22); // TV stand
-      c.rect(X(0.92), Y(0.3), w * 0.025, h * 0.6); // floor lamp
-      c.fill();
-      const f = 0.6 + 0.4 * Math.abs(Math.sin(t * 2.3 + seed * 1.7));
-      c.fillStyle = `rgba(140,180,255,${0.9 * f})`; // TV
-      c.fillRect(X(0.66), Y(0.5), w * 0.3, h * 0.24);
-      c.fillStyle = 'rgba(255,235,190,0.85)';
-      c.beginPath();
-      c.arc(X(0.93), Y(0.28), Math.min(w, h) * 0.07, Math.PI, 0);
-      c.fill();
+      if (r(2) < 0.65) place('sofa', 0.32, FLOOR, 0.3);
+      else place('sofa-single', 0.25, FLOOR, 0.3);
+      const side = pick(3, ['tv', 'tv', 'floor-lamp', 'piano', 'fireplace', 'tree'] as const);
+      if (side === 'tv') place(pick(4, ['television', 'television-classic']), 0.82, block(0.82, 0.28, 0.13), 0.24, ink, screenGlow(2.3));
+      else if (side === 'floor-lamp') place(pick(4, ['floor-lamp', 'floor-lamp-torchiere']), 0.86, FLOOR, 0.62);
+      else if (side === 'piano') place('piano', 0.8, FLOOR, 0.42);
+      else if (side === 'fireplace') place('fireplace', 0.8, FLOOR, 0.42);
+      else place('tree', 0.84, FLOOR, 0.42);
+      if (r(5) < 0.4) {
+        // A pet, pottering about a little.
+        const cat = r(6) < 0.6;
+        place(cat ? 'cat' : 'dog-side', 0.56 + 0.06 * Math.sin(t * 0.3 + seed), FLOOR, cat ? 0.16 : 0.2);
+      } else if (r(5) < 0.55) place('guitar-acoustic', 0.62, FLOOR, 0.3);
+      else if (r(5) < 0.7) place(pick(7, ['cactus', 'fishbowl']), 0.6, FLOOR, 0.18);
       break;
     }
     default: {
       // kitchen
-      c.rect(X(0.0), Y(0.68), w * 0.7, h * 0.32); // counter
-      c.rect(X(0.0), Y(0.08), w * 0.7, h * 0.22); // cupboards
-      c.rect(X(0.76), Y(0.2), w * 0.2, h * 0.8); // fridge
-      c.rect(X(0.36), Y(0.0), w * 0.015, h * 0.36); // pendant cord
-      c.rect(X(0.2), Y(0.6), w * 0.08, h * 0.08); // a pot
-      c.fill();
-      c.fillStyle = 'rgba(255,245,215,0.9)';
-      c.beginPath();
-      c.arc(X(0.365), Y(0.4), Math.min(w, h) * 0.07, Math.PI, 0);
-      c.fill();
-      c.fillStyle = 'rgba(255,255,255,0.18)'; // cupboard door lines
-      c.fillRect(X(0.23), Y(0.1), w * 0.01, h * 0.18);
-      c.fillRect(X(0.46), Y(0.1), w * 0.01, h * 0.18);
+      place('fridge', 0.84, FLOOR, 0.62);
+      const left = pick(2, ['stove', 'countertop', 'table-chair'] as const);
+      if (left === 'stove') {
+        place('stove', 0.32, FLOOR, 0.36);
+        if (r(3) < 0.6) place('pot-steam', 0.28, FLOOR - 0.35 * S, 0.14);
+      } else if (left === 'countertop') {
+        place('countertop', 0.32, FLOOR, 0.36);
+        if (r(3) < 0.6) place('coffee-maker', 0.24, FLOOR - 0.33 * S, 0.16);
+      } else place('table-chair', 0.32, FLOOR, 0.36);
+      if (r(4) < 0.6) {
+        c.fillStyle = ink;
+        c.fillRect(x + 0.45 * w - 0.5, y, Math.max(1, w * 0.012), h * 0.1);
+        place('ceiling-light', 0.45, 0.24, 0.14);
+      }
     }
+  }
+  if (walker) {
+    // Someone wandering about the room.
+    const cx = 0.2 + 0.6 * (0.5 + 0.5 * Math.sin(t * 0.12 + seed * 2.1));
+    place(pick(8, ['human-male', 'human-female', 'human-handsdown', 'human-greeting', 'human-male', 'human-female']), cx, FLOOR, 0.58);
   }
   c.restore();
 }
