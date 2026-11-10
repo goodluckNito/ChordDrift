@@ -634,3 +634,158 @@ export function drawMurmuration(ctx: CanvasRenderingContext2D, score: Score, t: 
   }
   ctx.restore();
 }
+
+// ---------------------------------------------------------------------------
+// Pendulum wave
+// ---------------------------------------------------------------------------
+
+/**
+ * The kinetic sculpture: a row of pendulums, one per voice. Each swings at its note's real pitch
+ * ratio (slowed right down: the lowest note of the piece takes about three seconds a swing), and
+ * hangs on a string whose length follows its pitch (higher notes shorter, as they would be). They
+ * start released together, so the opening unison swings as one; in-tune intervals keep falling
+ * back into step (a fifth lines up every second swing of the lower note), dissonant chords stay
+ * scrambled. A glide shortens or lengthens the string as the swing speeds up or slows; a kick
+ * pushes every pendulum a little higher for a moment.
+ */
+const BASE_HZ = 0.34;
+interface SwingTable {
+  dt: number;
+  /** Per voice: accumulated phase (radians) at k·dt. */
+  phase: Float64Array[];
+  n: number;
+}
+const swings = new WeakMap<Score, SwingTable>();
+const swingRate = (score: Score, v: number, time: number, lo: number) => 2 * Math.PI * BASE_HZ * Math.pow(2, (pitchAt(score, v, time) - lo) / 12);
+
+/** Each voice's phase at t: the integral of its (gliding) swing rate, cached on a fine grid. */
+function swingPhases(score: Score, t: number, lo: number): number[] {
+  const V = score.config.voices;
+  let tab = swings.get(score);
+  if (!tab) {
+    tab = { dt: 0.02, phase: Array.from({ length: V }, () => new Float64Array(1024)), n: 1 };
+    swings.set(score, tab);
+  }
+  const need = Math.max(1, Math.ceil(Math.max(0, t) / tab.dt) + 1);
+  if (need > tab.n) {
+    if (need > tab.phase[0].length) {
+      const size = Math.max(need + 1024, tab.phase[0].length * 2);
+      tab.phase = tab.phase.map((old) => {
+        const a = new Float64Array(size);
+        a.set(old);
+        return a;
+      });
+    }
+    for (let v = 0; v < V; v++) {
+      const ph = tab.phase[v];
+      for (let k = tab.n; k < need; k++) {
+        const t0 = (k - 1) * tab.dt;
+        // Trapezoid rule over each step.
+        ph[k] = ph[k - 1] + ((swingRate(score, v, t0, lo) + swingRate(score, v, t0 + tab.dt, lo)) / 2) * tab.dt;
+      }
+    }
+    tab.n = need;
+  }
+  const k = Math.max(0, Math.min(tab.n - 1, Math.floor(Math.max(0, t) / tab.dt)));
+  const rest = Math.max(0, t) - k * tab.dt;
+  return Array.from({ length: V }, (_, v) => tab!.phase[v][k] + swingRate(score, v, k * tab!.dt, lo) * rest);
+}
+
+export function drawPendulums(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea) {
+  const { u, tu } = a;
+  const W = a.width;
+  const V = score.config.voices;
+  const { lo, span } = skyRange(score);
+  const drum = drumPulse(score, t);
+  const railY = a.top + 34 * tu;
+  const Lmax = (a.bottom - railY) * 0.86;
+  const Lmin = Lmax * 0.32;
+  const left = W * 0.17;
+  const right = W * 0.83;
+  const gapX = V > 1 ? (right - left) / (V - 1) : 0;
+  const lengthOf = (p: number) => Lmax - Math.max(0, Math.min(1, (p - lo) / span)) * (Lmax - Lmin);
+  // Released from rest at the start, swinging up to ~15° (never out of the frame); louder voices
+  // swing wider, kicks push.
+  const amp = (v: number, time: number) => {
+    const rise = Math.min(1, Math.max(0, (time - score.gridStart * 0.3) / 1.5));
+    const fit = Math.min(Math.PI / 12, Math.asin(Math.min(1, (left * 0.85) / lengthOf(pitchAt(score, v, time)))) / 1.3);
+    return fit * rise * (0.55 + 0.45 * levelAt(score, v, time));
+  };
+  const push = 1 + 0.3 * drum.kick;
+  const bobAt = (v: number, time: number, phase: number) => {
+    const p = pitchAt(score, v, time);
+    const L = lengthOf(p);
+    const th = amp(v, time) * push * Math.cos(phase);
+    const px = left + v * gapX;
+    return { x: px + Math.sin(th) * L, y: railY + Math.cos(th) * L, px, p };
+  };
+
+  ctx.save();
+  // Trails: where each bob has swung over the last moment.
+  const TRAIL = 0.5;
+  const STEPS = 14;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const history = Array.from({ length: STEPS + 1 }, (_, i) => {
+    const time = t - TRAIL + (TRAIL * i) / STEPS;
+    const ph = swingPhases(score, time, lo);
+    return Array.from({ length: V }, (_, v) => bobAt(v, time, ph[v]));
+  });
+  for (let v = 0; v < V; v++) {
+    for (let i = 1; i <= STEPS; i++) {
+      ctx.strokeStyle = alpha(st.voiceColor(v), 0.04 + 0.3 * (i / STEPS) ** 2);
+      ctx.lineWidth = Math.max(1, 5 * u * st.lw * (i / STEPS));
+      ctx.beginPath();
+      ctx.moveTo(history[i - 1][v].x, history[i - 1][v].y);
+      ctx.lineTo(history[i][v].x, history[i][v].y);
+      ctx.stroke();
+    }
+  }
+  const bobs = history[STEPS];
+  // The wave: a line through the bobs. When they're in step it's a smooth snake; out of step, a zigzag.
+  ctx.strokeStyle = alpha(st.text, 0.22);
+  ctx.lineWidth = Math.max(1, 1.4 * u);
+  ctx.beginPath();
+  bobs.forEach((b, v) => (v ? ctx.lineTo(b.x, b.y) : ctx.moveTo(b.x, b.y)));
+  ctx.stroke();
+  // Strings and bobs.
+  for (let v = 0; v < V; v++) {
+    const b = bobs[v];
+    ctx.strokeStyle = alpha(st.ink, 0.5);
+    ctx.lineWidth = Math.max(1, 1.6 * u);
+    ctx.beginPath();
+    ctx.moveTo(b.px, railY);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    const r = (13 + 5 * levelAt(score, v, t) + 4 * drum.kick) * u * Math.max(0.8, st.lw);
+    const g = ctx.createRadialGradient(b.x - r * 0.35, b.y - r * 0.35, r * 0.1, b.x, b.y, r);
+    g.addColorStop(0, alpha(st.background, 0.9));
+    g.addColorStop(0.35, st.voiceColor(v));
+    g.addColorStop(1, st.voiceColor(v));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // The rail, with each pendulum's note above its pivot.
+  ctx.strokeStyle = alpha(st.ink, 0.7);
+  ctx.lineWidth = Math.max(2, 3 * u);
+  ctx.beginPath();
+  ctx.moveTo(left - gapX * 0.6, railY);
+  ctx.lineTo(right + gapX * 0.6, railY);
+  ctx.stroke();
+  ctx.font = `600 ${15 * tu}px ${st.font}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  const now = chordAt(score, t);
+  for (let v = 0; v < V; v++) {
+    const b = bobs[v];
+    ctx.fillStyle = alpha(st.ink, 0.8);
+    ctx.beginPath();
+    ctx.arc(b.px, railY, 3 * u, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = alpha(st.text, 0.75);
+    ctx.fillText(nameOf(score, mod12(Math.round(b.p)), now.c), b.px, railY - 8 * tu);
+  }
+  ctx.restore();
+}
