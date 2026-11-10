@@ -41,7 +41,7 @@ interface Sim extends Grid {
 const sims = new WeakMap<Score, Sim>();
 
 /** Ink colour for a (possibly gliding) note: hue round the circle of fifths, blending between neighbours. */
-function noteInk(p: number): [number, number, number] {
+export function noteInk(p: number): [number, number, number] {
   const r = Math.round(p);
   const pc = ((r % 12) + 12) % 12;
   const h = (((pc * 7) % 12) * 30 + 10) / 360;

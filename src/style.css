@@ -364,3 +364,17 @@ input[type='color'] { width: 100%; height: 30px; padding: 2px; cursor: pointer; 
 .swap-pick { flex: 1; text-align: left; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; padding: 6px 8px; }
 .swap-pick small { grid-column: 1 / -1; color: var(--muted); font-size: 11.5px; }
 .swap-undo { width: 100%; margin-top: 4px; font-size: 12.5px; }
+
+/* Settings: find box, section chips, collapsible sections. */
+.settings-tools { position: sticky; top: 0; z-index: 4; background: var(--panel); padding: 8px 0 10px; margin: 0 0 4px; border-bottom: 1px solid var(--line); }
+.settings-tools input[type='search'] { width: 100%; box-sizing: border-box; }
+.settings-nav { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.settings-nav button { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--field); color: var(--muted); cursor: pointer; }
+.settings-nav button:hover { color: var(--ink); border-color: var(--muted); }
+fieldset > legend { cursor: pointer; user-select: none; }
+fieldset > legend::after { content: ' ▾'; opacity: .6; }
+fieldset.collapsed > legend::after { content: ' ▸'; }
+fieldset.collapsed:not(.search-open) > :not(legend) { display: none !important; }
+fieldset.collapsed:not(.search-open) { padding-bottom: 4px; }
+.search-hidden { display: none !important; }
+fieldset { scroll-margin-top: 96px; }

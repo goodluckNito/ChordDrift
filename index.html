@@ -53,7 +53,7 @@
           <form id="words-form" class="words" autocomplete="off">
             <input id="words" type="text" placeholder="Type anything — get a whole song" aria-label="Make a song from words" />
             <button type="submit" title="Make a song from these words (the same words always make the same song)">Make</button>
-            <button type="button" id="surprise" title="Randomize everything: a song from a few random words">🎲</button>
+            <button type="button" id="surprise" title="Random song: a few random words make a whole new song (every setting)">🎲</button>
           </form>
           <label class="words-mood">Make
             <select id="mood">
@@ -64,9 +64,20 @@
           </label>
         </header>
 
+        <div class="settings-tools">
+          <input id="settings-search" type="search" placeholder="Find a setting…  ( / )" autocomplete="off" spellcheck="false" />
+          <nav id="settings-nav" class="settings-nav" aria-label="Jump to a section"></nav>
+        </div>
+
         <form id="controls" autocomplete="off">
           <fieldset>
             <legend>Key &amp; harmony</legend>
+            <label class="wide" title="The seed decides whatever you leave open: the chords, and the random parts of rhythm, drums and melody">Seed
+              <span class="row">
+                <input data-path="seed" class="mono" spellcheck="false" />
+                <button type="button" id="dice" title="New chords: roll a new seed, keeping every other setting (R)">🎲</button>
+              </span>
+            </label>
             <label>Tonic
               <select data-path="key" id="key"></select>
             </label>
@@ -188,13 +199,7 @@
           </fieldset>
 
           <fieldset>
-            <legend>Seed &amp; voices</legend>
-            <label class="wide">Seed
-              <span class="row">
-                <input data-path="seed" class="mono" spellcheck="false" />
-                <button type="button" id="dice" title="Random seed (R)">🎲</button>
-              </span>
-            </label>
+            <legend>Voices &amp; motion</legend>
             <label>Voices
               <input data-path="voices" type="number" min="2" max="32" />
             </label>

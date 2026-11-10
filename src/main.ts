@@ -243,6 +243,7 @@ function startApp() {
   let pendingPass: { next: Score; nextState: ChordDriftConfig } | null = null;
   const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
   const form = $<HTMLFormElement>('#controls');
+  setupSettingsTools();
   const canvas = $<HTMLCanvasElement>('#view');
   const ctx = canvas.getContext('2d')!;
   const playBtn = $<HTMLButtonElement>('#play');
@@ -1544,3 +1545,90 @@ function startApp() {
 
 // Boot last, so every module-level constant above is initialised.
 if (!new URLSearchParams(location.search).has('export')) startApp();
+
+/**
+ * Settings helpers: a find box that filters controls as you type (by label, tooltip or setting
+ * name), chips that jump to each section, and section titles that fold their section away
+ * (remembered on this device).
+ */
+function setupSettingsTools() {
+  const panel = document.querySelector('.panel');
+  const search = document.querySelector<HTMLInputElement>('#settings-search');
+  const nav = document.querySelector<HTMLElement>('#settings-nav');
+  if (!panel || !search || !nav) return;
+  const sets = [...panel.querySelectorAll<HTMLFieldSetElement>('fieldset')];
+  const KEY = 'chord-drift.collapsed';
+  let collapsed: string[] = [];
+  try {
+    collapsed = JSON.parse(localStorage.getItem(KEY) ?? '[]');
+  } catch {
+    /* ignore */
+  }
+  const nameOf = (fs: HTMLFieldSetElement) => fs.querySelector('legend')?.textContent?.trim() ?? '';
+  const save = () => {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(sets.filter((fs) => fs.classList.contains('collapsed')).map(nameOf)));
+    } catch {
+      /* ignore */
+    }
+  };
+  for (const fs of sets) {
+    const name = nameOf(fs);
+    if (!name) continue;
+    if (collapsed.includes(name)) fs.classList.add('collapsed');
+    fs.querySelector('legend')!.addEventListener('click', () => {
+      fs.classList.toggle('collapsed');
+      save();
+    });
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.textContent = name.replace(/ &.*| and .*/i, '');
+    chip.title = `Jump to ${name}`;
+    chip.addEventListener('click', () => {
+      fs.classList.remove('collapsed');
+      save();
+      fs.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    nav.append(chip);
+  }
+  // Everything a control can be found by: its text, tooltips, and the setting names inside it.
+  const words = (el: Element) =>
+    [el.textContent ?? '', el.getAttribute('title') ?? '', ...[...el.querySelectorAll('[title],[data-path],option')].map((x) => `${x.getAttribute('title') ?? ''} ${x.getAttribute('data-path') ?? ''}`)].join(' ').toLowerCase();
+  const filter = () => {
+    const q = search.value.trim().toLowerCase();
+    for (const fs of sets) {
+      const items = [...fs.children].filter((el) => el.tagName !== 'LEGEND');
+      if (!q) {
+        fs.classList.remove('search-hidden', 'search-open');
+        for (const el of items) el.classList.remove('search-hidden');
+        continue;
+      }
+      const whole = nameOf(fs).toLowerCase().includes(q);
+      let any = whole;
+      for (const el of items) {
+        const hit = whole || words(el).includes(q);
+        el.classList.toggle('search-hidden', !hit);
+        any ||= hit;
+      }
+      fs.classList.toggle('search-hidden', !any);
+      fs.classList.toggle('search-open', any);
+    }
+  };
+  search.addEventListener('input', filter);
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      search.value = '';
+      filter();
+      search.blur();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    const typing = e.target instanceof HTMLElement && (e.target.closest('input, textarea, select') || e.target.isContentEditable);
+    if (e.key === '/' && !typing) {
+      e.preventDefault();
+      search.focus();
+      search.select();
+    }
+  });
+}
+

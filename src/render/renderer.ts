@@ -8,6 +8,7 @@ import { mulberry32 } from '../engine/rng';
 import { drawChladni, drawConstellation, type ViewArea, type ViewStyle } from './harmony-views';
 import { drawCity, drawKaleidoscope, drawTornado } from './novel-views';
 import { drawInk } from './fluid-ink';
+import { drawInkGL } from './fluid-gl';
 
 /**
  * Pitch-versus-time plot with a moving camera. Everything is a pure function of
@@ -1541,7 +1542,10 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
     };
     const view = cfg.video.view;
     if (view === 'chladni') drawChladni(ctx, score, t, vs, area, lite);
-    else if (view === 'marbling') drawInk(ctx, score, t, vs, area, lite);
+    else if (view === 'marbling') {
+      // The GPU fluid where WebGL2 can render floats; the CPU one otherwise.
+      if (!drawInkGL(ctx, score, t, vs, area, lite)) drawInk(ctx, score, t, vs, area, lite);
+    }
     else if (view === 'tornado') drawTornado(ctx, score, t, vs, area, lite);
     else if (view === 'city') drawCity(ctx, score, t, vs, area);
     else if (view === 'kaleido') drawKaleidoscope(ctx, score, t, vs, area, lite);
