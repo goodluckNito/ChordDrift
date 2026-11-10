@@ -9,6 +9,7 @@ import { drawConstellation, type ViewArea, type ViewStyle } from './harmony-view
 import { drawCity, drawTornado } from './novel-views';
 import { drawInk } from './fluid-ink';
 import { drawInkGL } from './fluid-gl';
+import { harmonyCss, harmonyKeyAt, type HarmonyKey } from './harmony-color';
 
 /**
  * Pitch-versus-time plot with a moving camera. Everything is a pure function of
@@ -32,6 +33,8 @@ interface Style {
   dark: boolean;
   /** Line palette as colour stops, or null for the rainbow wheel. */
   stops: [number, number, number][] | null;
+  /** The key at this frame, for harmony colours (set per frame). */
+  harmony?: HarmonyKey;
 }
 
 
@@ -117,6 +120,7 @@ export function themeBackground(cfg: ChordDriftConfig): string {
 const hsl = (h: number, st: Style) => `hsl(${((h % 360) + 360) % 360} 72% ${st.dark ? 66 : 44}%)`;
 /** A colour per pitch class, ordered around the circle of fifths so related notes have related colours. */
 const pitchColor = (p: number, st: Style) => {
+  if (st.colorBy === 'harmony' && st.harmony) return harmonyCss(p, st.harmony);
   const step = mod12(Math.round(p) * 7);
   return st.stops ? stopColor(st.stops, step / 11) : hsl(step * 30, st);
 };
@@ -484,6 +488,7 @@ class Painter {
       case 'voice':
         return voiceColor(v, this.V, st);
       case 'pitch':
+      case 'harmony':
         return pitchColor(p, st);
       case 'register':
         if (!this.register) {
@@ -999,7 +1004,7 @@ function drawWaterfall(ctx: CanvasRenderingContext2D, score: Score, t: number, s
     if (style) ctx.strokeStyle = style;
     else {
       const g = ctx.createLinearGradient(b0.x, b0.y, b1.x + 0.01, b1.y);
-      for (let c = 0; c <= 8; c++) g.addColorStop(c / 8, st.colorBy === 'pitch' ? pitchColor(lo + ((hi - lo) * c) / 8, st) : registerColor(c / 8, st));
+      for (let c = 0; c <= 8; c++) g.addColorStop(c / 8, st.colorBy === 'pitch' || st.colorBy === 'harmony' ? pitchColor(lo + ((hi - lo) * c) / 8, st) : registerColor(c / 8, st));
       ctx.strokeStyle = g;
     }
     ctx.stroke(line);
@@ -1483,6 +1488,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   let tu = lay.tu; // text unit
 
   const st = styleOf(cfg);
+  st.harmony = harmonyKeyAt(score, t, st.dark);
   const th = cfg.theme;
 
   ctx.save();
@@ -1525,7 +1531,10 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       text: th.text,
       font: st.font,
       lw: st.lw,
-      pcColor: (pc) => (st.colorBy === 'none' ? st.ink : pitchColor(pc, st)),
+      pcColor: (pc) => (st.colorBy === 'none' ? st.ink : pitchColor(st.colorBy === 'harmony' ? pc + 60 : pc, st)),
+      // A note's colour for views that colour by note: the line colouring when it's by voice or
+      // note, otherwise the key's harmony colours.
+      noteColor: (p, v) => (st.colorBy === 'voice' ? voiceColor(v, cfg.voices, st) : st.colorBy === 'pitch' ? pitchColor(p, st) : harmonyCss(p, st.harmony!)),
       voiceColor: (v) => voiceColor(v, cfg.voices, st),
       background: th.background,
       lights: th.lights,
@@ -1642,7 +1651,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
         traceCrossfades(score, tFrom, tTo, xOf, yOf, u, painter);
       } else if (!hasDynamics(score) || z >= 1) {
         for (let v = 0; v < V; v++) {
-          if (st.colorBy === 'pitch') {
+          if (st.colorBy === 'pitch' || st.colorBy === 'harmony') {
             // Each held note in its own colour; glides blend between the two.
             for (const seg of voiceSegments(score, v, tFrom, tTo)) {
               let color: string | CanvasGradient = pitchColor(seg.p0, st);
@@ -1661,7 +1670,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
         // time — the history reads like hairpins, plucks like little strikes.
         const half = 1.6 * u * st.lw;
         for (let v = 0; v < V; v++) {
-          const segs = st.colorBy === 'pitch' ? voiceSegments(score, v, tFrom, tTo) : [{ a: tFrom, b: tTo, p0: pitchAt(score, v, tTo), p1: 0 }];
+          const segs = st.colorBy === 'pitch' || st.colorBy === 'harmony' ? voiceSegments(score, v, tFrom, tTo) : [{ a: tFrom, b: tTo, p0: pitchAt(score, v, tTo), p1: 0 }];
           for (const seg of segs) {
             const pts = samplePath(score, v, seg.a, seg.b, xOf, yOf, 3 * u, (t) => half * widthFactor(score, v, t), undefined, strikeSamples(score, seg.a, seg.b));
             ribbon(painter.fill(v, seg.p0), pts);

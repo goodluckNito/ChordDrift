@@ -190,6 +190,9 @@ void main() {
   float cover = 1.0 - exp(-max(0.0, amt - 0.008) * 1.5);
   float mx = max(max(c.r, c.g), c.b);
   vec3 hue = mx > 1e-4 ? c / mx * 0.94 : vec3(0.0);
+  // Mixed ink keeps its colour: push the blend's saturation back up so overlaps don't go grey.
+  float grey = dot(hue, vec3(0.299, 0.587, 0.114));
+  hue = clamp(grey + (hue - grey) * 1.35, 0.0, 1.0);
   // Thickness as a height: light from the upper left, so folds and filaments catch the light.
   float hl = dot(texture(dye, uv - vec2(texel.x, 0.0)).rgb, vec3(1.0));
   float hr = dot(texture(dye, uv + vec2(texel.x, 0.0)).rgb, vec3(1.0));
@@ -343,7 +346,7 @@ function stepSim(S: GLState, score: Score, time: number) {
     const wob = Math.sin(time * 1.3 + v * 2.1) * 0.25;
     vPts.push([x, 0.05]);
     vVals.push([wob * 24, 150 * level, 0, 0.0009]);
-    const col = noteInk(p);
+    const col = noteInk(p, score, time);
     dPts.push([x, 0.05]);
     // The ink comes out over the same spot as the jet that pushes it, so what flows is what you see.
     dVals.push([col[0] * 0.016 * level, col[1] * 0.016 * level, col[2] * 0.016 * level, 0.0009]);

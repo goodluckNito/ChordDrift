@@ -126,94 +126,149 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   fill.addColorStop(1, alpha(st.text, 0.16));
   ctx.fillStyle = fill;
   ctx.fill(body);
-  // Glitter: back half, then the front.
+  // Glitter: back half, then the front. Dust fills the funnel; in each voice's band the glitter is
+  // the note itself, tiny letters of its name swirling round, coloured like the note.
+  const now = chordAt(score, t);
+  const names = bulges.map((b) => nameOf(score, mod12(Math.round(pitchAt(score, b.v, t))), now.c));
+  const colors = bulges.map((b) => st.noteColor(pitchAt(score, b.v, t), b.v));
   const N = lite ? 700 : 1700;
+  const letterPx = 11 * a.tu;
   const draw = (front: boolean) => {
+    ctx.font = `700 ${letterPx}px ${st.font}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
     for (let b = 0; b < N; b++) {
       // Half the glitter spreads evenly up the column, rising slowly as it spins; the other half
-      // gathers round the voices' heights, so each note is a bright band in the funnel.
+      // gathers round the voices' heights.
       let f: number;
+      let band = -1;
       if (b % 2 === 0) f = (hash(b, 1) + t * (0.025 + 0.02 * hash(b, 2))) % 1;
       else {
-        const bv = bulges[Math.floor(hash(b, 8) * bulges.length)];
+        band = Math.floor(hash(b, 8) * bulges.length);
+        const bv = bulges[band];
         const g = (hash(b, 1) + hash(b, 9) + hash(b, 10)) / 1.5 - 1;
         f = Math.max(0.01, Math.min(0.99, bv.f + g * W0 * 1.4 + 0.012 * Math.sin(t * 2 + b)));
-        if (bv.amp < 0.03 && hash(b, 11) < 0.7) continue;
+        if (bv.amp < 0.03) continue;
       }
-      const rr = Math.min(halfW * 0.93 - Math.abs(axis(f) - cx), radiusAt(f) * (0.55 + 0.5 * Math.sqrt(hash(b, 3))) * (1 + 0.4 * drum.snare * hash(b, 4)));
+      const rr = Math.min(halfW * 0.9 - Math.abs(axis(f) - cx), radiusAt(f) * (0.55 + 0.5 * Math.sqrt(hash(b, 3))) * (1 + 0.4 * drum.snare * hash(b, 4)));
       const omega = ((1.2 * halfW) / Math.max(rr, halfW * 0.06)) * 0.5 * spin;
       const th = hash(b, 5) * Math.PI * 2 + t * omega;
       const depth = Math.sin(th);
       if (depth >= 0 !== front) continue;
       const x = axis(f) + Math.cos(th) * rr;
       const y = yOf(f) + depth * rr * tilt;
-      const tint = tintAt(f);
       const sparkle = Math.max(0, Math.cos(th * 3 + b)) ** 8 + drum.hat * hash(b, Math.floor(t * 10));
-      // Glitter in a voice's band is bigger and brighter; the rest is fine dust.
-      const size = (front ? 2.3 : 1.5) * u * (0.6 + 0.6 * hash(b, 6)) * (0.8 + 0.7 * tint.w);
-      ctx.fillStyle = tint.v >= 0 && hash(b, 7) < 0.25 + 0.75 * tint.w ? st.voiceColor(tint.v) : st.ink;
-      ctx.globalAlpha = Math.min(1, (front ? 0.45 : 0.15) + 0.5 * tint.w + 0.6 * sparkle);
-      ctx.fillRect(x - size, y - size * 0.6, size * 2, size * 1.2);
+      // Nearer (front) glitter is larger and brighter, the far side dim: depth without a tilt.
+      const near = 0.55 + 0.45 * depth;
+      if (band >= 0 && hash(b, 12) < 0.45) {
+        ctx.fillStyle = colors[band];
+        ctx.globalAlpha = Math.min(1, 0.35 + 0.55 * near + 0.4 * sparkle);
+        const sc = 0.65 + 0.5 * near;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(sc * Math.max(0.35, Math.abs(Math.cos(th))) , sc); // letters turn edge-on as they swing round
+        ctx.fillText(names[band], 0, 0);
+        ctx.restore();
+      } else {
+        const tint = band >= 0 ? 1 : tintAt(f).w;
+        const size = (front ? 2 : 1.4) * u * (0.6 + 0.6 * hash(b, 6)) * (0.8 + 0.5 * tint);
+        ctx.fillStyle = band >= 0 ? colors[band] : st.ink;
+        ctx.globalAlpha = Math.min(1, (0.12 + 0.45 * near) * (band >= 0 ? 1 : 0.8) + 0.6 * sparkle);
+        ctx.fillRect(x - size, y - size * 0.6, size * 2, size * 1.2);
+      }
     }
     ctx.globalAlpha = 1;
   };
   draw(false);
   draw(true);
-  // Markings on the glass, like a measuring cylinder: each voice's note at its height, in its colour,
-  // sliding as the voice moves, so you can see which band is which note.
-  ctx.font = `600 ${13 * a.tu}px ${st.font}`;
-  ctx.textBaseline = 'middle';
-  const now = chordAt(score, t);
-  const placed: number[] = [];
-  for (const b of [...bulges].sort((x, y) => y.amp - x.amp)) {
-    if (b.amp < 0.05) continue;
-    const y = yOf(b.f);
-    if (placed.some((py) => Math.abs(py - y) < 14 * a.tu)) continue; // a note already marked there
-    placed.push(y);
-    const right = placed.length % 2 === 0;
-    const x0 = right ? cx + halfW : cx - halfW;
-    ctx.strokeStyle = st.voiceColor(b.v);
-    ctx.lineWidth = Math.max(1, 2 * u);
-    ctx.beginPath();
-    ctx.moveTo(x0, y);
-    ctx.lineTo(x0 + (right ? -10 : 10) * u, y);
-    ctx.stroke();
-    ctx.fillStyle = st.voiceColor(b.v);
-    ctx.textAlign = right ? 'left' : 'right';
-    ctx.fillText(nameOf(score, mod12(Math.round(pitchAt(score, b.v, t))), now.c), x0 + (right ? 8 : -8) * u, y);
+
+  // The tube, as glass: thick walls that bend the light at the edges, a broad soft highlight and a
+  // sharp one, a rim light, and a shadow where the liquid meets the cap and base.
+  const L = cx - halfW;
+  const R = cx + halfW;
+  const gh = glassBot - glassTop;
+  const wall = Math.max(3, halfW * 0.06);
+  for (const [x0, dir] of [[L, 1], [R, -1]] as const) {
+    const g = ctx.createLinearGradient(x0, 0, x0 + dir * wall, 0);
+    g.addColorStop(0, 'rgba(255,255,255,0.22)');
+    g.addColorStop(0.35, 'rgba(255,255,255,0.05)');
+    g.addColorStop(1, 'rgba(255,255,255,0.12)');
+    ctx.fillStyle = g;
+    ctx.fillRect(Math.min(x0, x0 + dir * wall), glassTop, wall, gh);
   }
-  // The tube's front: its edges and the light catching it, then the black cap and base.
-  ctx.strokeStyle = alpha(st.text, 0.3);
-  ctx.lineWidth = Math.max(1.5, 2 * u);
+  const hi = ctx.createLinearGradient(L, 0, R, 0);
+  hi.addColorStop(0.0, 'rgba(255,255,255,0)');
+  hi.addColorStop(0.1, 'rgba(255,255,255,0)');
+  hi.addColorStop(0.13, 'rgba(255,255,255,0.32)');
+  hi.addColorStop(0.15, 'rgba(255,255,255,0.08)');
+  hi.addColorStop(0.24, 'rgba(255,255,255,0.12)');
+  hi.addColorStop(0.34, 'rgba(255,255,255,0)');
+  hi.addColorStop(0.86, 'rgba(255,255,255,0)');
+  hi.addColorStop(0.9, 'rgba(255,255,255,0.14)');
+  hi.addColorStop(0.92, 'rgba(255,255,255,0)');
+  ctx.fillStyle = hi;
+  ctx.fillRect(L, glassTop, halfW * 2, gh);
+  for (const [y0, dir] of [[glassTop, 1], [glassBot, -1]] as const) {
+    const g = ctx.createLinearGradient(0, y0, 0, y0 + dir * 18 * u);
+    g.addColorStop(0, 'rgba(0,0,0,0.35)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(L, Math.min(y0, y0 + dir * 18 * u), halfW * 2, 18 * u);
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+  ctx.lineWidth = Math.max(1, 1.2 * u);
   ctx.beginPath();
-  ctx.moveTo(cx - halfW, glassTop);
-  ctx.lineTo(cx - halfW, glassBot);
-  ctx.moveTo(cx + halfW, glassTop);
-  ctx.lineTo(cx + halfW, glassBot);
+  ctx.moveTo(L, glassTop);
+  ctx.lineTo(L, glassBot);
+  ctx.moveTo(R, glassTop);
+  ctx.lineTo(R, glassBot);
   ctx.stroke();
-  const shine = ctx.createLinearGradient(cx - halfW, 0, cx + halfW, 0);
-  shine.addColorStop(0.08, 'rgba(255,255,255,0)');
-  shine.addColorStop(0.14, 'rgba(255,255,255,0.22)');
-  shine.addColorStop(0.2, 'rgba(255,255,255,0)');
-  shine.addColorStop(0.84, 'rgba(255,255,255,0)');
-  shine.addColorStop(0.88, 'rgba(255,255,255,0.1)');
-  shine.addColorStop(0.92, 'rgba(255,255,255,0)');
-  ctx.fillStyle = shine;
-  ctx.fillRect(cx - halfW, glassTop, halfW * 2, glassBot - glassTop);
+  // Black plastic: the cap with its grip ridges and a sheen, the base with a lip and a shadow under it.
   const plastic = (x0: number, y0: number, w: number, h: number, r: number[]) => {
     const g = ctx.createLinearGradient(x0, 0, x0 + w, 0);
-    g.addColorStop(0, '#050505');
-    g.addColorStop(0.3, '#2a2a2e');
-    g.addColorStop(0.42, '#3a3a40');
-    g.addColorStop(0.7, '#141416');
-    g.addColorStop(1, '#030303');
+    g.addColorStop(0, '#020202');
+    g.addColorStop(0.18, '#1c1c20');
+    g.addColorStop(0.3, '#4a4a52');
+    g.addColorStop(0.36, '#26262b');
+    g.addColorStop(0.75, '#101012');
+    g.addColorStop(1, '#020202');
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.roundRect(x0, y0, w, h, r);
     ctx.fill();
+    const v = ctx.createLinearGradient(0, y0, 0, y0 + h);
+    v.addColorStop(0, 'rgba(255,255,255,0.14)');
+    v.addColorStop(0.25, 'rgba(255,255,255,0)');
+    v.addColorStop(0.85, 'rgba(0,0,0,0)');
+    v.addColorStop(1, 'rgba(0,0,0,0.4)');
+    ctx.fillStyle = v;
+    ctx.fill();
   };
-  plastic(cx - halfW * 1.02, top, halfW * 2.04, capH + 2 * u, [10 * u, 10 * u, 3 * u, 3 * u]);
-  plastic(cx - halfW * 1.1, glassBot - 2 * u, halfW * 2.2, baseH + 2 * u, [3 * u, 3 * u, 12 * u, 12 * u]);
+  // Shadow on the surface under the base.
+  const shadow = ctx.createRadialGradient(cx, bot + 4 * u, 0, cx, bot + 4 * u, halfW * 1.5);
+  shadow.addColorStop(0, 'rgba(0,0,0,0.35)');
+  shadow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = shadow;
+  ctx.save();
+  ctx.translate(cx, bot + 4 * u);
+  ctx.scale(1, 0.18);
+  ctx.translate(-cx, -(bot + 4 * u));
+  ctx.fillRect(cx - halfW * 1.5, bot + 4 * u - halfW * 1.5, halfW * 3, halfW * 3);
+  ctx.restore();
+  plastic(L - halfW * 0.04, top, halfW * 2.08, capH + 2 * u, [12 * u, 12 * u, 3 * u, 3 * u]);
+  // Grip ridges on the cap.
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.lineWidth = Math.max(1, u);
+  ctx.beginPath();
+  for (let i = 1; i < 22; i++) {
+    const x = L - halfW * 0.04 + (halfW * 2.08 * i) / 22;
+    ctx.moveTo(x, top + capH * 0.22);
+    ctx.lineTo(x, top + capH * 0.92);
+  }
+  ctx.stroke();
+  plastic(L - halfW * 0.1, glassBot - 2 * u, halfW * 2.2, baseH + 2 * u, [3 * u, 3 * u, 14 * u, 14 * u]);
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.fillRect(L - halfW * 0.08, glassBot + 1 * u, halfW * 2.16, Math.max(1, 1.2 * u));
   ctx.restore()
 }
 

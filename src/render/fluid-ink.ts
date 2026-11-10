@@ -11,6 +11,7 @@
  */
 import { drumHits, levelAt, pitchAt } from '../engine/motion';
 import type { Score } from '../engine/score';
+import { harmonyKeyAt, harmonyRgb } from './harmony-color';
 import { skyRange, type ViewArea, type ViewStyle } from './harmony-views';
 
 const DT = 1 / 30;
@@ -40,18 +41,16 @@ interface Sim extends Grid {
 }
 const sims = new WeakMap<Score, Sim>();
 
-/** Ink colour for a (possibly gliding) note: hue round the circle of fifths, blending between neighbours. */
-export function noteInk(p: number): [number, number, number] {
-  const r = Math.round(p);
-  const pc = ((r % 12) + 12) % 12;
-  const h = (((pc * 7) % 12) * 30 + 10) / 360;
-  const s = 0.8;
-  const l = 0.55;
-  const f = (n: number) => {
-    const k = (n + h * 12) % 12;
-    return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
-  };
-  return [f(0), f(8), f(4)];
+/**
+ * Ink colour for a note at a moment: the key's harmony colours (one family for the key's notes,
+ * spaced round the circle of fifths; outside notes in the complement), so chords pour related
+ * colours that mix vividly instead of a rainbow that mixes to mud.
+ */
+export function noteInk(p: number, score: Score, time: number): [number, number, number] {
+  const bg = score.config.theme.background;
+  const n = /^#[0-9a-f]{6}$/i.test(bg) ? parseInt(bg.slice(1), 16) : 0;
+  const lum = (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+  return harmonyRgb(p, harmonyKeyAt(score, time, lum < 0.45));
 }
 
 function rgbOf(color: string): [number, number, number] {
@@ -202,7 +201,7 @@ function stepSim(s: Sim, score: Score, time: number) {
     const y = ny - 3;
     const wob = Math.sin(time * 1.3 + vc * 2.1) * 0.25;
     // The ink's colour is its note's (round the circle of fifths), so each chord pours its own colours.
-    splat(s, x, y, 2.2, wob * 0.1, -0.5 * level, noteInk(p), 0.022 * level);
+    splat(s, x, y, 2.2, wob * 0.1, -0.5 * level, noteInk(p, score, time), 0.022 * level);
   }
   // Drums: a kick pushes the water outward from the bottom; a snare spins up a whirlpool.
   for (const h of drumHits(score, time, time + DT)) {

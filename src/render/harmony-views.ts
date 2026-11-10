@@ -20,6 +20,8 @@ export interface ViewStyle {
   pcColor: (pc: number) => string;
   /** A distinct colour per voice from the theme's palette (whatever the line colouring). */
   voiceColor: (v: number) => string;
+  /** A note's colour: by voice or note when the lines are coloured that way, else the key's harmony colours. */
+  noteColor: (p: number, v: number) => string;
   background: string;
   /** The theme's lights colour (lit windows, comets). */
   lights: string;

@@ -16,7 +16,7 @@ export type FontId =
   | 'bebas-neue'
   | 'space-mono';
 /** none = one colour · voice = a hue per voice, bass to top · pitch = a hue per pitch class (circle of fifths) · register = gradient by height */
-export type ColorBy = 'none' | 'voice' | 'pitch' | 'register';
+export type ColorBy = 'none' | 'voice' | 'pitch' | 'register' | 'harmony';
 
 export interface Theme {
   /** Name of the preset this came from, or "custom" once edited. */
