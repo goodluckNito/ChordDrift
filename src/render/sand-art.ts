@@ -206,6 +206,20 @@ function makeSim(score: Score, n: number, key: string): Sand {
   return s;
 }
 
+/** Where phrase p's peak builds (0..1 across the glass): somewhere new each phrase, a fair way from the last. */
+function phraseAnchor(seed: number, p: number): number {
+  if (p < 0) return 0.5;
+  let x = 0.5;
+  for (let q = 0; q <= p; q++) {
+    let next = 0.18 + 0.64 * hash(seed, q, 101);
+    if (Math.abs(next - x) < 0.2) next = x + (next >= x ? 0.2 : -0.2);
+    if (next > 0.82) next -= 0.45;
+    if (next < 0.18) next += 0.45;
+    x = next;
+  }
+  return x;
+}
+
 /** Seconds since voice v last moved to a new note (Infinity before its first move). */
 function sinceMove(score: Score, v: number, t: number): { age: number; idx: number } {
   const ms = score.moves[v];
@@ -235,13 +249,16 @@ function sinceMove(score: Score, v: number, t: number): { age: number; idx: numb
 function pressAt(score: Score, s: Sand, t: number): { x: number; f: number }[] {
   if (t < score.gridStart) return [];
   const { n, cells, shelf } = s;
-  const seed = score.seed;
-  const k = chordIndexAt(score, t);
-  const c = score.chords[Math.max(0, k)];
-  const fifths = c ? ((c.root * 7) % 12) / 11 : 0.5;
-  const wander = 0.5 + 0.2 * Math.sin(t * 0.037 + (seed % 97)) + 0.12 * Math.sin(t * 0.093 + (seed % 61)) + 0.06 * Math.sin(t * 0.21 + (seed % 13));
-  const focus = Math.max(0.2, Math.min(0.8, wander + (fifths - 0.5) * 0.22)) * (n - 1);
-  const want: { x: number; f: number }[] = [{ x: focus, f: 0.35 }];
+  const k = Math.max(0, chordIndexAt(score, t));
+  // The song as a mountain range: the sand pours in one place for a whole phrase (four chords),
+  // building a peak, then the stream slides along the foam to the next phrase's place.
+  const phrase = Math.floor(k / 4);
+  const startOf = (p: number) => score.chords[Math.min(score.chords.length - 1, p * 4)]?.t ?? 0;
+  const from = phraseAnchor(score.seed, phrase - 1);
+  const to = phraseAnchor(score.seed, phrase);
+  const u = Math.max(0, Math.min(1, (t - startOf(phrase)) / 1.5));
+  const focus = (from + (to - from) * u * u * (3 - 2 * u)) * (n - 1);
+  const want: { x: number; f: number }[] = [{ x: focus, f: 0.45 }];
   // Running behind (the gaps already as free as they go): the foam gives under the heaviest sand too.
   if (s.gate > 0.85 && s.heavy >= 0) want.push({ x: s.heavy, f: 0.5 + 2 * (s.gate - 0.85) });
   for (let v = 0; v < score.config.voices && want.length < 5; v++) {
@@ -251,7 +268,7 @@ function pressAt(score: Score, s: Sand, t: number): { x: number; f: number }[] {
     if (!nt) continue;
     const f = levelAt(score, v, t) * nt.g * Math.exp(-age / 1.6);
     if (f < 0.08) continue;
-    want.push({ x: focus + (hash(v, idx, 97) - 0.5) * 0.2 * n, f });
+    want.push({ x: focus + (hash(v, idx, 97) - 0.5) * 0.07 * n, f });
   }
   // (Where there's still sand over the spot, or else the nearest place there is.)
   const hasSand = (x: number) => x > 1 && x < n - 2 && (cells[(shelf - 6) * n + x] > WALL || cells[(shelf - 3) * n + x] > WALL);
@@ -412,6 +429,9 @@ function stepSand(s: Sand, score: Score, time: number) {
         if (up && !near[x] && hash(x, y, step * 2 + sub) > 0.15) continue;
         const first = hash(x, y, step * 2 + sub + 1) < 0.5 ? -1 : 1;
         for (const d of [first, -first]) {
+          // Wet sand stands steep: below the bubbles a grain only slides off where the drop is two
+          // grains deep (peaks stand at about 60°, until a kick shakes them down).
+          if (!up && y + 2 < n && cells[below + n + d] !== 0) continue;
           if (!cells[below + d] && !cells[i + d] && !air[below + d] && (y !== shelf - 1 || hash(x, step, 57 + sub) < s.gate)) {
             cells[below + d] = y === shelf - 1 ? pouredGrain(score, s.cols, time, hash(x, step, 53), hash(x, step, 54)) : c;
             cells[i] = 0;
