@@ -32,8 +32,8 @@ function hash(...xs: number[]): number {
  * to the ground, a skirt of debris where it touches down. The funnel always keeps a tornado's shape
  * (a rope at the ground flaring into the cloud); debris spirals slowly up it. Each voice is a band
  * of brighter, denser debris at its pitch's height, much of it the note's own letter tumbling round,
- * coloured like the note. Heights follow the notes with weight (the bass most of all, so its leaps
- * don't throw the bands about). The funnel bends and its foot wanders; kicks widen it and spin it
+ * coloured like the note. A new note is drawn up out of the ground; the note it replaced is pulled
+ * up into the cloud as it fades. The funnel bends and its foot wanders; kicks widen it and spin it
  * faster, snares light the cloud and fling debris out, hats make it sparkle.
  */
 export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false) {
@@ -47,20 +47,64 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const ground = Hf * 0.83;
   const halfW = Math.min(W * 0.5, Hf * 0.42);
   const yOf = (f: number) => ground - f * (ground - cloudY);
-  // A voice's height follows its note with weight (the bass with more).
-  const smoothF = (v: number) => {
-    const tau = v === 0 ? 1.1 : 0.6;
-    let s = 0;
-    let w = 0;
-    for (let i = 0; i < 12; i++) {
-      const age = i * tau * 0.35;
-      const k = Math.exp(-age / tau);
-      s += pitchAt(score, v, t - age) * k;
-      w += k;
+  const heightOf = (p: number) => Math.max(0.04, Math.min(0.94, 0.06 + 0.88 * ((p - lo) / span)));
+  /** The voice's latest note change at or before t (null before its first). */
+  const lastMove = (v: number) => {
+    const ms = score.moves[v];
+    let l = 0;
+    let h = ms.length - 1;
+    let idx = -1;
+    while (l <= h) {
+      const mid = (l + h) >> 1;
+      if (ms[mid].t0 <= t) (idx = mid), (l = mid + 1);
+      else h = mid - 1;
     }
-    return Math.max(0.04, Math.min(0.94, 0.06 + 0.88 * ((s / w - lo) / span)));
+    return idx >= 0 ? ms[idx] : null;
   };
-  const bulges = Array.from({ length: V }, (_, v) => ({ f: smoothF(v), amp: levelAt(score, v, t) * (v === 0 ? 0.3 : 0.55), v }));
+  const now = chordAt(score, t);
+  const RISE = 1.4; // s for a new note to be drawn up from the ground to its height
+  const LEAVE = 2.6; // s for the note it left to be pulled up into the cloud and fade
+  interface Band {
+    f: number;
+    amp: number;
+    alpha: number;
+    name: string;
+    color: string;
+  }
+  /**
+   * Each voice is a band of debris at its note's height. When the voice changes note, the new
+   * note's band is drawn up out of the ground to its height, and the note it left is pulled up the
+   * funnel into the storm cloud, fading as it goes.
+   */
+  const bands = Array.from({ length: V }, (_, v) => {
+    const m = lastMove(v);
+    const amp = levelAt(score, v, t) * (v === 0 ? 0.3 : 0.55);
+    const target = m ? m.p1 : pitchAt(score, v, t);
+    const age = m ? t - m.t0 : Infinity;
+    const x = Math.min(1, age / RISE);
+    const rise = 1 - (1 - x) ** 3;
+    const cur: Band = {
+      f: 0.01 + (heightOf(target) - 0.01) * rise,
+      amp,
+      alpha: 0.35 + 0.65 * rise,
+      name: nameOf(score, mod12(Math.round(target)), now.c),
+      color: st.noteColor(target, v),
+    };
+    let gone: Band | null = null;
+    if (m && age < LEAVE && Math.round(m.p0) !== Math.round(m.p1)) {
+      const y = age / LEAVE;
+      const f0 = heightOf(m.p0);
+      gone = {
+        f: f0 + (1.14 - f0) * Math.pow(y, 1.5),
+        amp: Math.max(amp, 0.25),
+        alpha: (1 - y) ** 1.3,
+        name: nameOf(score, mod12(Math.round(m.p0)), now.c),
+        color: st.noteColor(m.p0, v),
+      };
+    }
+    return { cur, gone, v };
+  });
+  const bulges = bands.map((b) => ({ f: b.cur.f, amp: b.cur.amp, v: b.v }));
   const W0 = 0.05;
   /** The funnel's radius at height f: a rope at the ground flaring into the cloud; voices ripple it slightly. */
   const radiusAt = (f: number) => {
@@ -216,9 +260,6 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
 
   // Debris: back half, then the front. Dust fills the funnel; in each voice's band the debris is
   // the note itself, letters of its name swirling round, coloured like the note.
-  const now = chordAt(score, t);
-  const names = bulges.map((b) => nameOf(score, mod12(Math.round(pitchAt(score, b.v, t))), now.c));
-  const colors = bulges.map((b) => st.noteColor(pitchAt(score, b.v, t), b.v));
   const N = lite ? 900 : 2200;
   const letterPx = 14 * a.tu;
   // The skirt where it touches down: dust thrown out round the foot, low and wide.
@@ -244,15 +285,18 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       // Half the debris spreads evenly up the funnel, rising slowly as it spins; the other half
       // gathers round the voices' heights.
       let f: number;
-      let band = -1;
+      let B: Band | null = null;
       if (b % 2 === 0) f = (hash(b, 1) + t * (0.025 + 0.02 * hash(b, 2))) % 1;
       else {
-        band = Math.floor(hash(b, 8) * bulges.length);
-        const bv = bulges[band];
+        const vb = bands[Math.floor(hash(b, 8) * bands.length)];
+        // About a third of a voice's debris goes with the note it's leaving, while there is one.
+        const leaving = vb.gone !== null && hash(b, 13) < 0.35;
+        B = leaving ? vb.gone! : vb.cur;
+        if (!leaving && B.amp < 0.03) continue;
         const g = (hash(b, 1) + hash(b, 9) + hash(b, 10)) / 1.5 - 1;
-        f = Math.max(0.01, Math.min(0.99, bv.f + g * W0 * 1.4 + 0.012 * Math.sin(t * 2 + b)));
-        if (bv.amp < 0.03) continue;
+        f = Math.max(0.01, Math.min(leaving ? 1.2 : 0.99, B.f + g * W0 * (leaving ? 2.4 : 1.4) + 0.012 * Math.sin(t * 2 + b)));
       }
+      const band = B ? 1 : -1;
       const rr = radiusAt(f) * (0.55 + 0.5 * Math.sqrt(hash(b, 3))) * (1 + 0.4 * drum.snare * hash(b, 4));
       const omega = ((1.2 * halfW) / Math.max(rr, halfW * 0.06)) * 0.35 * spin;
       const th = hash(b, 5) * Math.PI * 2 + t * omega;
@@ -262,20 +306,20 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       const y = yOf(f);
       const sparkle = Math.max(0, Math.cos(th * 3 + b)) ** 8 + drum.hat * hash(b, Math.floor(t * 10));
       const near = 0.55 + 0.45 * depth; // the near side larger and brighter, the far side dim
-      if (band >= 0 && hash(b, 12) < 0.45) {
-        ctx.fillStyle = colors[band];
-        ctx.globalAlpha = Math.min(1, 0.3 + 0.6 * near + 0.4 * sparkle);
+      if (B && hash(b, 12) < 0.45) {
+        ctx.fillStyle = B.color;
+        ctx.globalAlpha = Math.min(1, 0.3 + 0.6 * near + 0.4 * sparkle) * B.alpha;
         const sc = 0.65 + 0.5 * near;
         ctx.save();
         ctx.translate(x, y);
         ctx.scale(sc * Math.max(0.3, Math.abs(Math.cos(th))), sc); // letters turn edge-on as they swing round
-        ctx.fillText(names[band], 0, 0);
+        ctx.fillText(B.name, 0, 0);
         ctx.restore();
       } else {
         const tint = band >= 0 ? 1 : tintAt(f);
         const size = (front ? 2 : 1.4) * u * (0.6 + 0.6 * hash(b, 6)) * (0.8 + 0.5 * tint);
-        ctx.fillStyle = band >= 0 ? colors[band] : st.ink;
-        ctx.globalAlpha = Math.min(1, (0.12 + 0.45 * near) * (band >= 0 ? 1 : 0.8) + 0.6 * sparkle);
+        ctx.fillStyle = B ? B.color : st.ink;
+        ctx.globalAlpha = Math.min(1, (0.12 + 0.45 * near) * (B ? 1 : 0.8) + 0.6 * sparkle) * (B ? B.alpha : 1);
         ctx.fillRect(x - size, y - size * 0.6, size * 2, size * 1.2);
       }
     }

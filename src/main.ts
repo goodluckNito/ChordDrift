@@ -296,6 +296,8 @@ function startApp() {
   paletteSelect.innerHTML = Object.keys(PALETTES).map((id) => `<option value="${id}">${PALETTE_LABELS[id] ?? id}</option>`).join('') + '<option value="rolled" disabled>Rolled 🎲</option>';
   $('#random-theme').addEventListener('click', () => {
     const th = randomTheme(Math.random);
+    // New colours, same way of colouring the lines (so harmony colouring survives a reroll).
+    th.colorBy = (useMine && myTheme ? myTheme : state.theme).colorBy;
     if (useMine) {
       myTheme = th;
       saveMyTheme();
@@ -841,7 +843,8 @@ function startApp() {
     // The output format always stays; with the view kept, the whole visualizer does (and its colours, if asked).
     const kept = $<HTMLSelectElement>('#keep').value;
     const keep = kept !== 'none' ? { ...state.video } : { width: state.video.width, height: state.video.height, fps: state.video.fps };
-    const theme = kept === 'look' ? { ...state.theme } : patch.theme;
+    // Keeping the view keeps how its lines are coloured too (harmony, by voice…), with the song's new colours.
+    const theme = kept === 'look' ? { ...state.theme } : kept === 'view' ? { ...patch.theme, colorBy: state.theme.colorBy } : patch.theme;
     state = resolveConfig({ ...patch, theme, video: { ...(patch.video ?? {}), ...keep } } as DeepPartial<ChordDriftConfig>);
     applyAutoFormat();
     writeForm();
