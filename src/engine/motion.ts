@@ -55,8 +55,8 @@ function glidePitch(m: Move, x: number, easing: Easing): number {
     case GLIDE.eager:
       return m.p0 + dp * ease(1 - Math.pow(1 - x, 1.7), easing);
     case GLIDE.overshoot: {
-      // Sails past the note by up to half a semitone, then settles back onto it.
-      const amt = Math.min(0.45, 0.08 * Math.abs(dp) + 0.12) * Math.sign(dp);
+      // Sails a little past the note (a quarter of a semitone at most), then settles back onto it.
+      const amt = Math.min(0.25, 0.05 * Math.abs(dp) + 0.08) * Math.sign(dp);
       const bump = x > 0.6 ? Math.sin((Math.PI * (x - 0.6)) / 0.4) : 0;
       return m.p0 + dp * ease(x, easing) + amt * bump;
     }

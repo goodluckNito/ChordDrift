@@ -93,3 +93,22 @@ describe('views follow release-&-swell changes', () => {
     expect(voiceNotesAt(g, 2, 10)).toEqual([{ p: pitchAt(g, 2, 10), g: 1 }]);
   });
 });
+
+import { chordDurations, parseRhythm } from '../src/engine';
+describe('chill and quick rhythms stay in tune', () => {
+  it('glides take at most 40% of a chord slot', () => {
+    const s = generateScore({ seed: 9, rhythm: { chords: 'h', tempo: 100 } });
+    const slot = (2 * 60) / 100;
+    for (const ms of s.moves) for (const m of ms) if (m.t0 > s.gridStart + 0.1 && m.t0 < s.timeline.arrivalStart - 0.1) expect(m.d).toBeLessThanOrEqual(slot * 0.4 + 1e-6);
+  });
+  it('chill songs change chords unhurriedly and rarely pass chromatically', () => {
+    for (let i = 0; i < 80; i++) {
+      const p = songFromText('calm ' + i, 'chill');
+      expect(p.passing).toBe(0.08);
+      const rc = p.rhythm?.chords;
+      if (!rc) continue;
+      const beats = chordDurations(parseRhythm(rc).steps);
+      expect(((beats.reduce((a, b) => a + b, 0) / beats.length) * 60) / p.rhythm!.tempo!).toBeGreaterThanOrEqual(2.25); // (whole notes at the fastest chill tempo: ~2.3 s)
+    }
+  });
+});

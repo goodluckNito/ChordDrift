@@ -7,7 +7,7 @@ import type { ChordDriftConfig, DeepPartial } from './config';
 import { CHOP_PRESETS } from './chop';
 import { DRUM_PRESETS, type KitId } from './drums';
 import { hashSeed, stream, type Rng } from './rng';
-import { RHYTHM_PRESETS, STRIKE_PRESETS } from './rhythm';
+import { RHYTHM_PRESETS, STRIKE_PRESETS, chordDurations, parseRhythm } from './rhythm';
 import { SONG_PRESETS } from './song';
 import { STYLES, STYLE_IDS, type StyleId } from './styles';
 import { THEME_PRESETS, randomTheme } from './themes';
@@ -177,6 +177,16 @@ export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = '
   const feel = ra() < (mood === 'adventurous' ? 0.65 : 0.5) ? 'varied' : 'even';
   const strikes = mood === 'pure' ? 0 : ra() < (chill ? 0.3 : 0.5) ? between(ra, 0.1, chill ? 0.25 : 0.45) : 0;
   out.motion = { ...out.motion, feel, strikes };
+  // Chill songs change chords unhurriedly: a chord rhythm quicker than about 2.4 s a chord becomes
+  // whole notes (decided after every draw, so nothing else about the song changes).
+  const rc = out.rhythm?.chords;
+  if (chill && rc && tempo > 0) {
+    const beats = chordDurations(parseRhythm(rc).steps);
+    const mean = beats.length ? beats.reduce((a, b) => a + b, 0) / beats.length : 4;
+    if ((mean * 60) / tempo < 2.4) out.rhythm = { ...out.rhythm, chords: 'w' };
+  }
+  // …and rarely slip chromatic passing chords in (the diminished ones jolt).
+  if (chill) out.passing = 0.08;
   return out;
 }
 

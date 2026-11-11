@@ -698,7 +698,9 @@ class ScoreBuilder {
           d *= 0.65 + 0.8 * r3;
         }
       }
-      if (!bloom) d = Math.max(0.02, Math.min(d, slot * 0.85 - delay));
+      // A glide takes at most 40% of the chord's slot, so with quick chord rhythms each chord still
+      // rings in tune for most of its length instead of the voices sliding (and beating) through it.
+      if (!bloom) d = Math.max(0.02, Math.min(d, (unison || reBloom ? slot * 0.85 : slot * 0.4) - delay));
       score.moves[v].push(shape === undefined ? { t0: t + delay, d, p0, p1 } : { t0: t + delay, d, p0, p1, shape });
       span = Math.max(span, delay + d);
     }
