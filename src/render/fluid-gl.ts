@@ -33,6 +33,7 @@ interface Double {
 interface Programs {
   splat: WebGLProgram;
   advect: WebGLProgram;
+  maccormack: WebGLProgram;
   divergence: WebGLProgram;
   curl: WebGLProgram;
   vorticity: WebGLProgram;
@@ -54,6 +55,11 @@ interface GLState {
   built: string;
   vel: Double;
   dye: Double;
+  /** MacCormack scratch: the forward step and the step back again. */
+  dyeF: Target;
+  dyeB: Target;
+  /** Glowing ink (dark backgrounds) rather than absorbing dye (light ones). */
+  glow: boolean;
   pressure: Double;
   div: Target;
   curlT: Target;
@@ -72,14 +78,18 @@ const FRAG: Record<keyof Programs, string> = {
   splat: `#version 300 es
 precision highp float;
 in vec2 uv; out vec4 o;
-uniform sampler2D src; uniform float aspect; uniform int n;
+uniform sampler2D src; uniform float aspect; uniform int n; uniform float dyeR;
 uniform vec2 pts[${MAX_POINTS}]; uniform vec4 vals[${MAX_POINTS}];
 void main() {
   vec4 c = texture(src, uv);
   for (int i = 0; i < ${MAX_POINTS}; i++) {
     if (i >= n) break;
     vec2 d = uv - pts[i]; d.x *= aspect;
-    c.rgb += vals[i].rgb * exp(-dot(d, d) / vals[i].w);
+    // Velocity: w is the radius. Ink (dyeR > 0): w is the amount of ink, kept in alpha.
+    float r = dyeR > 0.0 ? dyeR : vals[i].w;
+    float k = exp(-dot(d, d) / r);
+    c.rgb += vals[i].rgb * k;
+    if (dyeR > 0.0) c.a += vals[i].w * k;
   }
   o = c;
 }`,
@@ -98,6 +108,24 @@ void main() {
     if (uv.y > 1.0 - texel.y * 1.5) c.y = min(c.y, 0.0);
   }
   o = c;
+}`,
+  // MacCormack: the forward step corrected by half the error of stepping it back again, clamped to
+  // the neighbourhood it came from, so filaments stay sharp instead of blurring a little every step.
+  maccormack: `#version 300 es
+precision highp float;
+in vec2 uv; out vec4 o;
+uniform sampler2D vel; uniform sampler2D src; uniform sampler2D fwd; uniform sampler2D back;
+uniform vec2 texel; uniform vec2 velTexel; uniform float dt; uniform float decay;
+void main() {
+  vec2 p = clamp(uv - dt * texture(vel, uv).xy * velTexel, texel * 0.5, 1.0 - texel * 0.5);
+  vec4 c = texture(fwd, uv) + 0.5 * (texture(src, uv) - texture(back, uv));
+  vec2 q = p / texel - 0.5;
+  vec2 i0 = (floor(q) + 0.5) * texel;
+  vec4 a1 = texture(src, i0);
+  vec4 a2 = texture(src, i0 + vec2(texel.x, 0.0));
+  vec4 a3 = texture(src, i0 + vec2(0.0, texel.y));
+  vec4 a4 = texture(src, i0 + texel);
+  o = clamp(c, min(min(a1, a2), min(a3, a4)), max(max(a1, a2), max(a3, a4))) * decay;
 }`,
   divergence: `#version 300 es
 precision highp float;
@@ -184,26 +212,57 @@ void main() { o = texture(src, uv); }`,
   display: `#version 300 es
 precision highp float;
 in vec2 uv; out vec4 o;
-uniform sampler2D dye; uniform vec2 texel; uniform vec3 bg;
+uniform sampler2D dye; uniform vec2 texel; uniform vec3 bg; uniform float glow;
+// Smooth (B-spline) upsampling from four bilinear taps, so the ink isn't blocky when enlarged.
+vec4 smoothTex(vec2 p) {
+  vec2 q = p / texel - 0.5;
+  vec2 i = floor(q);
+  vec2 f = q - i;
+  vec2 w0 = (1.0 - f) * (1.0 - f) * (1.0 - f) / 6.0;
+  vec2 w1 = (4.0 - 6.0 * f * f + 3.0 * f * f * f) / 6.0;
+  vec2 w2 = (1.0 + 3.0 * f + 3.0 * f * f - 3.0 * f * f * f) / 6.0;
+  vec2 w3 = f * f * f / 6.0;
+  vec2 g0 = w0 + w1;
+  vec2 g1 = w2 + w3;
+  vec2 h0 = (i - 0.5 + w1 / g0) * texel;
+  vec2 h1 = (i + 1.5 + w3 / g1) * texel;
+  return g0.y * (g0.x * texture(dye, vec2(h0.x, h0.y)) + g1.x * texture(dye, vec2(h1.x, h0.y)))
+       + g1.y * (g0.x * texture(dye, vec2(h0.x, h1.y)) + g1.x * texture(dye, vec2(h1.x, h1.y)));
+}
+// Glowing ink: the colour carried (rgb / amount), brighter the more there is.
+vec3 emit(vec4 d) {
+  vec3 hue = d.rgb / max(d.a, 1e-4);
+  float g = dot(hue, vec3(0.299, 0.587, 0.114));
+  hue = clamp(g + (hue - g) * 1.3, 0.0, 1.0);
+  return hue * (1.0 - exp(-d.a * 1.6));
+}
 void main() {
-  vec3 c = texture(dye, uv).rgb;
-  float amt = c.r + c.g + c.b;
-  // The thinnest wisps fade right back to clear water instead of tinting everything.
-  float cover = 1.0 - exp(-max(0.0, amt - 0.008) * 1.5);
-  float mx = max(max(c.r, c.g), c.b);
-  vec3 hue = mx > 1e-4 ? c / mx * 0.94 : vec3(0.0);
-  // Mixed ink keeps its colour: push the blend's saturation back up so overlaps don't go grey.
-  float grey = dot(hue, vec3(0.299, 0.587, 0.114));
-  hue = clamp(grey + (hue - grey) * 1.35, 0.0, 1.0);
+  vec4 d = smoothTex(uv);
   // Thickness as a height: light from the upper left, so folds and filaments catch the light.
-  float hl = dot(texture(dye, uv - vec2(texel.x, 0.0)).rgb, vec3(1.0));
-  float hr = dot(texture(dye, uv + vec2(texel.x, 0.0)).rgb, vec3(1.0));
-  float hb = dot(texture(dye, uv - vec2(0.0, texel.y)).rgb, vec3(1.0));
-  float ht = dot(texture(dye, uv + vec2(0.0, texel.y)).rgb, vec3(1.0));
-  vec3 nrm = normalize(vec3(hl - hr, hb - ht, 0.9));
+  float hl = textureLod(dye, uv - vec2(texel.x, 0.0), 0.0).a;
+  float hr = textureLod(dye, uv + vec2(texel.x, 0.0), 0.0).a;
+  float hb = textureLod(dye, uv - vec2(0.0, texel.y), 0.0).a;
+  float ht = textureLod(dye, uv + vec2(0.0, texel.y), 0.0).a;
+  vec3 nrm = normalize(vec3(hl - hr, hb - ht, 0.6));
   float light = clamp(dot(nrm, normalize(vec3(-0.5, 0.6, 0.65))), 0.0, 1.0);
-  vec3 ink = hue * (0.8 + 0.25 * light) + pow(light, 24.0) * 0.22 * cover;
-  o = vec4(mix(bg, ink, cover), 1.0);
+  float body = 1.0 - exp(-d.a * 2.0);
+  vec3 col;
+  if (glow > 0.5) {
+    // Dark water: the ink glows like fluorescent dye, with a soft halo (blurred levels of the ink).
+    col = bg + emit(d) * (0.85 + 0.3 * light)
+        + emit(textureLod(dye, uv, 2.5)) * 0.32
+        + emit(textureLod(dye, uv, 4.5)) * 0.22;
+  } else {
+    // Light water: the ink absorbs light like real dye (rgb holds what each colour absorbs), so
+    // mixed inks make new colours (blue and yellow → green), thick ink goes deep, wisps just tint.
+    vec3 od = 1.7 * d.rgb + 0.05 * d.a;
+    col = bg * exp(-od) * mix(1.0, 0.86 + 0.24 * light, body);
+  }
+  // A wet sheen on the folds.
+  col += pow(light, 24.0) * 0.18 * body;
+  // Dither, so smooth gradients don't band.
+  float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+  o = vec4(col + (n - 0.5) / 255.0, 1.0);
 }`,
 };
 
@@ -236,7 +295,7 @@ function initGL(): GLState | null {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    return { canvas, gl, progs, quad, score: null, key: '', built: '', vel: null!, dye: null!, pressure: null!, div: null!, curlT: null!, step: 0, snaps: [] };
+    return { canvas, gl, progs, quad, score: null, key: '', built: '', vel: null!, dye: null!, dyeF: null!, dyeB: null!, glow: true, pressure: null!, div: null!, curlT: null!, step: 0, snaps: [] };
   } catch {
     return null;
   }
@@ -311,7 +370,7 @@ function pass(S: GLState, prog: WebGLProgram, out: Target | null, tex: Record<st
 const ptsBuf = new Float32Array(MAX_POINTS * 2);
 const valsBuf = new Float32Array(MAX_POINTS * 4);
 /** Add discs to a field: pts in uv, vals = [r, g, b, radius²]. */
-function splats(S: GLState, d: Double, pts: number[][], vals: number[][], aspect: number) {
+function splats(S: GLState, d: Double, pts: number[][], vals: number[][], aspect: number, dyeR = 0) {
   const gl = S.gl;
   const prog = S.progs.splat;
   for (let i = 0; i < pts.length; i += MAX_POINTS) {
@@ -325,7 +384,7 @@ function splats(S: GLState, d: Double, pts: number[][], vals: number[][], aspect
     gl.uniform1i(loc(gl, prog, 'n'), n);
     gl.uniform2fv(loc(gl, prog, 'pts'), ptsBuf);
     gl.uniform4fv(loc(gl, prog, 'vals'), valsBuf);
-    pass(S, prog, d.write, { src: d.read }, { aspect });
+    pass(S, prog, d.write, { src: d.read }, { aspect, dyeR });
     d.swap();
   }
 }
@@ -349,9 +408,15 @@ function stepSim(S: GLState, score: Score, time: number) {
     vPts.push([x, 0.05]);
     vVals.push([wob * 24, 150 * level, 0, 0.0009]);
     const col = noteInk(p, score, time);
+    const amt = 0.016 * level;
     dPts.push([x, 0.05]);
     // The ink comes out over the same spot as the jet that pushes it, so what flows is what you see.
-    dVals.push([col[0] * 0.016 * level, col[1] * 0.016 * level, col[2] * 0.016 * level, 0.0009]);
+    if (S.glow) dVals.push([col[0] * amt, col[1] * amt, col[2] * amt, amt]);
+    else {
+      // As a dye: what it absorbs, from its colour at full strength (so it keeps its hue when thin).
+      const m = Math.max(col[0], col[1], col[2], 1e-3);
+      dVals.push([(1 - col[0] / m) * amt, (1 - col[1] / m) * amt, (1 - col[2] / m) * amt, amt]);
+    }
   }
   for (const h of drumHits(score, time, time + DT)) {
     if (h.voice === 'kick') {
@@ -372,7 +437,7 @@ function stepSim(S: GLState, score: Score, time: number) {
     }
   }
   if (vPts.length) splats(S, S.vel, vPts, vVals, aspect);
-  if (dPts.length) splats(S, S.dye, dPts, dVals, S.dye.read.w / S.dye.read.h);
+  if (dPts.length) splats(S, S.dye, dPts, dVals, S.dye.read.w / S.dye.read.h, 0.0009);
 
   const vt = [1 / S.vel.read.w, 1 / S.vel.read.h];
   pass(S, S.progs.curl, S.curlT, { vel: S.vel.read }, { texel: vt });
@@ -381,7 +446,7 @@ function stepSim(S: GLState, score: Score, time: number) {
   pass(S, S.progs.divergence, S.div, { vel: S.vel.read }, { texel: vt });
   pass(S, S.progs.scale, S.pressure.write, { src: S.pressure.read }, { k: 0.8 });
   S.pressure.swap();
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < 24; i++) {
     pass(S, S.progs.pressure, S.pressure.write, { pressure: S.pressure.read, div: S.div }, { texel: vt });
     S.pressure.swap();
   }
@@ -389,7 +454,11 @@ function stepSim(S: GLState, score: Score, time: number) {
   S.vel.swap();
   pass(S, S.progs.advect, S.vel.write, { vel: S.vel.read, src: S.vel.read }, { texel: vt, velTexel: vt, dt: DT, decay: 0.988, walls: 1 });
   S.vel.swap();
-  pass(S, S.progs.advect, S.dye.write, { vel: S.vel.read, src: S.dye.read }, { texel: [1 / S.dye.read.w, 1 / S.dye.read.h], dt: DT, decay: Math.exp(-DT / 14), walls: 0, velTexel: vt });
+  // Ink: MacCormack advection (forward, back again, then the corrected step), for sharp filaments.
+  const dt2 = [1 / S.dye.read.w, 1 / S.dye.read.h];
+  pass(S, S.progs.advect, S.dyeF, { vel: S.vel.read, src: S.dye.read }, { texel: dt2, dt: DT, decay: 1, walls: 0, velTexel: vt });
+  pass(S, S.progs.advect, S.dyeB, { vel: S.vel.read, src: S.dyeF }, { texel: dt2, dt: -DT, decay: 1, walls: 0, velTexel: vt });
+  pass(S, S.progs.maccormack, S.dye.write, { vel: S.vel.read, src: S.dye.read, fwd: S.dyeF, back: S.dyeB }, { texel: dt2, dt: DT, decay: Math.exp(-DT / 14), velTexel: vt });
   S.dye.swap();
   S.step++;
 }
@@ -412,19 +481,25 @@ export function drawInkGL(ctx: CanvasRenderingContext2D, score: Score, t: number
   // resizing with it) must not throw the fluid away and replay it from the start, which showed old
   // ink for a moment, like the colours flicking. Only a new piece or a new shape starts over.
   const shape = (Math.round((Hc / Wc) * 20) / 20).toFixed(2);
-  if (S.score !== score || !S.key.startsWith(shape + '/')) {
+  // Dark water makes the ink glow; light water makes it a dye that absorbs (a change starts over).
+  const bgc = hexRgb(st.background);
+  const mode = 0.299 * bgc[0] + 0.587 * bgc[1] + 0.114 * bgc[2] < 0.45 ? 'glow' : 'dye';
+  if (S.score !== score || !S.key.startsWith(shape + '/') || !S.key.endsWith('/' + mode)) {
     const simW = lite ? 96 : 160;
     const dyeW = lite ? 320 : 640;
-    S.key = `${shape}/${simW}x${Math.max(32, Math.round(simW * +shape))}/${dyeW}x${Math.max(64, Math.round(dyeW * +shape))}`;
+    S.key = `${shape}/${simW}x${Math.max(32, Math.round(simW * +shape))}/${dyeW}x${Math.max(64, Math.round(dyeW * +shape))}/${mode}`;
   }
   const [, simDims, dyeDims] = S.key.split('/');
   const [simW, simH] = simDims.split('x').map(Number);
   const [dyeW, dyeH] = dyeDims.split('x').map(Number);
   const key = S.key;
   if (S.score !== score || S.built !== key) {
-    if (S.vel) for (const t2 of [S.vel.read, S.vel.write, S.dye.read, S.dye.write, S.pressure.read, S.pressure.write, S.div, S.curlT, ...S.snaps.flatMap((s) => [s.vel, s.dye])]) free(gl, t2);
+    if (S.vel) for (const t2 of [S.vel.read, S.vel.write, S.dye.read, S.dye.write, S.dyeF, S.dyeB, S.pressure.read, S.pressure.write, S.div, S.curlT, ...S.snaps.flatMap((s) => [s.vel, s.dye])]) free(gl, t2);
     S.vel = double(gl, simW, simH, gl.LINEAR);
     S.dye = double(gl, dyeW, dyeH, gl.LINEAR);
+    S.dyeF = target(gl, dyeW, dyeH, gl.LINEAR);
+    S.dyeB = target(gl, dyeW, dyeH, gl.LINEAR);
+    S.glow = key.endsWith('/glow');
     S.pressure = double(gl, simW, simH, gl.NEAREST);
     S.div = target(gl, simW, simH, gl.NEAREST);
     S.curlT = target(gl, simW, simH, gl.NEAREST);
@@ -434,7 +509,7 @@ export function drawInkGL(ctx: CanvasRenderingContext2D, score: Score, t: number
     S.built = key;
   }
   const clearAll = () => {
-    for (const t2 of [S.vel.read, S.vel.write, S.dye.read, S.dye.write, S.pressure.read, S.pressure.write]) {
+    for (const t2 of [S.vel.read, S.vel.write, S.dye.read, S.dye.write, S.dyeF, S.dyeB, S.pressure.read, S.pressure.write]) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, t2.fbo);
       gl.clearColor(0, 0, 0, 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
@@ -471,7 +546,17 @@ export function drawInkGL(ctx: CanvasRenderingContext2D, score: Score, t: number
     S.canvas.width = outW;
     S.canvas.height = outH;
   }
-  pass(S, S.progs.display, null, { dye: S.dye.read }, { texel: [1 / dyeW, 1 / dyeH], bg: hexRgb(st.background) });
+  // Blurred levels of the ink for the glow's halo.
+  gl.bindTexture(gl.TEXTURE_2D, S.dye.read.tex);
+  if (S.glow) {
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.generateMipmap(gl.TEXTURE_2D);
+  }
+  pass(S, S.progs.display, null, { dye: S.dye.read }, { texel: [1 / dyeW, 1 / dyeH], bg: bgc, glow: S.glow ? 1 : 0 });
+  if (S.glow) {
+    gl.bindTexture(gl.TEXTURE_2D, S.dye.read.tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  }
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.imageSmoothingEnabled = true;
