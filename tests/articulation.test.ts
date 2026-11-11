@@ -64,3 +64,15 @@ describe('new seeds roll an arrangement', () => {
     expect(r.rhythm?.tempo).toBeUndefined();
   });
 });
+
+import { chordAlternatives } from '../src/engine';
+describe('chord swaps know the mode', () => {
+  it('offers the Phrygian ♭II and an in-mode chord for a borrowed dominant', () => {
+    const s = generateScore({ seed: 1, key: 'G#', scale: 'phrygian', progression: 'iv9 V7b9 i9' });
+    const k = s.chords.findIndex((c) => c.name.startsWith('D#7'));
+    expect(k).toBeGreaterThan(0);
+    const names = chordAlternatives(s, k).map((a) => a.name);
+    expect(names).toContain('Amaj7');
+    expect(names).toContain('D#m7b5');
+  });
+});

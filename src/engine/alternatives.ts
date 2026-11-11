@@ -20,8 +20,44 @@ const isDominant = (c: Chord) => {
   return pcs.has(10) && (pcs.has(4) || pcs.has(5)) && !pcs.has(3);
 };
 
+const SCALE_LABEL: Record<string, string> = {
+  major: 'major key', minor: 'minor key', dorian: 'Dorian mode', phrygian: 'Phrygian mode', lydian: 'Lydian mode',
+  mixolydian: 'Mixolydian mode', locrian: 'Locrian mode', harmonicMinor: 'harmonic minor', melodicMinor: 'melodic minor',
+  phrygianDominant: 'Phrygian dominant',
+};
+
+/** Signature chords per mode: [offset from the tonic, intervals, why, only when swapping the tonic chord]. */
+const MODAL: Record<string, [number, number[], string, boolean][]> = {
+  phrygian: [
+    [1, [0, 4, 7, 11], 'Phrygian ♭II, the mode’s signature (♭II → i is the Phrygian cadence)', false],
+    [10, [0, 3, 7, 10], '♭vii, the mode’s own dominant (no leading tone)', false],
+    [0, [0, 3, 7, 10, 13], 'i with the ♭9, the Phrygian tonic colour', true],
+  ],
+  phrygianDominant: [
+    [1, [0, 4, 7, 11], '♭II, the Phrygian signature', false],
+    [10, [0, 3, 7], '♭vii, the mode’s own', false],
+  ],
+  dorian: [
+    [5, [0, 4, 7, 10], 'Dorian IV7, the mode’s bright 6th', false],
+    [2, [0, 3, 7, 10], 'ii7, the Dorian lift', false],
+  ],
+  lydian: [
+    [2, [0, 4, 7], 'Lydian II, the ♯4', false],
+    [0, [0, 4, 7, 11, 18], 'Imaj7♯11, the Lydian tonic colour', true],
+  ],
+  mixolydian: [
+    [10, [0, 4, 7], 'Mixolydian ♭VII, the mode’s signature', false],
+    [7, [0, 3, 7, 10], 'v minor, the Mixolydian dominant', false],
+  ],
+  minor: [
+    [8, [0, 4, 7, 11], '♭VI, the Aeolian lift', false],
+    [10, [0, 4, 7], '♭VII, the natural-minor dominant', false],
+  ],
+  locrian: [[1, [0, 4, 7, 11], 'Locrian ♭II, the mode’s stable chord', false]],
+};
+
 /** Up to `max` alternatives for chord k, best first. */
-export function chordAlternatives(score: Score, k: number, max = 8): Alternative[] {
+export function chordAlternatives(score: Score, k: number, max = 10): Alternative[] {
   const c = score.chords[k];
   if (!c || c.unison) return [];
   const prev = k > 0 && !score.chords[k - 1].unison ? score.chords[k - 1] : null;
@@ -56,8 +92,20 @@ export function chordAlternatives(score: Score, k: number, max = 8): Alternative
     const res = d >= 0 ? stackChord(tonic, scale, d, typicalSize(cx)) : { root: target, intervals: [0, 4, 7, 11] };
     add(res, `resolves ${chordName(prev, tonic, scale)}`, 9);
   }
-  // Diatonic substitutes that share notes with this chord (relative major/minor, mediants…).
   const steps = scaleSteps(scale);
+  const inScale = new Set(steps.map((x) => mod12(tonic + x)));
+  // The same chord kept to the mode: a chord with borrowed notes (a harmonic-minor dominant in
+  // phrygian, a natural 9th over a phrygian tonic) swapped for the mode's own chord on that root.
+  const deg = steps.findIndex((x) => mod12(tonic + x) === mod12(c.root));
+  if (deg >= 0 && c.intervals.some((iv) => !inScale.has(mod12(c.root + iv)))) {
+    add(stackChord(tonic, scale, deg, typicalSize(cx)), `keeps to the ${SCALE_LABEL[scale] ?? 'scale'} (no borrowed notes)`, 8.5);
+  }
+  // The mode's signature chords: what makes it sound like itself rather than plain major or minor.
+  for (const [off, ivs, why, onTonicOnly] of MODAL[scale] ?? []) {
+    if (onTonicOnly && mod12(c.root) !== mod12(tonic)) continue;
+    add({ root: tonic + off, intervals: ivs }, why, 6.5);
+  }
+  // Diatonic substitutes that share notes with this chord (relative major/minor, mediants…).
   for (let d = 0; d < steps.length; d++) {
     const sub = stackChord(tonic, scale, d, typicalSize(cx));
     const o = pcOverlap(sub, c);
@@ -72,9 +120,13 @@ export function chordAlternatives(score: Score, k: number, max = 8): Alternative
     add({ root: c.root, intervals: ivs }, label, 3);
   }
   // Borrowed from the parallel key.
-  add({ root: tonic + 5, intervals: [0, 3, 7, 10] }, 'borrowed iv (bittersweet)', 3.5);
-  add({ root: tonic + 8, intervals: [0, 4, 7, 11] }, 'borrowed ♭VI (cinematic lift)', 3.5);
-  add({ root: tonic + 10, intervals: [0, 4, 7, 10] }, 'borrowed ♭VII (back-door)', 3);
+  // (Only when they really are borrowed: in a minor mode these are already the scale's own.)
+  const borrow = (chord: Chord, why: string, rank: number) => {
+    if (chord.intervals.some((iv) => !inScale.has(mod12(chord.root + iv)))) add(chord, why, rank);
+  };
+  borrow({ root: tonic + 5, intervals: [0, 3, 7, 10] }, 'borrowed iv (bittersweet)', 3.5);
+  borrow({ root: tonic + 8, intervals: [0, 4, 7, 11] }, 'borrowed ♭VI (cinematic lift)', 3.5);
+  borrow({ root: tonic + 10, intervals: [0, 4, 7, 10] }, 'borrowed ♭VII (back-door)', 3);
 
   return out
     .sort((a, b) => b.score - a.score)
