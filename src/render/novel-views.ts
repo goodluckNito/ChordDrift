@@ -39,6 +39,71 @@ function saturate(color: string, s: number): string {
   return `rgb(${c(r)},${c(g)},${c(b)})`;
 }
 
+const cloudCache = new Map<string, HTMLCanvasElement | OffscreenCanvas>();
+/**
+ * A storm-cloud texture, tileable left to right: billowing value noise, dense at the top and
+ * ragged at the base, lit from above (the theme's ink over its background). Built once per look.
+ */
+function cloudTexture(ink: string, bg: string, seed: number, lump = false): HTMLCanvasElement | OffscreenCanvas {
+  const key = `${ink}/${bg}/${seed}/${lump}`;
+  const hit = cloudCache.get(key);
+  if (hit) return hit;
+  const w = 384;
+  const h = 112;
+  const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h });
+  const c = canvas.getContext('2d') as CanvasRenderingContext2D;
+  const img = c.createImageData(w, h);
+  const rgbOf = (hex: string) => {
+    const n = /^#[0-9a-f]{6}$/i.test(hex) ? parseInt(hex.slice(1), 16) : 0x888888;
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+  const inkC = rgbOf(ink);
+  const bgC = rgbOf(bg);
+  // Value noise, periodic in x (so the texture tiles), several octaves.
+  const noise = (x: number, y: number, period: number, o: number) => {
+    const xi = Math.floor(x);
+    const yi = Math.floor(y);
+    const fx = x - xi;
+    const fy = y - yi;
+    const sx = fx * fx * (3 - 2 * fx);
+    const sy = fy * fy * (3 - 2 * fy);
+    const v = (i: number, j: number) => hash(((i % period) + period) % period, j, seed * 31 + o);
+    const a = v(xi, yi) + (v(xi + 1, yi) - v(xi, yi)) * sx;
+    const b = v(xi, yi + 1) + (v(xi + 1, yi + 1) - v(xi, yi + 1)) * sx;
+    return a + (b - a) * sy;
+  };
+  const fbm = (x: number, y: number) => {
+    let s = 0;
+    let amp = 0.5;
+    let p = 7;
+    for (let o = 0; o < 5; o++) {
+      s += amp * noise((x / w) * p, (y / w) * p, p, o);
+      amp *= 0.5;
+      p *= 2;
+    }
+    return s;
+  };
+  for (let y = 0; y < h; y++) {
+    const fy = y / h;
+    for (let x = 0; x < w; x++) {
+      const n = fbm(x, y);
+      const dens = n * 1.3 - Math.pow(fy, 1.4) * 0.95 + 0.08;
+      let a = Math.max(0, Math.min(1, (dens - 0.3) / 0.28));
+      // A lump (the wall cloud) fades out at its sides too, so it can hang anywhere.
+      if (lump) a *= Math.pow(Math.sin((Math.PI * x) / w), 1.5) * Math.min(1, fy * 3.5);
+      // Lit from above: brighter where the cloud thins upward (billow tops), darker underneath.
+      const lit = Math.max(0, Math.min(1, (n - fbm(x, y + 4)) * 3 + 0.6 - 0.45 * fy));
+      const k = 0.3 + 0.6 * lit;
+      const i = (y * w + x) * 4;
+      for (let ch = 0; ch < 3; ch++) img.data[i + ch] = Math.round(bgC[ch] + (inkC[ch] - bgC[ch]) * k);
+      img.data[i + 3] = Math.round(255 * a);
+    }
+  }
+  c.putImageData(img, 0, 0);
+  cloudCache.set(key, canvas);
+  return canvas;
+}
+
 /** A stable pseudo-random number in [0, 1) from a few integers. */
 function hash(...xs: number[]): number {
   let h = 0x811c9dc5;
@@ -88,44 +153,35 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   // With release-&-swell changes the voices don't glide (each chord swells in on its own layer), so
   // a voice's note changes are read from the chords instead of its moves.
   const swellMode = score.config.motion.transition === 'swell';
-  const kNow = chordAt(score, t).k;
   type Change = { t0: number; p0: number; p1: number };
   /**
-   * A voice's note changes around t: the latest (and how many came before it, i), and the next.
-   * Gliding, those are its moves; with release-&-swell changes, the chords where its note differs.
+   * A voice's note changes in order, and the index of the latest at or before t. Gliding, those
+   * are its moves; with release-&-swell changes, the chords where its note differs.
    */
-  const changesOf = (v: number): { last: Change | null; i: number; next: Change | null } => {
-    const ms = score.moves[v];
+  const changesOf = (v: number): { list: Change[]; idx: number } => {
+    let list: Change[] = score.moves[v];
+    if (swellMode) {
+      list = [...list];
+      const ch = score.chords;
+      for (let j = 1; j < ch.length; j++) {
+        if (Math.round(ch[j].notes[v]) !== Math.round(ch[j - 1].notes[v])) list.push({ t0: ch[j].t, p0: ch[j - 1].notes[v], p1: ch[j].notes[v] });
+      }
+    }
     let l = 0;
-    let h = ms.length - 1;
+    let h = list.length - 1;
     let idx = -1;
     while (l <= h) {
       const mid = (l + h) >> 1;
-      if (ms[mid].t0 <= t) (idx = mid), (l = mid + 1);
+      if (list[mid].t0 <= t) (idx = mid), (l = mid + 1);
       else h = mid - 1;
     }
-    if (!swellMode || kNow < 1) return { last: idx >= 0 ? ms[idx] : null, i: idx, next: ms[idx + 1] ?? (swellMode ? chordChange(1, v) : null) };
-    let i = ms.length - 1;
-    let last: Change | null = ms[i] ?? null;
-    const ch = score.chords;
-    for (let j = 1; j < ch.length; j++) {
-      if (Math.round(ch[j].notes[v]) === Math.round(ch[j - 1].notes[v])) continue;
-      const c = { t0: ch[j].t, p0: ch[j - 1].notes[v], p1: ch[j].notes[v] };
-      if (j > kNow) return { last, i, next: c };
-      i++;
-      last = c;
-    }
-    return { last, i, next: null };
-  };
-  const chordChange = (j: number, v: number): Change | null => {
-    const ch = score.chords;
-    for (; j < ch.length; j++) if (Math.round(ch[j].notes[v]) !== Math.round(ch[j - 1].notes[v])) return { t0: ch[j].t, p0: ch[j - 1].notes[v], p1: ch[j].notes[v] };
-    return null;
+    return { list, idx };
   };
   const now = chordAt(score, t);
   const RISE = 1.4; // s for a new note to be swirled up from the ground to its height
   const LEAVE = 2.6; // s for the note it left to be ejected up into the sky
-  const LEAD = 1.6; // s before a note change that the next note starts forming in the dust at the foot
+  const LEAD = 3; // s before a note change that the next note, lying out on the plain, is pulled in to the foot
+  const FALL = 2.4; // s for debris flung out of the top to rain back down onto the plain
   interface Band {
     f: number;
     amp: number;
@@ -138,13 +194,15 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
     fling: number;
   }
   /**
-   * Each voice is a band of debris at its note's height. A moment before the voice changes note,
-   * the dust at the foot starts turning into the next note; when it changes, that note is swirled
-   * up into the funnel to its height, and the note it left is ejected up and out into the sky.
-   * Notes are in full colour while they sound and greyed while waiting, ringing off or leaving.
+   * Each voice is a band of debris at its note's height, and its debris goes round a cycle like a
+   * real tornado's: the notes to come lie out on the plain; a few seconds before a voice needs its
+   * next note, that note is pulled in along the ground to the foot; when it changes, it swirls up
+   * the funnel to its height in full colour; at the change after, it rides on up and is flung out
+   * into the sky, greying, and rains back down far out on the plain as a note to come.
    */
   const bands = Array.from({ length: V }, (_, v) => {
-    const { last: m, i, next: n } = changesOf(v);
+    const { list, idx: i } = changesOf(v);
+    const m = list[i] ?? null;
     const level = levelAt(score, v, t);
     const amp = level * (v === 0 ? 0.3 : 0.55);
     const target = m ? m.p1 : swellMode ? soundingPitches(score, t)[v] : pitchAt(score, v, t);
@@ -163,7 +221,6 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
     };
     let gone: Band | null = null;
     if (m && age < LEAVE) {
-      // The whole band it was rides on up the funnel and is flung out into the sky, greying as it goes.
       const y = age / LEAVE;
       const f0 = heightOf(m.p0);
       gone = {
@@ -176,20 +233,19 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
         fling: 1 + 1.8 * y * y,
       };
     }
-    let next: Band | null = null;
-    if (n && n.t0 - t < LEAD) {
-      const w = 1 - (n.t0 - t) / LEAD;
-      next = {
-        f: 0.012,
-        amp: 0.3,
-        alpha: w * w * (3 - 2 * w),
-        name: nameOf(score, mod12(Math.round(n.p1)), now.c),
-        color: saturate(st.noteColor(n.p1, v), 0.15),
-        rise: 0,
-        fling: 1,
-      };
-    }
-    return { cur, gone, next, i, v };
+    // How the notes to come look, lying on the plain: greyed letters.
+    const lying = (c: Change | undefined) => (c ? { name: nameOf(score, mod12(Math.round(c.p1)), now.c), color: saturate(st.noteColor(c.p1, v), 0.2) } : null);
+    return {
+      cur,
+      gone,
+      i,
+      v,
+      next: list[i + 1] ?? null,
+      nextLook: lying(list[i + 1]),
+      next2Look: lying(list[i + 2]),
+      lastT: m ? m.t0 : -Infinity,
+      prevT: i >= 1 ? list[i - 1].t0 : -Infinity,
+    };
   });
   const bulges = bands.map((b) => ({ f: b.cur.f, amp: b.cur.amp, v: b.v }));
   const W0 = 0.05;
@@ -251,7 +307,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   ctx.lineTo(W, ground);
   ctx.stroke();
 
-  // Far off: low hills along the horizon, and grey rain curtains hanging from the storm's edges.
+  // Far off: low hills along the horizon.
   ctx.fillStyle = alpha(st.ink, 0.07);
   ctx.beginPath();
   ctx.moveTo(0, ground);
@@ -263,58 +319,100 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   ctx.lineTo(W, ground);
   ctx.closePath();
   ctx.fill();
-  for (let i = 0; i < 7; i++) {
-    const side = i % 2 ? 1 : -1;
-    const x0 = cx + side * W * (0.28 + 0.2 * hash(i, 52));
-    const w = W * (0.05 + 0.08 * hash(i, 53));
-    const lean = W * 0.04 * Math.sin(t * 0.1 + i);
-    // Soft at the sides (a horizontal gradient), fading out toward the ground in slices.
-    const g = ctx.createLinearGradient(x0 - w / 2, 0, x0 + w / 2, 0);
-    g.addColorStop(0, alpha(st.ink, 0));
-    g.addColorStop(0.5, alpha(st.ink, 0.07));
-    g.addColorStop(1, alpha(st.ink, 0));
-    ctx.fillStyle = g;
-    const y0 = cloudY - Hf * 0.04;
-    const slices = 8;
-    for (let k = 0; k < slices; k++) {
-      const a0 = k / slices;
-      const a1 = (k + 1) / slices;
-      ctx.globalAlpha = 1 - (a0 + a1) / 2;
+
+  // Rain: fine slanting streaks falling from the cloud base, the wind swaying them a little.
+  const dark = luminanceOf(st.background) < 0.45;
+  const drops = lite ? 140 : 340;
+  const slant = 0.22 + 0.06 * Math.sin(t * 0.17);
+  ctx.strokeStyle = alpha(st.ink, dark ? 0.09 : 0.11);
+  ctx.lineWidth = Math.max(1, 0.8 * u);
+  ctx.beginPath();
+  for (let i = 0; i < drops; i++) {
+    const ph = (hash(i, 62) + t * (0.55 + 0.35 * hash(i, 63))) % 1;
+    const y = cloudY + ph * (ground - cloudY);
+    const len = Hf * 0.022 * (0.6 + 0.8 * hash(i, 64));
+    const x = ((hash(i, 61) * 1.3 - 0.15) * W + slant * (y - cloudY)) % (W * 1.15);
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + slant * len, y + len);
+  }
+  ctx.stroke();
+
+  // Lightning on snares (and crashes): a bolt to the ground or across the cloud base, flickering
+  // twice, lighting the sky and the cloud from inside.
+  let bolt = 0;
+  if (score.drums) {
+    for (const h of drumHits(score, t - 0.35, t + 1e-6)) {
+      if ((h.voice !== 'snare' && h.voice !== 'crash') || h.vel < 0.5) continue;
+      const seed = Math.round(h.t * 1000);
+      if (hash(seed, 70) > 0.6) continue;
+      const age = t - h.t;
+      const I = Math.exp(-age / 0.05) + (age > 0.09 ? 0.7 * Math.exp(-(age - 0.09) / 0.05) : 0);
+      if (I < 0.03) continue;
+      bolt = Math.max(bolt, I);
+      const toGround = hash(seed, 71) < 0.55;
+      const path = (x0: number, y0: number, steps: number, dx: number, dy: number, k0: number) => {
+        ctx.moveTo(x0, y0);
+        let x = x0;
+        let y = y0;
+        for (let k = 0; k < steps; k++) {
+          x += dx + (hash(seed, k0 + k) - 0.5) * W * 0.05;
+          y += dy * (0.6 + 0.8 * hash(seed, k0 + k + 50));
+          ctx.lineTo(x, y);
+        }
+        return [x, y];
+      };
+      const x0 = W * (0.1 + 0.8 * hash(seed, 72));
+      const steps = 14;
       ctx.beginPath();
-      ctx.moveTo(x0 - w / 2 + lean * a0, y0 + (ground - y0) * a0);
-      ctx.lineTo(x0 + w / 2 + lean * a0, y0 + (ground - y0) * a0);
-      ctx.lineTo(x0 + w / 2 + lean * a1, y0 + (ground - y0) * a1);
-      ctx.lineTo(x0 - w / 2 + lean * a1, y0 + (ground - y0) * a1);
-      ctx.closePath();
-      ctx.fill();
+      const dy = toGround ? (ground - cloudY) / steps : Hf * 0.006;
+      const dx = toGround ? 0 : (hash(seed, 73) < 0.5 ? -1 : 1) * W * 0.035;
+      path(x0, cloudY, steps, dx, dy, 100);
+      // One fork.
+      path(x0 + (toGround ? 0 : dx * 5), cloudY + dy * 5, 6, (hash(seed, 74) - 0.5) * W * 0.06, dy * 0.9, 200);
+      const boltCol = dark ? '235,240,255' : '255,255,255';
+      ctx.strokeStyle = `rgba(${boltCol},${(0.18 * I).toFixed(3)})`;
+      ctx.lineWidth = 7 * u;
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(${boltCol},${Math.min(1, I).toFixed(3)})`;
+      ctx.lineWidth = Math.max(1, 1.6 * u);
+      ctx.stroke();
     }
-    ctx.globalAlpha = 1;
+    if (bolt > 0.03) {
+      ctx.fillStyle = dark ? `rgba(200,210,255,${(0.1 * bolt).toFixed(3)})` : `rgba(255,255,255,${(0.25 * bolt).toFixed(3)})`;
+      ctx.fillRect(0, 0, W, Hf);
+    }
   }
 
-  // The storm cloud: a ragged base of small billows wheeling round above the funnel (seen from
-  // below, so the near side of the wheel hangs lower), thickest where the funnel joins it; a snare
-  // lights it up like lightning inside.
-  const deck = lite ? 60 : 150;
-  const billow = (front: boolean) => {
-    for (let i = 0; i < deck; i++) {
-      const phi = hash(i, 21) * Math.PI * 2 + t * (0.05 + 0.04 * hash(i, 22));
-      const depth = Math.sin(phi);
-      if (depth >= 0 !== front) continue;
-      const rr = W * (0.05 + 0.7 * hash(i, 23) ** 1.3);
-      const x = cx + Math.cos(phi) * rr;
-      const near = 1 - rr / (W * 0.75); // billows near the funnel hang lowest
-      const y = cloudY - Hf * (0.005 + 0.07 * hash(i, 24)) + depth * Hf * 0.03 + near * Hf * 0.03;
-      const r = Math.max(W, Hf * 0.6) * (0.025 + 0.045 * hash(i, 25));
-      const g = ctx.createRadialGradient(x, y - r * 0.25, r * 0.1, x, y, r);
-      const k = (front ? 0.16 : 0.1) + 0.12 * flash * hash(i, 26);
-      g.addColorStop(0, alpha(st.ink, k * 1.25));
-      g.addColorStop(0.5, alpha(st.ink, k * 0.6));
-      g.addColorStop(1, alpha(st.ink, 0));
-      ctx.fillStyle = g;
-      ctx.fillRect(x - r, y - r, 2 * r, 2 * r);
+  // The storm cloud: a billowing deck (a noise texture, dense on top and ragged underneath, lit
+  // from above) in two layers drifting opposite ways, so it seems to wheel round; it lowers into a
+  // wall cloud where the funnel hangs from it, and lightning lights it from inside.
+  const cloud = (front: boolean) => {
+    const tex = cloudTexture(st.ink, st.background, front ? 2 : 1);
+    const y0 = -Hf * 0.03;
+    const y1 = cloudY + Hf * (front ? 0.05 : 0.07);
+    const th = y1 - y0;
+    const tw = Math.max(W * 1.1, th * 4.5);
+    const off = (((front ? 1 : -1) * t * W * 0.012) % tw + tw) % tw;
+    const draw1 = () => {
+      for (let x = off - tw; x < W; x += tw) ctx.drawImage(tex as CanvasImageSource, x, y0, tw, th);
+    };
+    ctx.globalAlpha = front ? 0.95 : 0.7;
+    draw1();
+    if (front) {
+      // The wall cloud: a lower, denser lump where the funnel hangs, fading out at its edges.
+      const lump = cloudTexture(st.ink, st.background, 3, true);
+      const lw = halfW * 1.9;
+      ctx.drawImage(lump as CanvasImageSource, cx - lw / 2, cloudY - Hf * 0.06, lw, Hf * 0.13);
     }
+    if (bolt > 0.03 || flash > 0.05) {
+      ctx.globalCompositeOperation = dark ? 'lighter' : 'source-over';
+      ctx.globalAlpha = Math.min(0.8, 0.55 * bolt + 0.15 * flash);
+      draw1();
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    ctx.globalAlpha = 1;
   };
-  billow(false);
+  cloud(false);
 
   // The funnel's body: a translucent silhouette, with condensation striations wrapping round its
   // front as it turns, so the rotation reads even where there's little debris.
@@ -390,6 +488,9 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       let B: Band | null = null;
       let th: number;
       let rr: number;
+      let px: number | null = null; // set for debris on the ground (not on the funnel)
+      let py = 0;
+      let lift = 0; // how far it still is from the funnel (1 = at the foot)
       const inner = 0.55 + 0.5 * Math.sqrt(hash(b, 3)); // where across the funnel it rides
       if (b % 3 === 0) {
         const rate = 0.025 + 0.02 * hash(b, 2);
@@ -400,33 +501,54 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
         rr = radiusAt(f) * inner * (1 + 0.25 * drum.snare * hash(b, 4));
       } else {
         const vb = bands[Math.floor(hash(b, 8) * bands.length)];
-        // A voice's debris: about a third goes with the note it's leaving, a third gathers as the
-        // next note in the dust at the foot, the rest is the note sounding now.
-        // Each voice's debris is three groups taking turns: the note sounding now, the one it left
-        // (riding up and out), and the next one gathering at the foot. At each change the groups
-        // rotate, so every particle carries on from where it was: nothing vanishes or jumps.
+        // Each voice's debris is three groups taking turns round the cycle (see bands): at each
+        // change they rotate, so every particle carries on from where it was.
         const pool = Math.floor(hash(b, 13) * 3);
         const turnOf = (k: number) => ((k % 3) + 3) % 3;
-        if (pool === turnOf(vb.i)) B = vb.cur;
-        else if (vb.gone && pool === turnOf(vb.i - 1)) B = vb.gone;
-        else if (vb.next && pool === turnOf(vb.i + 1)) B = vb.next;
-        else continue;
-        const g = (hash(b, 1) + hash(b, 9) + hash(b, 10)) / 1.5 - 1;
-        const leaving = B === vb.gone;
-        f = Math.max(0.005, Math.min(leaving ? 1.3 : 0.99, B.f + g * W0 * (1.4 + (leaving ? 1.8 * (B.fling - 1) : 0)) * (0.3 + 0.7 * B.rise) + 0.012 * Math.sin(t * 2 + b) * B.rise));
-        // Down in the skirt it circles the foot; swirling up, it closes in onto the funnel.
         const skirtR = halfW * (0.07 + 0.25 * Math.sqrt(hash(b, 3)));
-        const onFunnel = radiusAt(f) * inner * (1 + 0.25 * drum.snare * hash(b, 4)) * B.fling;
-        // (It closes in faster than it climbs, so it spirals in onto the funnel instead of floating wide.)
-        const closeIn = 1 - (1 - Math.min(1, B.rise * 2.2)) ** 2;
-        rr = skirtR + (onFunnel - skirtR) * closeIn;
-        th = hash(b, 5) * Math.PI * 2 + (t * 0.42) / (0.2 * inner) + turn;
+        const base = hash(b, 5) * Math.PI * 2;
+        /** Its angle round the foot while on the ground: drifting, turning faster as it's pulled in. */
+        const thGround = (w: number) => base + 0.05 * t + 4 * w * w;
+        if (pool === turnOf(vb.i) || (vb.gone && pool === turnOf(vb.i - 1))) {
+          B = pool === turnOf(vb.i) ? vb.cur : vb.gone!;
+          const g = (hash(b, 1) + hash(b, 9) + hash(b, 10)) / 1.5 - 1;
+          const leaving = B === vb.gone;
+          f = Math.max(0.005, Math.min(leaving ? 1.3 : 0.99, B.f + g * W0 * (1.4 + (leaving ? 1.8 * (B.fling - 1) : 0)) * (0.3 + 0.7 * B.rise) + 0.012 * Math.sin(t * 2 + b) * B.rise));
+          const onFunnel = radiusAt(f) * inner * (1 + 0.25 * drum.snare * hash(b, 4)) * B.fling;
+          // It closes in onto the funnel faster than it climbs, so it spirals in from the foot.
+          const closeIn = 1 - (1 - Math.min(1, B.rise * 2.2)) ** 2;
+          rr = skirtR + (onFunnel - skirtR) * closeIn;
+          const thF = base + (t * 0.42) / (0.2 * inner) + turn;
+          th = leaving ? thF : thGround(1) + (thF - thGround(1)) * closeIn;
+          lift = 1 - B.rise;
+        } else {
+          // Back on the ground: raining down after being flung out, then lying on the plain as a
+          // note to come (the next one, or the one after), then pulled in to the foot.
+          const isNext = pool === turnOf(vb.i + 1);
+          const look = isNext ? vb.nextLook : vb.next2Look;
+          if (!look) continue;
+          // (Each piece falls in its own time, from its own height, so they rain down rather than drop as a sheet.)
+          const u = Math.min(1, Math.max(0, (t - (isNext ? vb.prevT : vb.lastT) - LEAVE - 1.6 * hash(b, 22)) / FALL));
+          if (u <= 0) continue;
+          const w0 = isNext && vb.next ? Math.max(0, Math.min(1, 1 - (vb.next.t0 - t) / LEAD)) : 0;
+          const w = w0 * w0 * (3 - 2 * w0);
+          const r0 = halfW * (0.3 + 0.95 * hash(b, 21));
+          const r = r0 + (skirtR - r0) * w * w;
+          th = thGround(w);
+          const gy = ground + Math.sin(th) * r * 0.1 - Hf * 0.012 * (0.5 + 0.5 * Math.sin(t * 3 + b)) * (0.3 + 0.7 * w);
+          px = footX + Math.cos(th) * r;
+          const top = cloudY + (ground - cloudY) * 0.35 * hash(b, 23);
+          py = top + (gy - top) * u * u;
+          f = 0;
+          rr = 0;
+          B = { f: 0, amp: 0, alpha: Math.min(1, u * 1.4) * (0.5 + 0.5 * w), name: look.name, color: look.color, rise: 0, fling: 1 };
+        }
       }
       const band = B ? 1 : -1;
       const depth = Math.sin(th);
       if (depth >= 0 !== front) continue;
-      const x = axis(f) + Math.cos(th) * rr;
-      const y = yOf(f) - (B ? (1 - B.rise) * Hf * 0.012 * (0.5 + 0.5 * Math.sin(t * 3 + b)) : 0);
+      const x = px ?? axis(f) + Math.cos(th) * rr;
+      const y = px !== null ? py : yOf(f) + lift * (depth * rr * 0.1 - Hf * 0.012 * (0.5 + 0.5 * Math.sin(t * 3 + b)));
       const sparkle = Math.max(0, Math.cos(th * 3 + b)) ** 8 + drum.hat * hash(b, Math.floor(t * 10));
       const near = 0.55 + 0.45 * depth; // the near side larger and brighter, the far side dim
       if (B && hash(b, 12) < 0.5) {
@@ -450,7 +572,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   };
   draw(false);
   draw(true);
-  billow(true); // the near side of the cloud hangs in front of the funnel's top
+  cloud(true); // the front layer hangs in front of the funnel's top
   ctx.restore();
 }
 
