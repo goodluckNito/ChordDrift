@@ -104,6 +104,30 @@ function cloudTexture(ink: string, bg: string, seed: number, lump = false): HTML
   return canvas;
 }
 
+/** Tornado: seconds for a new note to swirl up from the ground to its height. */
+const TORNADO_RISE = 1.4;
+let closeInTable: Float32Array | null = null;
+/**
+ * ∫₀^age of how far a rising note has closed in onto the funnel (0 → 1, see drawTornado): blends
+ * its spin from the wind's to the funnel's without ever jumping. Tabulated once.
+ */
+function closeInIntegral(age: number): number {
+  const N = 128;
+  if (!closeInTable) {
+    closeInTable = new Float32Array(N + 1);
+    const c = (s: number) => {
+      const rise = 1 - (1 - Math.min(1, s / TORNADO_RISE)) ** 3;
+      return 1 - (1 - Math.min(1, rise * 2.2)) ** 2;
+    };
+    for (let i = 1; i <= N; i++) closeInTable[i] = closeInTable[i - 1] + (c(((i - 0.5) / N) * TORNADO_RISE) * TORNADO_RISE) / N;
+  }
+  if (age <= 0) return 0;
+  if (age >= TORNADO_RISE) return closeInTable[N] + (age - TORNADO_RISE);
+  const x = (age / TORNADO_RISE) * N;
+  const i = Math.floor(x);
+  return closeInTable[i] + (closeInTable[i + 1] - closeInTable[i]) * (x - i);
+}
+
 /** A stable pseudo-random number in [0, 1) from a few integers. */
 function hash(...xs: number[]): number {
   let h = 0x811c9dc5;
@@ -141,8 +165,13 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   }
   // Each kick gives the swirl an extra turn, eased over a third of a second. (Added to the angle,
   // never multiplied into the spin speed: speed × time jumps whenever the speed changes.)
-  let turn = 0;
-  if (score.drums) for (const h of drumHits(score, 0, t)) if (h.voice === 'kick') turn += 1.3 * h.vel * (1 - Math.exp(-(t - h.t) / 0.35));
+  const kicks = score.drums ? drumHits(score, 0, t).filter((h) => h.voice === 'kick') : [];
+  const turnAt = (T: number) => {
+    let s = 0;
+    for (const h of kicks) if (h.t <= T) s += 1.3 * h.vel * (1 - Math.exp(-(T - h.t) / 0.35));
+    return s;
+  };
+  const turn = turnAt(t);
   const { lo, span } = skyRange(score);
   const V = score.config.voices;
   const cloudY = Hf * 0.14; // the cloud base, where the funnel spreads into the storm
@@ -178,7 +207,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
     return { list, idx };
   };
   const now = chordAt(score, t);
-  const RISE = 1.4; // s for a new note to be swirled up from the ground to its height
+  const RISE = TORNADO_RISE; // s for a new note to be swirled up from the ground to its height
   const LEAVE = 2.6; // s for the note it left to be ejected up into the sky
   const LEAD = 3; // s before a note change that the next note, lying out on the plain, is pulled in to the foot
   const FALL = 2.4; // s for debris flung out of the top to rain back down onto the plain
@@ -245,6 +274,8 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       next2Look: lying(list[i + 2]),
       lastT: m ? m.t0 : -Infinity,
       prevT: i >= 1 ? list[i - 1].t0 : -Infinity,
+      lastTurn: m ? turnAt(m.t0) : 0,
+      prevTurn: i >= 1 ? turnAt(list[i - 1].t0) : 0,
     };
   });
   const bulges = bands.map((b) => ({ f: b.cur.f, amp: b.cur.amp, v: b.v }));
@@ -508,7 +539,10 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
         const skirtR = halfW * (0.07 + 0.25 * Math.sqrt(hash(b, 3)));
         const base = hash(b, 5) * Math.PI * 2;
         /** Its angle round the foot while on the ground: drifting, turning faster as it's pulled in. */
+        /** Its angle round the foot while on the ground: drifting, then swept round faster and faster as the wind gathers it in. */
         const thGround = (w: number) => base + 0.05 * t + 4 * w * w;
+        const omegaF = 0.42 / (0.2 * inner); // its spin on the funnel
+        const omegaIn = 0.05 + 8 / LEAD; // its spin as the wind delivers it to the foot
         if (pool === turnOf(vb.i) || (vb.gone && pool === turnOf(vb.i - 1))) {
           B = pool === turnOf(vb.i) ? vb.cur : vb.gone!;
           const g = (hash(b, 1) + hash(b, 9) + hash(b, 10)) / 1.5 - 1;
@@ -518,8 +552,14 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
           // It closes in onto the funnel faster than it climbs, so it spirals in from the foot.
           const closeIn = 1 - (1 - Math.min(1, B.rise * 2.2)) ** 2;
           rr = skirtR + (onFunnel - skirtR) * closeIn;
-          const thF = base + (t * 0.42) / (0.2 * inner) + turn;
-          th = leaving ? thF : thGround(1) + (thF - thGround(1)) * closeIn;
+          // Its angle is the spin integrated since it left the ground: the wind's speed at first,
+          // building smoothly to the funnel's as it closes in (so it never whips round).
+          const t0 = leaving ? vb.prevT : vb.lastT;
+          if (!Number.isFinite(t0)) th = base + t * omegaF + turn;
+          else {
+            const age = t - t0;
+            th = base + 0.05 * t0 + 4 + omegaIn * age + (omegaF - omegaIn) * closeInIntegral(age) + (turn - (leaving ? vb.prevTurn : vb.lastTurn));
+          }
           lift = 1 - B.rise;
         } else {
           // Back on the ground: raining down after being flung out, then lying on the plain as a
@@ -534,8 +574,9 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
           const w = w0 * w0 * (3 - 2 * w0);
           const r0 = halfW * (0.3 + 0.95 * hash(b, 21));
           const r = r0 + (skirtR - r0) * w * w;
-          th = thGround(w);
-          const gy = ground + Math.sin(th) * r * 0.1 - Hf * 0.012 * (0.5 + 0.5 * Math.sin(t * 3 + b)) * (0.3 + 0.7 * w);
+          th = thGround(w0);
+          // Lying still at first; as the wind gathers it, it's lifted a little off the ground.
+          const gy = ground + Math.sin(th) * r * 0.1 - Hf * (0.004 + 0.03 * w * w) * (0.4 + 0.6 * hash(b, 24)) * (0.6 + 0.4 * Math.sin(t * 3 + b));
           px = footX + Math.cos(th) * r;
           const top = cloudY + (ground - cloudY) * 0.35 * hash(b, 23);
           py = top + (gy - top) * u * u;
@@ -548,7 +589,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       const depth = Math.sin(th);
       if (depth >= 0 !== front) continue;
       const x = px ?? axis(f) + Math.cos(th) * rr;
-      const y = px !== null ? py : yOf(f) + lift * (depth * rr * 0.1 - Hf * 0.012 * (0.5 + 0.5 * Math.sin(t * 3 + b)));
+      const y = px !== null ? py : yOf(f) + lift * (depth * rr * 0.1 - Hf * 0.034 * (0.4 + 0.6 * hash(b, 24)) * (0.6 + 0.4 * Math.sin(t * 3 + b)));
       const sparkle = Math.max(0, Math.cos(th * 3 + b)) ** 8 + drum.hat * hash(b, Math.floor(t * 10));
       const near = 0.55 + 0.45 * depth; // the near side larger and brighter, the far side dim
       if (B && hash(b, 12) < 0.5) {
