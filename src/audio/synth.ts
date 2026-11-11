@@ -193,6 +193,9 @@ function setCurve(param: AudioParam, curve: Float32Array, at: number, dur: numbe
   }
 }
 
+/** The sub's share of a pluck envelope level (0..1): a gentle swell on the strike over a steady floor. */
+const subArticulation = (level: number) => 0.5 + 0.5 * level;
+
 /** Pluck strikes share one envelope, scheduled at a high rate so every attack is identical. */
 const ARTIC_RATE = 2000;
 
@@ -278,7 +281,7 @@ export class VoiceBank {
     }
     if (score.config.motion.transition === 'pluck') {
       // Average level of a strike's envelope is roughly s + (1 − s)·0.35; make that up so plucks hit hard.
-      this.makeup = Math.min(3.2, Math.max(1, 1 / (a.sustain + (1 - a.sustain) * 0.35)));
+      this.makeup = Math.min(1.6, Math.max(1, 1 / (a.sustain + (1 - a.sustain) * 0.35)));
       this.pluckTone = ctx.createBiquadFilter();
       this.pluckTone.type = 'lowpass';
       this.pluckTone.Q.value = 0.8;
@@ -338,7 +341,7 @@ export class VoiceBank {
       }
       if (score.config.motion.transition === 'pluck') {
         this.subArt = ctx.createGain();
-        this.subArt.gain.value = articulationAt(score, offset);
+        this.subArt.gain.value = subArticulation(articulationAt(score, offset));
         this.subArt.connect(subOut);
         subOut = this.subArt;
       }
@@ -542,7 +545,13 @@ export class VoiceBank {
         }
         setCurve(this.art.gain, curve, at, dur);
         if (this.pluckTone) setCurve(this.pluckTone.frequency, tone, at, dur);
-        if (this.subArt) setCurve(this.subArt.gain, curve, at, dur);
+        if (this.subArt) {
+          // The sub follows the strikes gently and without the chords' make-up gain: it holds the low
+          // end between strikes instead of throwing a bass peak into the limiter on every one.
+          const sub = new Float32Array(m);
+          for (let i = 0; i < m; i++) sub[i] = subArticulation(curve[i] / this.makeup);
+          setCurve(this.subArt.gain, sub, at, dur);
+        }
       }
       if (this.chop) {
         const m = Math.round(CHUNK * ARTIC_RATE) + 1;
