@@ -1,27 +1,34 @@
 /**
- * Sand art: the liquid sand picture (two panes of glass, coloured sand, liquid and air bubbles).
+ * Sand art: the liquid sand picture (two panes of glass, coloured sand, liquid and trapped air).
  *
- * Coloured sand rests in a reservoir along the top. Each sounding note opens a gap in it at its
- * pitch (low notes left, high right) and a stream of sand in its colour trickles down through the
- * liquid, faster the louder the note; glides sweep the stream sideways. The sand piles up into
- * mountains: held notes build peaks, the bass broad dunes, and every chord change lays a new
- * coloured stratum over the last, so the song becomes a landscape. Kicks jolt the frame and set off
- * small avalanches on the steep slopes; snares and crashes release bursts of air bubbles. When the
- * pile grows tall, the oldest sand slowly drains away at the bottom, so the landscape sinks as it
- * grows.
+ * In the toy, sand rests on a row of air bubbles trapped under it; the bubbles are the holes it
+ * runs through, and they sit still. Here they're the notes:
  *
- * A falling-sand automaton on a coarse grid, stepped at a fixed rate from the start of the piece
- * (with snapshots, so jumping back is quick): exports match playback, and it's drawn in screen
- * space (zoom leaves it alone).
+ * - The reservoir along the top holds the score: the chords to come stacked as strata of sand in
+ *   their notes' colours, the chord playing now at the bottom, scrolling down as the song plays.
+ * - A row of air bubbles sits along its floor, one per semitone across the piece's range. When a
+ *   note sounds, the bubble at its pitch swells open and sand in its colour runs through it,
+ *   thicker the louder the note; when the note stops, the bubble settles back and the stream stops.
+ * - The sand piles into a landscape: held notes build peaks, chord changes lay new strata. A
+ *   finished piece's whole song fits in the frame (the flow is scaled to its length); at the end the
+ *   last of the reservoir falls as an even curtain, capping the landscape in the tonic's colour.
+ *   Endless and looping pieces drain the oldest sand away at the bottom instead.
+ * - Kicks jolt the frame (small avalanches on steep slopes); snares make every open bubble gulp.
+ *
+ * A falling-sand automaton, stepped at a fixed rate from the start of the piece (with snapshots, so
+ * jumping back is quick): exports match playback. Drawn in screen space (zoom leaves it alone).
  */
-import { drumHits, levelAt, voiceNotesAt } from '../engine/motion';
+import { chordIndexAt, drumHits, levelAt, voiceNotesAt } from '../engine/motion';
 import type { Score } from '../engine/score';
+import { mod12 } from '../engine/theory';
 import { harmonyKeyAt, harmonyRgb } from './harmony-color';
 import { skyRange, type ViewArea, type ViewStyle } from './harmony-views';
 
 const DT = 1 / 60;
 const SNAP_EVERY = 2; // s between snapshots
 const MAX_SNAPS = 60;
+const RESERVOIR_SECONDS = 16; // how much of the score to come the reservoir shows
+const CURTAIN = 4; // s the final curtain of sand takes to fall
 
 interface Sand {
   w: number;
@@ -30,8 +37,12 @@ interface Sand {
   cells: Uint32Array;
   step: number;
   key: string;
-  /** Row the streams leave the reservoir from. */
+  /** Row the sand leaves the reservoir from. */
   shelf: number;
+  /** How freely the bubbles let sand through (scaled so a finished piece's sand fits the frame). */
+  flow: number;
+  /** Endless and looping pieces drain the oldest sand away at the bottom. */
+  drain: boolean;
   snaps: { step: number; cells: Uint32Array }[];
 }
 const sims = new WeakMap<Score, Sand>();
@@ -49,47 +60,93 @@ const isDark = (score: Score) => {
   return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255 < 0.45;
 };
 
-/** A grain of a note's colour (the key's harmony colours), each a little lighter or darker. */
+/** A note's sand colour (its harmony colour with a little warm sand tone), 0..255. */
+function sandRgb(p: number, score: Score, time: number): [number, number, number] {
+  const [r, g, b] = harmonyRgb(p, harmonyKeyAt(score, time, isDark(score)));
+  return [(r * 0.8 + 0.17) * 255, (g * 0.8 + 0.152) * 255, (b * 0.8 + 0.12) * 255];
+}
+
+/** One grain of a note's colour, each a little lighter or darker. */
 function grain(p: number, score: Score, time: number, j: number): number {
-  const [r0, g0, b0] = harmonyRgb(p, harmonyKeyAt(score, time, isDark(score)));
-  // Coloured sand rather than paint: a little of a warm sand tone mixed in.
-  const r = r0 * 0.8 + 0.85 * 0.2;
-  const g = g0 * 0.8 + 0.76 * 0.2;
-  const b = b0 * 0.8 + 0.6 * 0.2;
+  const [r, g, b] = sandRgb(p, score, time);
   const k = 0.78 + 0.36 * j;
-  const c = (x: number) => Math.max(0, Math.min(255, Math.round(x * 255 * k)));
+  const c = (x: number) => Math.max(0, Math.min(255, Math.round(x * k)));
   return ((255 << 24) | (c(b) << 16) | (c(g) << 8) | c(r)) >>> 0;
 }
 
-function makeSim(w: number, h: number, key: string): Sand {
-  return { w, h, cells: new Uint32Array(w * h), step: 0, key, shelf: Math.round(h * 0.14), snaps: [] };
+function makeSim(score: Score, w: number, h: number, key: string): Sand {
+  const shelf = Math.round(h * 0.17);
+  const tl = score.timeline;
+  const drain = score.loop || !Number.isFinite(tl.arrivalStart);
+  // Fit the whole piece: about half the chamber's cells' worth of sand over its length (each voice
+  // at a typical level lets through about a grain a step).
+  const seconds = drain ? 60 : Math.max(15, tl.arrivalStart - score.gridStart);
+  const flow = Math.max(0.05, Math.min(1, ((h - shelf) * w * 0.5) / (seconds * 60 * score.config.voices * 0.6)));
+  return { w, h, cells: new Uint32Array(w * h), step: 0, key, shelf, flow, drain, snaps: [] };
+}
+
+/** The bubbles along the reservoir's floor: one per semitone across the piece's range (12–40). */
+function bubbleSlots(score: Score): { n: number; lo: number; span: number } {
+  const { lo, span } = skyRange(score);
+  return { n: Math.max(12, Math.min(40, Math.round(span) + 1)), lo, span };
+}
+/** How open each bubble is at t (0 = settled, 1 = a note at full level runs through it), and its note. */
+function openBubbles(score: Score, t: number): { open: Float32Array; pitch: Float32Array } {
+  const { n, lo, span } = bubbleSlots(score);
+  const open = new Float32Array(n);
+  const pitch = new Float32Array(n);
+  if (t < score.gridStart) return { open, pitch }; // (the opening unison doesn't pour)
+  for (let v = 0; v < score.config.voices; v++) {
+    for (const nt of voiceNotesAt(score, v, t)) {
+      const level = levelAt(score, v, t) * nt.g;
+      if (level < 0.04) continue;
+      const j = Math.max(0, Math.min(n - 1, Math.round(((nt.p - lo) / span) * (n - 1))));
+      if (level > open[j]) {
+        open[j] = level;
+        pitch[j] = nt.p;
+      }
+    }
+  }
+  return { open, pitch };
 }
 
 function stepSand(s: Sand, score: Score, time: number) {
   const { w, h, cells, shelf } = s;
   const n = s.step;
-  const V = score.config.voices;
-  const { lo, span } = skyRange(score);
-  // Streams: each sounding note pours from a gap in the reservoir at its pitch.
-  for (let v = 0; v < V; v++) {
-    for (const nt of voiceNotesAt(score, v, time)) {
-      const level = levelAt(score, v, time) * nt.g;
-      if (level < 0.04) continue;
-      const fx = 0.05 + 0.9 * Math.max(0, Math.min(1, (nt.p - lo) / span));
-      // The gap drifts slowly from side to side (the liquid sways), so streams lay down sloping
-      // strata across the dunes instead of each building a wedge of its own colour.
-      const sway = Math.sin(time * 0.21 + v * 1.9) * 0.035 + Math.sin(time * 0.57 + v * 0.7) * 0.012;
-      const x = Math.max(0, Math.min(w - 1, Math.round((fx + sway) * (w - 1))));
-      // Two rows, since grains fall two cells a step: a continuous stream, thicker when louder.
+  const tl = score.timeline;
+  const ending = time >= tl.arrivalStart && !s.drain;
+  // Sand runs through the open bubbles, thicker the louder the note (not during the ending, when
+  // every voice gathers on one note). A snare makes every open bubble gulp.
+  if (!ending) {
+    const { open, pitch } = openBubbles(score, time);
+    const N = open.length;
+    let gulp = 1;
+    for (const hit of drumHits(score, time - 0.12, time + 1e-6)) if (hit.voice === 'snare' || hit.voice === 'crash') gulp = 1.8;
+    for (let j = 0; j < N; j++) {
+      if (open[j] <= 0) continue;
+      const x0 = (0.05 + (0.9 * j) / (N - 1)) * (w - 1);
+      const chance = s.flow * (0.25 + 0.75 * open[j]) * gulp;
       for (let k = 0; k < 2; k++) {
+        if (hash(n, j * 5 + k, 25) >= chance) continue;
+        const x = Math.max(0, Math.min(w - 1, Math.round(x0 + (hash(n, j, k + 26) - 0.5) * (1 + 2 * open[j]))));
         const i = (shelf + 1 + k) * w + x;
-        if (!cells[i] && hash(n, v * 7 + k, 3) < 0.2 + 0.75 * level) cells[i] = grain(nt.p, score, time, hash(n, v, k + 11));
+        if (!cells[i]) cells[i] = grain(pitch[j], score, time, hash(n, x, k + 27));
       }
     }
   }
-  // Falling: two cells a step at most, straight down if it can, else sliding off diagonally (so
-  // piles settle at the sand's angle of repose). Bottom-up, alternating direction, so nothing
-  // moves twice and nothing drifts one way.
+  // The ending: the last of the reservoir falls as an even curtain across the whole width.
+  if (ending && time < tl.arrivalStart + CURTAIN) {
+    const nt = voiceNotesAt(score, 0, time)[0];
+    const p = nt ? nt.p : score.startNote;
+    for (let x = 0; x < w; x++) {
+      const i = (shelf + 1) * w + x;
+      if (!cells[i] && hash(n, x, 29) < 0.14) cells[i] = grain(p, score, time, hash(n, x, 28));
+    }
+  }
+
+  // Falling: two cells a step at most; straight down if it can, else sliding off diagonally, and
+  // half the time two cells sideways (wet sand runs a little), so dunes settle at a gentle slope.
+  // Bottom-up, alternating direction, so nothing moves twice.
   for (let sub = 0; sub < 2; sub++) {
     const ltr = (n + sub) % 2 === 0;
     for (let y = h - 2; y > shelf; y--) {
@@ -117,8 +174,6 @@ function stepSand(s: Sand, score: Score, time: number) {
             break;
           }
         }
-        // Wet sand runs a little further: half the time it can slip two cells sideways, so dunes
-        // settle at a gentler slope and layers spread wide.
         if (!moved && hash(x, y, n * 3 + sub + 7) < 0.5) {
           const d = first;
           const nx = x + 2 * d;
@@ -140,7 +195,7 @@ function stepSand(s: Sand, score: Score, time: number) {
       tops[x] = y;
     }
     for (let x = 0; x < w; x++) {
-      if (hash(x, n, 5) > 0.7 * hit.vel) continue;
+      if (hash(x, n, 5) > 0.6 * hit.vel) continue;
       const y = tops[x];
       if (y >= h) continue;
       const d = hash(x, n, 6) < 0.5 ? -1 : 1;
@@ -152,10 +207,10 @@ function stepSand(s: Sand, score: Score, time: number) {
       tops[x]++;
     }
   }
-  // When the pile grows tall, the oldest sand drains away at the bottom: everything sinks a row.
-  if (n % 6 === 0) {
-    const limit = shelf + Math.round((h - shelf) * 0.38);
-    // (Solid pile three grains wide, so a falling stream, one grain wide, doesn't count.)
+  // Endless and looping pieces: when the pile grows tall, everything sinks a row (the oldest sand
+  // drains away at the bottom). Solid pile three grains wide, so a falling stream doesn't count.
+  if (s.drain && n % 6 === 0) {
+    const limit = shelf + Math.round((h - shelf) * 0.4);
     let tall = false;
     for (let x = 1; x < w - 1 && !tall; x += 2) {
       const i = limit * w + x;
@@ -167,6 +222,23 @@ function stepSand(s: Sand, score: Score, time: number) {
     }
   }
   s.step++;
+}
+
+let speckle: { w: number; h: number; canvas: HTMLCanvasElement | OffscreenCanvas } | null = null;
+function makeSpeckle(w: number, h: number) {
+  const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h });
+  const c = canvas.getContext('2d') as CanvasRenderingContext2D;
+  const img = c.createImageData(w, h);
+  for (let i = 0; i < w * h; i++) {
+    const j = hash(i, 9, 99);
+    const v = j < 0.5 ? 0 : 255;
+    img.data[i * 4] = v;
+    img.data[i * 4 + 1] = v;
+    img.data[i * 4 + 2] = v;
+    img.data[i * 4 + 3] = Math.round(Math.abs(j - 0.5) * 2 * 70);
+  }
+  c.putImageData(img, 0, 0);
+  return { w, h, canvas };
 }
 
 let image: { w: number; h: number; canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D; img: ImageData; px: Uint32Array } | null = null;
@@ -183,30 +255,31 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
   const shape = (Math.round((Hc / Wc) * 20) / 20).toFixed(2);
   let s = sims.get(score);
   if (!s || !s.key.startsWith(shape + '/')) {
-    const w = lite ? 150 : 210;
+    const w = lite ? 160 : 240;
     const h = Math.max(60, Math.round(w * +shape));
-    s = makeSim(w, h, `${shape}/${w}x${h}`);
+    s = makeSim(score, w, h, `${shape}/${w}x${h}`);
     sims.set(score, s);
   }
-  const { w, h } = s;
+  const sim = s;
+  const { w, h } = sim;
   // Step to t (restoring a snapshot when time jumps back; a long jump is caught up over frames).
   const target = Math.max(0, Math.floor(t / DT));
-  if (target < s.step) {
-    const snap = [...s.snaps].reverse().find((x) => x.step <= target);
+  if (target < sim.step) {
+    const snap = [...sim.snaps].reverse().find((x) => x.step <= target);
     if (snap) {
-      s.cells.set(snap.cells);
-      s.step = snap.step;
+      sim.cells.set(snap.cells);
+      sim.step = snap.step;
     } else {
-      s.cells.fill(0);
-      s.step = 0;
+      sim.cells.fill(0);
+      sim.step = 0;
     }
   }
-  const limit = s.step + 600;
-  while (s.step < target && s.step < limit) {
-    stepSand(s, score, s.step * DT);
-    if (s.step % Math.round(SNAP_EVERY / DT) === 0 && !s.snaps.some((x) => x.step === s!.step)) {
-      if (s.snaps.length >= MAX_SNAPS) s.snaps.splice(1, 1);
-      s.snaps.push({ step: s.step, cells: s.cells.slice() });
+  const limit = sim.step + 600;
+  while (sim.step < target && sim.step < limit) {
+    stepSand(sim, score, sim.step * DT);
+    if (sim.step % Math.round(SNAP_EVERY / DT) === 0 && !sim.snaps.some((x) => x.step === sim.step)) {
+      if (sim.snaps.length >= MAX_SNAPS) sim.snaps.splice(1, 1);
+      sim.snaps.push({ step: sim.step, cells: sim.cells.slice() });
     }
   }
 
@@ -214,7 +287,7 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
   const bg = rgbOf(st.background);
   const acc = rgbOf(st.accent);
   const ch = Hc / h;
-  const shelfY = (s.shelf + 1) * ch;
+  const shelfY = (sim.shelf + 1) * ch;
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   // The liquid: the background, tinted toward the accent, lit from above.
@@ -225,26 +298,54 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
   ctx.fillStyle = liquid;
   ctx.fillRect(0, 0, Wc, Hc);
 
-  // The reservoir along the top: strata of the key's colours, gently wavy, resting on a shelf.
-  const key = harmonyKeyAt(score, t, dark);
-  const tonic = key.tonic;
-  // (Muted toward the background: it's the store, the falling sand is the show.)
-  const strata = [0, 7, 4, 9, 2, 5, 11].map((iv) => harmonyRgb(60 + tonic + iv, key).map((x, i) => x * 255 * 0.55 + bg[i] * 0.45));
-  const bands = strata.length;
-  for (let b = 0; b < bands; b++) {
-    const y0 = (b / bands) * shelfY;
-    const y1 = ((b + 1) / bands) * shelfY;
-    ctx.fillStyle = css(strata[b].map((c) => c * 0.85));
-    ctx.beginPath();
-    ctx.moveTo(0, y1);
-    for (let x = 0; x <= 24; x++) ctx.lineTo((x / 24) * Wc, y0 + Math.sin(x * 0.9 + b * 1.7) * ch * 1.2);
-    ctx.lineTo(Wc, y1 + ch);
-    ctx.lineTo(0, y1 + ch);
-    ctx.closePath();
-    ctx.fill();
+  // The reservoir: the score to come as strata of sand, the chord playing now at the bottom,
+  // each chord's layer as thick as it lasts, banded in its notes' colours, scrolling down.
+  const chords = score.chords;
+  const tl = score.timeline;
+  const end = sim.drain ? Infinity : tl.arrivalStart + CURTAIN;
+  const yAt = (time: number) => shelfY - ((time - t) / RESERVOIR_SECONDS) * shelfY;
+  const k0 = Math.max(0, chordIndexAt(score, t));
+  let strataTop = shelfY;
+  for (let k = k0; k < chords.length; k++) {
+    const c = chords[k];
+    const a = Math.max(t, c.t);
+    const b = Math.min(end, chords[k + 1]?.t ?? end);
+    if (a >= t + RESERVOIR_SECONDS || a >= end) break;
+    if (b <= a) continue;
+    const y0 = yAt(a);
+    const y1 = yAt(Math.min(b, t + RESERVOIR_SECONDS));
+    // Its notes' colours (up to three, low to high), muted a little: the reservoir is the store.
+    const pcs: number[] = [];
+    for (const p of c.notes) if (!pcs.some((q) => mod12(q) === mod12(p))) pcs.push(p);
+    const cols = pcs.slice(0, 3).map((p) => sandRgb(p, score, c.t).map((x, i) => x * 0.8 + bg[i] * 0.2));
+    const bands = cols.length;
+    ctx.fillStyle = css(cols[bands - 1]);
+    ctx.fillRect(0, y1 - ch, Wc, y0 - y1 + ch);
+    strataTop = Math.min(strataTop, y1 - ch);
+    for (let j = 0; j < bands; j++) {
+      const ya = y0 + ((y1 - y0) * j) / bands;
+      const yb = y0 + ((y1 - y0) * (j + 1)) / bands;
+      ctx.fillStyle = css(cols[j]);
+      ctx.beginPath();
+      ctx.moveTo(0, ya + 1);
+      for (let x = 0; x <= 20; x++) ctx.lineTo((x / 20) * Wc, yb + Math.sin(x * 0.8 + k * 2.1 + j * 1.3) * ch * 0.9);
+      ctx.lineTo(Wc, ya + 1);
+      ctx.closePath();
+      ctx.fill();
+    }
   }
-  ctx.fillStyle = css(bg.map((c) => c * (dark ? 0.6 : 0.82)));
-  ctx.fillRect(0, shelfY - ch * 0.6, Wc, ch * 0.9);
+  // Sand grain over the strata (a fixed speckle at the grid's scale, like the grains below).
+  if (!speckle || speckle.w !== w || speckle.h !== sim.shelf + 1) speckle = makeSpeckle(w, sim.shelf + 1);
+  ctx.imageSmoothingEnabled = false;
+  if (strataTop < shelfY) {
+    // (Only over the sand that's there: the reservoir empties as the piece ends.)
+    const sy = Math.max(0, Math.floor((strataTop / shelfY) * speckle.h));
+    ctx.drawImage(speckle.canvas as CanvasImageSource, 0, sy, speckle.w, speckle.h - sy, 0, (sy / speckle.h) * shelfY, Wc, shelfY - (sy / speckle.h) * shelfY);
+  }
+  ctx.imageSmoothingEnabled = true;
+  // The reservoir's floor, with the holes the bubbles have broken (while their sand runs).
+  ctx.fillStyle = css(bg.map((c) => c * (dark ? 0.55 : 0.8)));
+  ctx.fillRect(0, shelfY - ch * 0.5, Wc, ch * 0.8);
 
   // The grains, one pixel per cell, lit from above (a grain with liquid over it catches the light).
   if (!image || image.w !== w || image.h !== h) {
@@ -254,7 +355,7 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     image = { w, h, canvas, ctx: c2, img, px: new Uint32Array(img.data.buffer) };
   }
   const px = image.px;
-  const cells = s.cells;
+  const cells = sim.cells;
   for (let i = 0; i < w * h; i++) {
     const c = cells[i];
     if (!c) {
@@ -262,7 +363,6 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
       continue;
     }
     if (i >= w && !cells[i - w]) {
-      // Surface grain: a touch lighter.
       const r = Math.min(255, (c & 255) * 1.18 + 10);
       const g = Math.min(255, ((c >> 8) & 255) * 1.18 + 10);
       const b = Math.min(255, ((c >> 16) & 255) * 1.18 + 10);
@@ -274,40 +374,31 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
   ctx.drawImage(image.canvas as CanvasImageSource, 0, 0, Wc, Hc);
   ctx.imageSmoothingEnabled = true;
 
-  // Air bubbles rising through the liquid: a steady few, and bursts on snares and crashes.
-  const bubble = (x: number, y: number, r: number, a: number) => {
-    ctx.strokeStyle = `rgba(255,255,255,${(0.35 * a).toFixed(3)})`;
-    ctx.lineWidth = Math.max(1, r * 0.18);
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = `rgba(255,255,255,${(0.5 * a).toFixed(3)})`;
-    ctx.beginPath();
-    ctx.arc(x - r * 0.35, y - r * 0.35, r * 0.25, 0, Math.PI * 2);
-    ctx.fill();
-  };
-  const R = Math.max(2, Wc * 0.006);
-  const travel = Hc - shelfY;
-  for (let i = 0; i < (lite ? 8 : 14); i++) {
-    const per = 7 + 5 * hash(i, 1, 9);
-    const ph = ((t + hash(i, 2, 9) * per) % per) / per;
-    const y = Hc - ph * travel;
-    const x = (hash(i, 3, 9) + 0.02 * Math.sin(t * 2 + i)) * Wc;
-    bubble(x, y, R * (0.6 + 0.8 * hash(i, 4, 9)), Math.min(1, ph * 6) * Math.min(1, (1 - ph) * 8));
-  }
-  if (score.drums) {
-    for (const hit of drumHits(score, t - 4, t + 1e-6)) {
-      if (hit.voice !== 'snare' && hit.voice !== 'crash') continue;
-      const age = t - hit.t;
-      const seed = Math.round(hit.t * 1000);
-      const cx = (0.15 + 0.7 * hash(seed, 1, 8)) * Wc;
-      for (let k = 0; k < 7; k++) {
-        const speed = (0.18 + 0.12 * hash(seed, k, 2)) * travel;
-        const y = Hc * 0.92 - age * speed;
-        if (y < shelfY) continue;
-        const x = cx + (hash(seed, k, 3) - 0.5) * Wc * 0.08 + Math.sin(age * 3 + k) * Wc * 0.01;
-        bubble(x, y, R * (0.5 + 0.9 * hash(seed, k, 4)) * hit.vel, Math.min(1, age * 5) * Math.min(1, (y - shelfY) / (Hc * 0.05)));
-      }
+  // The bubbles along the reservoir's floor: settled ones small and clear, open ones swollen,
+  // rimmed in their note's colour, with sand running through.
+  {
+    const { open, pitch } = openBubbles(score, t);
+    const N = open.length;
+    const r0 = Math.min(Wc / N, Hc * 0.04) * 0.32;
+    for (let j = 0; j < N; j++) {
+      const x = (0.05 + (0.9 * j) / (N - 1)) * Wc;
+      const o = open[j];
+      const r = r0 * (1 + 0.7 * o) * (1 + 0.04 * Math.sin(t * 3 + j));
+      const y = shelfY + r * 0.55;
+      ctx.fillStyle = `rgba(255,255,255,${dark ? 0.07 + 0.08 * o : 0.22 + 0.15 * o})`;
+      ctx.beginPath();
+      ctx.ellipse(x, y, r, r * 0.8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      if (o > 0) {
+        const [cr, cg, cb] = sandRgb(pitch[j], score, t);
+        ctx.strokeStyle = `rgba(${Math.round(cr)},${Math.round(cg)},${Math.round(cb)},${(0.4 + 0.5 * o).toFixed(3)})`;
+      } else ctx.strokeStyle = `rgba(255,255,255,${dark ? 0.18 : 0.45})`;
+      ctx.lineWidth = Math.max(1, r * 0.14);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.beginPath();
+      ctx.arc(x - r * 0.35, y - r * 0.3, r * 0.2, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
