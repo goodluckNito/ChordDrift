@@ -4,8 +4,8 @@
  *
  * - The key's notes are one family of neighbouring hues around an anchor (the theme's accent):
  *   each step round the circle of fifths from the tonic shifts the hue a little, so a fifth is a
- *   close shade, a tonic chord a tight family, and the diatonic colours never span more than a
- *   third of the wheel.
+ *   close shade and a tonic chord a tight family. How far each step turns, which way, where
+ *   outside notes jump and how bright it all is vary with the theme (schemeOf).
  * - Notes outside the key (borrowed notes, chromatic tension) jump across to the complementary
  *   hue, so they pop against the family.
  * - Higher notes are lighter, lower ones deeper.
@@ -13,7 +13,6 @@
 import type { Score } from '../engine/score';
 import { mod12, scaleSteps } from '../engine/theory';
 
-const FIFTH_STEP = 16; // degrees of hue per step round the circle of fifths, inside the key
 const OUT_STEP = 10;
 
 function hexToHsl(hex: string): { h: number; s: number; l: number } {
@@ -46,10 +45,42 @@ export interface HarmonyKey {
   inKey: Set<number>;
   anchor: number;
   dark: boolean;
+  /** The theme's own variation of the scheme (see schemeOf). */
+  step: number;
+  dir: number;
+  out: number;
+  sat: number;
+  light: number;
+  lspan: number;
 }
 
-export function harmonyKey(tonic: number, scale: string, accent: string, ink: string, dark: boolean): HarmonyKey {
-  return { tonic: mod12(tonic), inKey: new Set(scaleSteps(scale).map(mod12)), anchor: anchorHue(accent, ink), dark };
+/**
+ * Each theme gets its own variation of the harmony scheme, read from its colours (so the same theme
+ * always looks the same, and a new theme genuinely differs): how far each step round the circle of
+ * fifths turns the hue (a tight family of shades … a broad sweep), which way round, where notes
+ * outside the key jump to (the complement, a triad or a split), and how saturated and how bright.
+ */
+function schemeOf(accent: string, ink: string, bg: string) {
+  let h = 0x811c9dc5;
+  for (const ch of accent + ink + bg) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193);
+  const r = (k: number) => {
+    let x = Math.imul(h ^ Math.imul(k + 1, 0x9e3779b1), 0x85ebca6b);
+    x ^= x >>> 13;
+    x = Math.imul(x, 0xc2b2ae35);
+    return ((x ^ (x >>> 16)) >>> 0) / 4294967296;
+  };
+  return {
+    step: 9 + 25 * r(1),
+    dir: r(2) < 0.5 ? 1 : -1,
+    out: [180, 150, 120, 210, 165][Math.floor(r(3) * 5)],
+    sat: 0.62 + 0.36 * r(4),
+    light: r(5),
+    lspan: 0.12 + 0.18 * r(6),
+  };
+}
+
+export function harmonyKey(tonic: number, scale: string, accent: string, ink: string, dark: boolean, bg = ''): HarmonyKey {
+  return { tonic: mod12(tonic), inKey: new Set(scaleSteps(scale).map(mod12)), anchor: anchorHue(accent, ink), dark, ...schemeOf(accent, ink, bg) };
 }
 
 /** The harmony colour of a pitch as HSL (h in degrees, s and l 0..1). */
@@ -58,10 +89,10 @@ export function harmonyHsl(p: number, k: HarmonyKey): [number, number, number] {
   const f = mod12(rel * 7); // steps round the circle of fifths from the tonic
   const signed = f <= 6 ? f : f - 12;
   const inKey = k.inKey.has(rel);
-  const h = inKey ? k.anchor + signed * FIFTH_STEP : k.anchor + 180 + signed * OUT_STEP;
+  const h = inKey ? k.anchor + k.dir * signed * k.step : k.anchor + k.out + k.dir * signed * OUT_STEP;
   const reg = Math.max(0, Math.min(1, (p - 40) / 44));
-  const s = inKey ? 0.8 : 0.95;
-  const l = k.dark ? 0.46 + 0.22 * reg : 0.34 + 0.18 * reg;
+  const s = Math.min(1, inKey ? k.sat : k.sat + 0.12);
+  const l = k.dark ? 0.4 + 0.12 * k.light + k.lspan * reg : 0.3 + 0.1 * k.light + (k.lspan * 0.8) * reg;
   return [((h % 360) + 360) % 360, s, l];
 }
 
@@ -85,5 +116,5 @@ export function harmonyKeyAt(score: Score, t: number, dark: boolean): HarmonyKey
   let k = 0;
   while (k + 1 < score.chords.length && score.chords[k + 1].t <= t) k++;
   const c = score.chords[k];
-  return harmonyKey(c ? c.tonic : score.keyPc, c ? c.scale : score.config.scale, th.accent, th.ink, dark);
+  return harmonyKey(c ? c.tonic : score.keyPc, c ? c.scale : score.config.scale, th.accent, th.ink, dark, th.background);
 }
