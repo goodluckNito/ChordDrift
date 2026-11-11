@@ -6,11 +6,38 @@
  * Pure functions of (score, t) like every other view (marbling caches its work, but replays it
  * exactly when time jumps backwards).
  */
-import { levelAt, pitchAt } from '../engine/motion';
+import { drumHits, levelAt, pitchAt } from '../engine/motion';
 import type { Score } from '../engine/score';
 import { mod12 } from '../engine/theory';
 import { SILHOUETTES } from './silhouettes';
 import { alpha, chordAt, drumPulse, nameOf, skyRange, type ViewArea, type ViewStyle } from './harmony-views';
+
+/** A colour (#rrggbb, rgb() or hsl()) with its saturation scaled by s (0 = grey, 1 = as given). */
+function saturate(color: string, s: number): string {
+  let r = 128;
+  let g = 128;
+  let b = 128;
+  let m: RegExpMatchArray | null;
+  if (/^#[0-9a-f]{6}$/i.test(color)) {
+    const n = parseInt(color.slice(1), 16);
+    (r = (n >> 16) & 255), (g = (n >> 8) & 255), (b = n & 255);
+  } else if ((m = color.match(/rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)/))) {
+    (r = +m[1]), (g = +m[2]), (b = +m[3]);
+  } else if ((m = color.match(/hsla?\(\s*([\d.]+)(?:deg)?[ ,]+([\d.]+)%[ ,]+([\d.]+)%/))) {
+    const h = +m[1];
+    const sl = +m[2] / 100;
+    const l = +m[3] / 100;
+    const f = (k: number) => {
+      const q = (k + h / 30) % 12;
+      return 255 * (l - sl * Math.min(l, 1 - l) * Math.max(-1, Math.min(q - 3, 9 - q, 1)));
+    };
+    (r = f(0)), (g = f(8)), (b = f(4));
+  } else return color;
+  const grey = 0.299 * r + 0.587 * g + 0.114 * b;
+  const k = Math.max(0, Math.min(1, s));
+  const c = (x: number) => Math.round(grey + (x - grey) * k);
+  return `rgb(${c(r)},${c(g)},${c(b)})`;
+}
 
 /** A stable pseudo-random number in [0, 1) from a few integers. */
 function hash(...xs: number[]): number {
@@ -33,14 +60,24 @@ function hash(...xs: number[]): number {
  * (a rope at the ground flaring into the cloud); debris spirals slowly up it. Each voice is a band
  * of brighter, denser debris at its pitch's height, much of it the note's own letter tumbling round,
  * coloured like the note. A new note is drawn up out of the ground; the note it replaced is pulled
- * up into the cloud as it fades. The funnel bends and its foot wanders; kicks widen it and spin it
+ * up into the cloud as it fades (see the bands below). The funnel bends and its foot wanders; kicks widen it and turn it
  * faster, snares light the cloud and fling debris out, hats make it sparkle.
  */
 export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false) {
   const { cx, u } = a;
   const W = a.width;
   const Hf = a.height ?? a.bottom + a.top;
-  const drum = drumPulse(score, t);
+  // Drum pulses with a softened attack (averaged over the last ~0.15 s), so hits ease in instead of jerking.
+  const drum = { kick: 0, snare: 0, hat: drumPulse(score, t).hat };
+  for (let k = 0; k < 6; k++) {
+    const p = drumPulse(score, t - k * 0.03);
+    drum.kick += p.kick / 6;
+    drum.snare += p.snare / 6;
+  }
+  // Each kick gives the swirl an extra turn, eased over a third of a second. (Added to the angle,
+  // never multiplied into the spin speed: speed × time jumps whenever the speed changes.)
+  let turn = 0;
+  if (score.drums) for (const h of drumHits(score, 0, t)) if (h.voice === 'kick') turn += 1.3 * h.vel * (1 - Math.exp(-(t - h.t) / 0.35));
   const { lo, span } = skyRange(score);
   const V = score.config.voices;
   const cloudY = Hf * 0.14; // the cloud base, where the funnel spreads into the storm
@@ -62,47 +99,84 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
     return idx >= 0 ? ms[idx] : null;
   };
   const now = chordAt(score, t);
-  const RISE = 1.4; // s for a new note to be drawn up from the ground to its height
-  const LEAVE = 2.6; // s for the note it left to be pulled up into the cloud and fade
+  const RISE = 1.4; // s for a new note to be swirled up from the ground to its height
+  const LEAVE = 2.6; // s for the note it left to be ejected up into the sky
+  const LEAD = 1.6; // s before a note change that the next note starts forming in the dust at the foot
   interface Band {
     f: number;
     amp: number;
     alpha: number;
     name: string;
     color: string;
+    /** 0 = down in the dust skirt at the foot, 1 = up on the funnel at its height. */
+    rise: number;
+    /** How far out it's being flung (ejected notes spread out as they leave). */
+    fling: number;
   }
+  const nextMove = (v: number) => {
+    const ms = score.moves[v];
+    let l = 0;
+    let h = ms.length - 1;
+    let idx = ms.length;
+    while (l <= h) {
+      const mid = (l + h) >> 1;
+      if (ms[mid].t0 > t) (idx = mid), (h = mid - 1);
+      else l = mid + 1;
+    }
+    return idx < ms.length ? ms[idx] : null;
+  };
   /**
-   * Each voice is a band of debris at its note's height. When the voice changes note, the new
-   * note's band is drawn up out of the ground to its height, and the note it left is pulled up the
-   * funnel into the storm cloud, fading as it goes.
+   * Each voice is a band of debris at its note's height. A moment before the voice changes note,
+   * the dust at the foot starts turning into the next note; when it changes, that note is swirled
+   * up into the funnel to its height, and the note it left is ejected up and out into the sky.
+   * Notes are in full colour while they sound and greyed while waiting, ringing off or leaving.
    */
   const bands = Array.from({ length: V }, (_, v) => {
     const m = lastMove(v);
-    const amp = levelAt(score, v, t) * (v === 0 ? 0.3 : 0.55);
+    const level = levelAt(score, v, t);
+    const amp = level * (v === 0 ? 0.3 : 0.55);
     const target = m ? m.p1 : pitchAt(score, v, t);
     const age = m ? t - m.t0 : Infinity;
     const x = Math.min(1, age / RISE);
     const rise = 1 - (1 - x) ** 3;
     const cur: Band = {
-      f: 0.01 + (heightOf(target) - 0.01) * rise,
+      f: 0.01 + (heightOf(target) - 0.01) * rise * rise,
       amp,
-      alpha: 0.35 + 0.65 * rise,
+      alpha: 0.5 + 0.5 * rise,
       name: nameOf(score, mod12(Math.round(target)), now.c),
-      color: st.noteColor(target, v),
+      color: saturate(st.noteColor(target, v), 0.2 + 0.8 * level),
+      rise,
+      fling: 1,
     };
     let gone: Band | null = null;
     if (m && age < LEAVE && Math.round(m.p0) !== Math.round(m.p1)) {
       const y = age / LEAVE;
       const f0 = heightOf(m.p0);
       gone = {
-        f: f0 + (1.14 - f0) * Math.pow(y, 1.5),
+        f: f0 + (1.25 - f0) * Math.pow(y, 1.4),
         amp: Math.max(amp, 0.25),
-        alpha: (1 - y) ** 1.3,
+        alpha: (1 - y) ** 1.2,
         name: nameOf(score, mod12(Math.round(m.p0)), now.c),
-        color: st.noteColor(m.p0, v),
+        color: saturate(st.noteColor(m.p0, v), 0.2),
+        rise: 1,
+        fling: 1 + 1.8 * y * y,
       };
     }
-    return { cur, gone, v };
+    let next: Band | null = null;
+    const n = nextMove(v);
+    if (n && n.t0 - t < LEAD && Math.round(n.p1) !== Math.round(target)) {
+      const w = 1 - (n.t0 - t) / LEAD;
+      next = {
+        f: 0.012,
+        amp: 0.3,
+        alpha: w * w * (3 - 2 * w),
+        name: nameOf(score, mod12(Math.round(n.p1)), now.c),
+        color: saturate(st.noteColor(n.p1, v), 0.2),
+        rise: 0,
+        fling: 1,
+      };
+    }
+    return { cur, gone, next, v };
   });
   const bulges = bands.map((b) => ({ f: b.cur.f, amp: b.cur.amp, v: b.v }));
   const W0 = 0.05;
@@ -113,7 +187,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
     const ff = Math.max(0, Math.min(1, f));
     const flare = Math.max(0, (ff - 0.82) / 0.18) ** 2;
     const base = halfW * (0.035 + 0.5 * Math.pow(ff, 1.8) + 0.45 * flare);
-    return base * (1 + 0.12 * drum.kick) * (1 + 0.08 * Math.tanh(swell));
+    return base * (1 + 0.07 * drum.kick) * (1 + 0.08 * Math.tanh(swell));
   };
   const tintAt = (f: number) => {
     let bw = 0;
@@ -123,10 +197,24 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   // The foot wanders along the ground; the body bends and sways, more toward the bottom (the rope).
   const footX = cx + W * 0.07 * Math.sin(t * 0.11) + W * 0.03 * Math.sin(t * 0.29 + 1);
   const axis = (f: number) => {
-    const sway = (0.6 * Math.sin(f * 3.2 + t * 0.6) + 0.3 * Math.sin(f * 7 - t * 1.1)) * (1 - 0.6 * f) * (1 + 0.5 * drum.kick);
+    const sway = (0.6 * Math.sin(f * 3.2 + t * 0.6) + 0.3 * Math.sin(f * 7 - t * 1.1)) * (1 - 0.6 * f);
     return footX + (cx - footX) * Math.pow(f, 0.7) + W * 0.05 * sway;
   };
-  const spin = 1 + 0.8 * drum.kick;
+  /** The funnel's resting shape (radius / halfW at height f), for spin speeds: no drums, no voices. */
+  const restFrac = (f: number) => {
+    const ff = Math.max(0, Math.min(1, f));
+    return 0.035 + 0.5 * Math.pow(ff, 1.8) + 0.45 * Math.max(0, (ff - 0.82) / 0.18) ** 2;
+  };
+  // Spin: faster where the funnel is thin. Debris rising at a steady rate through it has turned by
+  // the integral of the spin over the heights it has passed (a table of that integral, G).
+  const GN = 128;
+  const G = new Float32Array(GN + 1);
+  for (let i = 1; i <= GN; i++) G[i] = G[i - 1] + 0.42 / Math.max(0.06, restFrac((i - 0.5) / GN)) / GN;
+  const Gat = (f: number) => {
+    const x = Math.max(0, Math.min(1, f)) * GN;
+    const i = Math.min(GN - 1, Math.floor(x));
+    return G[i] + (G[i + 1] - G[i]) * (x - i);
+  };
   const flash = drum.snare;
 
   ctx.save();
@@ -244,7 +332,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
     let on = false;
     for (let i = 0; i <= steps; i++) {
       const f = i / steps;
-      const th = th0 + f * 4.5 - t * 0.9 * spin;
+      const th = th0 + f * 4.5 - t * 0.9 - turn * 0.5;
       if (Math.sin(th) < 0) {
         on = false;
         continue;
@@ -270,8 +358,9 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
     ctx.textBaseline = 'middle';
     for (let b = 0; b < skirt; b++) {
       const life = (hash(b, 41) + t * (0.15 + 0.1 * hash(b, 42))) % 1;
-      const rr = halfW * (0.05 + 0.32 * Math.sqrt(life) * (0.5 + 0.5 * hash(b, 43))) * (1 + 0.35 * drum.kick);
-      const th = hash(b, 44) * Math.PI * 2 + t * (1.4 * spin) / (0.4 + rr / halfW * 3);
+      const rr0 = halfW * (0.05 + 0.32 * (0.5 + 0.5 * hash(b, 43)));
+      const rr = rr0 * Math.sqrt(life) * (1 + 0.25 * drum.kick) + halfW * 0.05 * (1 - Math.sqrt(life));
+      const th = hash(b, 44) * Math.PI * 2 + (t * 1.4) / (0.4 + (rr0 / halfW) * 3) + turn;
       const depth = Math.sin(th);
       if (depth >= 0 !== front) continue;
       const x = footX + Math.cos(th) * rr;
@@ -286,27 +375,42 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       // gathers round the voices' heights.
       let f: number;
       let B: Band | null = null;
-      if (b % 2 === 0) f = (hash(b, 1) + t * (0.025 + 0.02 * hash(b, 2))) % 1;
-      else {
+      let th: number;
+      let rr: number;
+      const inner = 0.55 + 0.5 * Math.sqrt(hash(b, 3)); // where across the funnel it rides
+      if (b % 2 === 0) {
+        const rate = 0.025 + 0.02 * hash(b, 2);
+        const pos = hash(b, 1) + t * rate;
+        f = pos % 1;
+        // Turned by the spin at every height it has risen through (whole trips, plus this one).
+        th = hash(b, 5) * Math.PI * 2 + (Math.floor(pos) * G[GN] + Gat(f) - Gat(hash(b, 1))) / rate / inner + turn;
+        rr = radiusAt(f) * inner * (1 + 0.25 * drum.snare * hash(b, 4));
+      } else {
         const vb = bands[Math.floor(hash(b, 8) * bands.length)];
-        // About a third of a voice's debris goes with the note it's leaving, while there is one.
-        const leaving = vb.gone !== null && hash(b, 13) < 0.35;
-        B = leaving ? vb.gone! : vb.cur;
-        if (!leaving && B.amp < 0.03) continue;
+        // A voice's debris: about a third goes with the note it's leaving, a third gathers as the
+        // next note in the dust at the foot, the rest is the note sounding now.
+        const h13 = hash(b, 13);
+        B = vb.gone && h13 < 0.3 ? vb.gone : vb.next && h13 > 0.66 ? vb.next : vb.cur;
+        if (B === vb.cur && B.amp < 0.03) continue;
         const g = (hash(b, 1) + hash(b, 9) + hash(b, 10)) / 1.5 - 1;
-        f = Math.max(0.01, Math.min(leaving ? 1.2 : 0.99, B.f + g * W0 * (leaving ? 2.4 : 1.4) + 0.012 * Math.sin(t * 2 + b)));
+        const leaving = B === vb.gone;
+        f = Math.max(0.005, Math.min(leaving ? 1.3 : 0.99, B.f + g * W0 * (leaving ? 2.4 : 1.4) * (0.3 + 0.7 * B.rise) + 0.012 * Math.sin(t * 2 + b) * B.rise));
+        // Down in the skirt it circles the foot; swirling up, it closes in onto the funnel.
+        const skirtR = halfW * (0.07 + 0.25 * Math.sqrt(hash(b, 3)));
+        const onFunnel = radiusAt(f) * inner * (1 + 0.25 * drum.snare * hash(b, 4)) * B.fling;
+        // (It closes in faster than it climbs, so it spirals in onto the funnel instead of floating wide.)
+        const closeIn = 1 - (1 - Math.min(1, B.rise * 2.2)) ** 2;
+        rr = skirtR + (onFunnel - skirtR) * closeIn;
+        th = hash(b, 5) * Math.PI * 2 + (t * 0.42) / (0.2 * inner) + turn;
       }
       const band = B ? 1 : -1;
-      const rr = radiusAt(f) * (0.55 + 0.5 * Math.sqrt(hash(b, 3))) * (1 + 0.4 * drum.snare * hash(b, 4));
-      const omega = ((1.2 * halfW) / Math.max(rr, halfW * 0.06)) * 0.35 * spin;
-      const th = hash(b, 5) * Math.PI * 2 + t * omega;
       const depth = Math.sin(th);
       if (depth >= 0 !== front) continue;
       const x = axis(f) + Math.cos(th) * rr;
-      const y = yOf(f);
+      const y = yOf(f) - (B ? (1 - B.rise) * Hf * 0.012 * (0.5 + 0.5 * Math.sin(t * 3 + b)) : 0);
       const sparkle = Math.max(0, Math.cos(th * 3 + b)) ** 8 + drum.hat * hash(b, Math.floor(t * 10));
       const near = 0.55 + 0.45 * depth; // the near side larger and brighter, the far side dim
-      if (B && hash(b, 12) < 0.45) {
+      if (B && hash(b, 12) < (B.rise < 1 ? 0.7 : 0.45)) {
         ctx.fillStyle = B.color;
         ctx.globalAlpha = Math.min(1, 0.3 + 0.6 * near + 0.4 * sparkle) * B.alpha;
         const sc = 0.65 + 0.5 * near;
