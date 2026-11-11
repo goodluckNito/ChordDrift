@@ -81,7 +81,8 @@ export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = '
     ['marbling', 1.5],
     ['tornado', 1.5],
     ['city', 1.5],
-  ] as ['timeline' | 'spiral' | 'waterfall' | 'constellation' | 'marbling' | 'tornado' | 'city', number][]);
+    ['sand', 1.5],
+  ] as ['timeline' | 'spiral' | 'waterfall' | 'constellation' | 'marbling' | 'tornado' | 'city' | 'sand', number][]);
   const theme = randomTheme(r);
   let tempo = 0;
   const out: DeepPartial<ChordDriftConfig> = {

@@ -7,6 +7,7 @@ import { fontStack } from './fonts';
 import { mulberry32 } from '../engine/rng';
 import { drawConstellation, type ViewArea, type ViewStyle } from './harmony-views';
 import { drawCity, drawTornado } from './novel-views';
+import { drawSand } from './sand-art';
 import { drawInk } from './fluid-ink';
 import { drawInkGL } from './fluid-gl';
 import { harmonyCss, harmonyKeyAt, type HarmonyKey } from './harmony-color';
@@ -1523,7 +1524,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
   }
 
   const freqs = soundingPitches(score, t).map(midiToHz);
-  const harmonyView = ['constellation', 'marbling', 'tornado', 'city'].includes(cfg.video.view);
+  const harmonyView = ['constellation', 'marbling', 'tornado', 'city', 'sand'].includes(cfg.video.view);
   if (harmonyView) {
     const vs: ViewStyle = {
       ink: st.ink,
@@ -1556,6 +1557,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       if (!drawInkGL(ctx, score, t, vs, area, lite)) drawInk(ctx, score, t, vs, area, lite);
     }
     else if (view === 'tornado') drawTornado(ctx, score, t, vs, area, lite);
+    else if (view === 'sand') drawSand(ctx, score, t, vs, area, lite);
     else if (view === 'city') drawCity(ctx, score, t, vs, area);
     else drawConstellation(ctx, score, t, vs, area);
   } else if (cfg.video.view === 'waterfall') drawWaterfall(ctx, score, t, st, lay);
