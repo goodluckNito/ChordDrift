@@ -126,6 +126,10 @@ export class MelodyGenerator {
 
   // ---- Solo: long lines -------------------------------------------------------------
   private phraseStep = 0;
+  /** Solo: this phrase's contour (direction per chord of the phrase), and the ornaments used lately. */
+  private contour: number[] = [1, 1, -1, -1];
+  private contourName = 'arch';
+  private recentOrnaments: string[] = [];
 
   /**
    * A singing line, in the manner of the long solos over slow chord drifts: one long note per
@@ -168,30 +172,104 @@ export class MelodyGenerator {
         tt = Math.max(t, chord.settled + 0.08);
         if (tt > t) this.notes.push({ t, d: tt - t, p: null });
       }
+      // A new phrase picks its own shape (not the same arch every time, nor the last one's).
+      if (pos === 0) {
+        const shapes: [string, number[], number][] = [
+          ['arch', [1, 1, -1, -1], 3],
+          ['fall', [-1, -1, -1, 1], 2],
+          ['valley', [-1, -1, 1, 1], 2],
+          ['rise', [1, 1, 1, -1], 1.5],
+          ['wave', [1, -1, 1, -1], 1.5],
+        ];
+        const pickable = shapes.filter(([name]) => name !== this.contourName);
+        const [name, dirs] = weighted(rng, pickable, pickable.map((x) => x[2]));
+        this.contourName = name;
+        this.contour = dirs;
+      }
       const from = this.pitch;
       const main = this.soloTarget(chord, pos);
       const room = (end - tt) / this.beatSec;
-      const roll = rng();
-      if (room >= 3 && roll < 0.22) {
-        // A turn into the next chord: upper neighbour, back, lower neighbour… then on.
-        const quick = Math.min(0.22, this.beatSec * 0.28);
-        const hold = end - tt - 3 * quick;
-        const up = this.scaleNeighbour(chord, main, 1);
-        const down = this.scaleNeighbour(chord, main, -1);
+      // Ornaments: about a third of the chords get one, from a varied vocabulary; one used lately is
+      // much less likely to come back, and the quick notes vary in speed.
+      const ORN: [string, number][] = [
+        ['turn', 1],
+        ['lowerTurn', 1],
+        ['run', 1.2],
+        ['appoggiatura', 1.2],
+        ['mordent', 0.8],
+        ['fall', 0.8],
+        ['approach', 2],
+      ];
+      const pickR = rng();
+      const kindR = rng();
+      const quickR = rng();
+      let kind = 'none';
+      if (room >= 3 && pickR < 0.34) {
+        const ws = ORN.map(([k, w]) => w * (this.recentOrnaments.includes(k) ? 0.12 : 1));
+        const total = ws.reduce((a, b) => a + b, 0);
+        let x = kindR * total;
+        kind = ORN[ORN.length - 1][0];
+        for (let i = 0; i < ORN.length; i++) if ((x -= ws[i]) < 0) {
+          kind = ORN[i][0];
+          break;
+        }
+        this.recentOrnaments = [...this.recentOrnaments.slice(-2), kind];
+      }
+      const quick = Math.min(0.26, this.beatSec * [0.25, 0.33, 0.2][Math.floor(quickR * 3)]);
+      const span2 = end - tt;
+      const up = this.scaleNeighbour(chord, main, 1);
+      const down = this.scaleNeighbour(chord, main, -1);
+      const q = (at: number, d: number, p: number, prev: number) => this.notes.push({ t: at, d, p, glide: Math.min(glide, d * 0.4), from: prev });
+      if (kind === 'turn' || kind === 'lowerTurn') {
+        // A turn out of the note into the next chord: neighbour, back, the other neighbour.
+        const [a, b] = kind === 'turn' ? [up, down] : [down, up];
+        const hold = span2 - 3 * quick;
         this.notes.push({ t: tt, d: hold, p: main, glide, from });
-        this.notes.push({ t: tt + hold, d: quick, p: up, glide: quick * 0.4, from: main });
-        this.notes.push({ t: tt + hold + quick, d: quick, p: main, glide: quick * 0.4, from: up });
-        this.notes.push({ t: tt + hold + 2 * quick, d: quick, p: down, glide: quick * 0.4, from: main });
-        this.pitch = down;
-      } else if (room >= 3 && roll < 0.5) {
+        q(tt + hold, quick, a, main);
+        q(tt + hold + quick, quick, main, a);
+        q(tt + hold + 2 * quick, quick, b, main);
+        this.pitch = b;
+      } else if (kind === 'run') {
+        // A short scale run out of the note, the way the line is heading.
+        const steps = 2 + Math.floor(rng() * 3);
+        const hold = span2 - steps * quick;
+        this.notes.push({ t: tt, d: hold, p: main, glide, from });
+        let p = main;
+        for (let k = 0; k < steps; k++) {
+          const nx = this.scaleNeighbour(chord, p, this.dir);
+          q(tt + hold + k * quick, quick, nx, p);
+          p = nx;
+        }
+        this.pitch = p;
+      } else if (kind === 'appoggiatura') {
+        // Lean on the neighbouring note first, then resolve onto the chord tone.
+        const lean = rng() < 0.6 ? up : down;
+        const d0 = Math.min(span2 * 0.35, this.beatSec * (0.5 + 0.5 * rng()));
+        this.notes.push({ t: tt, d: d0, p: lean, glide, from });
+        this.notes.push({ t: tt + d0, d: span2 - d0, p: main, glide: glide * 0.6, from: lean });
+        this.pitch = main;
+      } else if (kind === 'mordent') {
+        // A quick flick to the note above and back as it lands, then hold.
+        q(tt, quick, main, from);
+        q(tt + quick, quick, up, main);
+        this.notes.push({ t: tt + 2 * quick, d: span2 - 2 * quick, p: main, glide: quick * 0.4, from: up });
+        this.pitch = main;
+      } else if (kind === 'fall') {
+        // Hold, then let the end of the note fall away by a step or two.
+        const hold = span2 * (0.7 + 0.1 * rng());
+        const low = this.scaleNeighbour(chord, down, -1);
+        this.notes.push({ t: tt, d: hold, p: main, glide, from });
+        this.notes.push({ t: tt + hold, d: span2 - hold, p: rng() < 0.5 ? down : low, glide: glide * 0.9, from: main });
+        this.pitch = this.notes[this.notes.length - 1].p!;
+      } else if (kind === 'approach') {
         // Hold, then step toward where the line is heading (an approach note).
-        const hold = (end - tt) * (0.65 + rng() * 0.1);
+        const hold = span2 * (0.65 + rng() * 0.1);
         const approach = this.scaleNeighbour(chord, main, this.dir);
         this.notes.push({ t: tt, d: hold, p: main, glide, from });
-        this.notes.push({ t: tt + hold, d: end - tt - hold, p: approach, glide: glide * 0.7, from: main });
+        this.notes.push({ t: tt + hold, d: span2 - hold, p: approach, glide: glide * 0.7, from: main });
         this.pitch = approach;
       } else {
-        this.notes.push({ t: tt, d: end - tt, p: main, glide, from });
+        this.notes.push({ t: tt, d: span2, p: main, glide, from });
         this.pitch = main;
       }
       this.lastChord = chord;
@@ -202,8 +280,8 @@ export class MelodyGenerator {
   private soloTarget(chord: ChordSpec, pos: number): number {
     const [lo, hi] = this.range;
     const rng = this.pitchRng;
-    // The arch: rise through the first half of a phrase, fall through the second.
-    this.dir = pos < 2 ? 1 : -1;
+    // The phrase's contour: which way the line heads at this chord.
+    this.dir = this.contour[pos] ?? 1;
     if (this.pitch >= hi - 2) this.dir = -1;
     if (this.pitch <= lo + 2) this.dir = 1;
     const colour: Record<number, number> = { 4: 3, 3: 3, 2: 3, 14: 3, 11: 2, 10: 2, 6: 2, 18: 2, 9: 1.6, 7: 1.4, 0: 0.9, 5: 0.7 };
