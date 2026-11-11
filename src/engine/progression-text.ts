@@ -30,6 +30,8 @@ export type ProgressionToken =
 export interface ParseResult {
   tokens: ProgressionToken[];
   errors: string[];
+  /** Readings that are valid but easy to write by mistake (shown as hints, not errors). */
+  notes: string[];
 }
 
 const ROMANS: [string, number][] = [
@@ -143,13 +145,22 @@ export function splitTokens(text: string): string[] {
 export function parseProgression(text: string): ParseResult {
   const tokens: ProgressionToken[] = [];
   const errors: string[] = [];
+  const notes: string[] = [];
   for (const raw of splitTokens(text)) {
     if (!raw) continue;
     const t = parseToken(raw);
     if (typeof t === 'string') errors.push(t);
     else tokens.push(t);
+    // Lower case means minor, so "iiMaj7" is a minor chord with a major 7th (minor-major 7th),
+    // which is rarely what's meant: say so, with the two likely spellings.
+    const lm = /^([b#♭♯]?)(vii|vi|v|iv|iii|ii|i)(maj|Maj|M|Δ)(.*)$/.exec(raw);
+    if (lm && typeof t !== 'string' && !notes.some((n) => n.startsWith(raw + ' '))) {
+      const up = lm[1] + lm[2].toUpperCase();
+      const rest = lm[4];
+      notes.push(`${raw} reads as a minor chord with a major 7th (lower case = minor). For a major 7th chord write ${up}maj${rest || '7'}; for a minor 7th, ${lm[1]}${lm[2]}${rest || '7'}.`);
+    }
   }
-  return { tokens, errors };
+  return { tokens, errors, notes };
 }
 
 /**

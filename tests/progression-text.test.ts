@@ -39,3 +39,14 @@ describe('progression language', () => {
     }
   });
 });
+
+describe('hints', () => {
+  it('explains a lower-case numeral with maj7 (a minor-major 7th)', () => {
+    const r = parseProgression('iiMaj7 Vmaj7 Imaj7');
+    expect(r.errors).toEqual([]);
+    expect(r.notes).toHaveLength(1);
+    expect(r.notes[0]).toContain('IImaj7');
+    expect(r.notes[0]).toContain('ii7');
+    expect(parseProgression('ii7 V7 Imaj7 imMaj7').notes).toEqual([]);
+  });
+});

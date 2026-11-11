@@ -68,7 +68,7 @@ C{0 4 7 11 18}  +5{0 3 7}   any interval set from any root, fully key-agnostic
 ?                           let the generator choose this one
 ```
 
-Separate chords with spaces, commas, `|`, `→` or `>`. Quality aliases like `Δ`, `ø`, `°` and `-7` work. Bare numerals and degrees are voiced from the scale at the current complexity, so `1 6 3 4` sounds right in Lydian, Phrygian dominant or hirajoshi alike.
+Separate chords with spaces, commas, `|`, `→` or `>`. Lower case really means minor: `iiMaj7` is a minor chord with a major 7th (minor-major 7th, e.g. AmMaj7 in G), so a hint under the box says so and suggests `IImaj7` (major 7th) or `ii7` (minor 7th). Quality aliases like `Δ`, `ø`, `°` and `-7` work. Bare numerals and degrees are voiced from the scale at the current complexity, so `1 6 3 4` sounds right in Lydian, Phrygian dominant or hirajoshi alike.
 
 - **Chords in this key** shows the chord on every degree of the current scale at the current complexity. Click one to hear it and append it to the progression.
 - **Freeze chords to text** writes whatever is playing (generated or not) into the box as key-relative numerals. The text regenerates exactly the same chords, so you can generate, freeze, swap one chord for `?`, and keep exploring.

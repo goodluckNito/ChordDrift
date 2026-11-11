@@ -29,6 +29,7 @@ import {
   formatSeed,
   generateScore,
   songFromText,
+  parseProgression,
   seedArrangement,
   midiToConfig,
   deepMerge,
@@ -658,6 +659,7 @@ function startApp() {
         .map((e) => (prefix ? e.slice(prefix.length) : e))
         .join(' · ');
     $('#prog-errors').textContent = errs(null);
+    $('#prog-notes').textContent = parseProgression(state.progression).notes.join(' ');
     $('#rhythm-errors').textContent = errs('chord rhythm: ');
     $('#melody-errors').textContent = errs('melody rhythm: ');
     $('#strike-errors').textContent = errs('strike pattern: ');
