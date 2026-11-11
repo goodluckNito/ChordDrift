@@ -12,6 +12,7 @@
  */
 import type { Score } from '../engine/score';
 import { mod12, scaleSteps } from '../engine/theory';
+import { paletteStops } from './palette';
 
 const OUT_STEP = 10;
 
@@ -52,6 +53,8 @@ export interface HarmonyKey {
   sat: number;
   light: number;
   lspan: number;
+  /** The chosen line palette's colours (0..255), when there is one: harmony then draws from it. */
+  stops: [number, number, number][] | null;
 }
 
 /**
@@ -79,8 +82,29 @@ function schemeOf(accent: string, ink: string, bg: string) {
   };
 }
 
-export function harmonyKey(tonic: number, scale: string, accent: string, ink: string, dark: boolean, bg = ''): HarmonyKey {
-  return { tonic: mod12(tonic), inKey: new Set(scaleSteps(scale).map(mod12)), anchor: anchorHue(accent, ink), dark, ...schemeOf(accent, ink, bg) };
+export function harmonyKey(tonic: number, scale: string, accent: string, ink: string, dark: boolean, bg = '', stops: [number, number, number][] | null = null): HarmonyKey {
+  return { tonic: mod12(tonic), inKey: new Set(scaleSteps(scale).map(mod12)), anchor: anchorHue(accent, ink), dark, ...schemeOf(accent, ink, bg), stops };
+}
+
+/**
+ * With a palette chosen, harmony draws from it: the key's notes spread along the palette by their
+ * distance from the tonic round the circle of fifths (the tonic in the middle), notes outside the
+ * key from the other end of it, and higher notes a little brighter.
+ */
+function paletteRgb(p: number, k: HarmonyKey, stops: [number, number, number][]): [number, number, number] {
+  const rel = mod12(Math.round(p) - k.tonic);
+  const f = mod12(rel * 7);
+  const signed = f <= 6 ? f : f - 12;
+  let u = 0.5 + (k.dir * signed) / 13;
+  if (!k.inKey.has(rel)) u = (u + 0.5) % 1;
+  const x = Math.max(0, Math.min(1, u)) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(x));
+  const t = x - i;
+  const a = stops[i];
+  const b = stops[Math.min(stops.length - 1, i + 1)];
+  const reg = Math.max(0, Math.min(1, (p - 40) / 44));
+  const lift = 0.82 + 0.36 * reg;
+  return [0, 1, 2].map((c) => Math.max(0, Math.min(1, ((a[c] + (b[c] - a[c]) * t) / 255) * lift))) as [number, number, number];
 }
 
 /** The harmony colour of a pitch as HSL (h in degrees, s and l 0..1). */
@@ -97,11 +121,16 @@ export function harmonyHsl(p: number, k: HarmonyKey): [number, number, number] {
 }
 
 export function harmonyCss(p: number, k: HarmonyKey): string {
+  if (k.stops && k.stops.length) {
+    const [r, g, b] = paletteRgb(p, k, k.stops);
+    return `rgb(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)})`;
+  }
   const [h, s, l] = harmonyHsl(p, k);
   return `hsl(${h.toFixed(1)} ${(s * 100).toFixed(0)}% ${(l * 100).toFixed(0)}%)`;
 }
 
 export function harmonyRgb(p: number, k: HarmonyKey): [number, number, number] {
+  if (k.stops && k.stops.length) return paletteRgb(p, k, k.stops);
   const [h, s, l] = harmonyHsl(p, k);
   const f = (n: number) => {
     const q = (n + h / 30) % 12;
@@ -116,5 +145,5 @@ export function harmonyKeyAt(score: Score, t: number, dark: boolean): HarmonyKey
   let k = 0;
   while (k + 1 < score.chords.length && score.chords[k + 1].t <= t) k++;
   const c = score.chords[k];
-  return harmonyKey(c ? c.tonic : score.keyPc, c ? c.scale : score.config.scale, th.accent, th.ink, dark, th.background);
+  return harmonyKey(c ? c.tonic : score.keyPc, c ? c.scale : score.config.scale, th.accent, th.ink, dark, th.background, paletteStops(th));
 }

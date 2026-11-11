@@ -622,6 +622,9 @@ function startApp() {
     strikeSelect.value = strikeIdx >= 0 ? String(strikeIdx) : 'custom';
     for (const el of form.querySelectorAll<HTMLElement>('[data-gradient]')) el.hidden = !displayTheme().gradient;
     for (const el of form.querySelectorAll<HTMLElement>('[data-palette]')) el.hidden = displayTheme().colorBy === 'none';
+    // With harmony colouring, "Rainbow" means the harmony colours built from the theme itself.
+    const rainbow = $<HTMLSelectElement>('#palette-select').querySelector<HTMLOptionElement>('option[value="rainbow"]');
+    if (rainbow) rainbow.textContent = displayTheme().colorBy === 'harmony' ? 'From the theme (key colours round its accent)' : PALETTE_LABELS.rainbow ?? 'Rainbow';
     if (displayTheme().colorSeed) $<HTMLSelectElement>('#palette-select').value = 'rolled';
     for (const el of form.querySelectorAll<HTMLElement>('[data-spiral]')) el.hidden = state.video.view !== 'spiral';
     for (const el of form.querySelectorAll<HTMLElement>('[data-city]')) el.hidden = state.video.view !== 'city';
