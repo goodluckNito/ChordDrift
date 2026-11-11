@@ -2,7 +2,7 @@ import { COLOUR_BY_COMPLEXITY, SIZE_BY_COMPLEXITY, alterChord, chordName, chordS
 import type { ChordDriftConfig } from './config';
 import { parseProgression, type ProgressionToken } from './progression-text';
 import { STYLES, StylePlanner, type PlanItem } from './styles';
-import { pick, weighted, type Rng } from './rng';
+import { hashSeed, pick, stream, weighted, type Rng } from './rng';
 import { PARALLEL_SCALES, SCALES, mod12, romanFor, scalePcs, scaleSteps, tonicName } from './theory';
 
 export type ChordOrigin = 'passing' | 'scale' | 'altered' | 'secondary' | 'borrowed' | 'mediant' | 'pivot' | 'modulation' | 'voiceled' | 'free' | 'cadence' | 'written';
@@ -48,6 +48,8 @@ export class ProgressionWalker {
   private resolveTo: number | null = null;
   private sinceHome = 0;
   private complexity: number;
+  /** Spice: its own stream (drawn whatever the setting), so the walker's other choices keep their randomness. */
+  private spiceRng: Rng;
 
   /** Style planning: a fixed plan (finite pieces) or a planner pulled phrase by phrase (endless). */
   private plan: PlanItem[] | null = null;
@@ -64,6 +66,7 @@ export class ProgressionWalker {
     this.tonic = tonic;
     this.scale = SCALES[cfg.scale] ? cfg.scale : 'major';
     this.complexity = cfg.complexity;
+    this.spiceRng = stream(hashSeed(tonic, String(cfg.seed)), 'spice');
     if (cfg.style !== 'none' && !tokens.length && styleRng) {
       const def = STYLES[cfg.style];
       this.complexity = Math.max(def.complexity[0], Math.min(def.complexity[1], cfg.complexity));
@@ -120,6 +123,18 @@ export class ProgressionWalker {
     }
     if (token && token.kind === 'chord') spec = this.resolve(token, planned?.origin, planned?.keyChange);
     else spec = this.generate(index === 0 && !token, !planned && total !== null && index === total - 1 && total > 1, cost);
+    // Spice: now and then (mostly at key moments) a generated chord gets richer colour. Only what's
+    // returned is spiced: the walker remembers the plain chord. (Later chords can still differ a
+    // little, since they're chosen for smooth voice leading from the richer voicing.)
+    let out = spec;
+    if (!(token && token.kind === 'chord')) {
+      const r = this.spiceRng();
+      const pickR = this.spiceRng();
+      if (this.cfg.spice > 0) {
+        const key = spec.origin === 'cadence' || spec.origin === 'secondary' || isDominant(spec) || index % 4 === 3 || (total !== null && index === total - 2);
+        if (r < (key ? this.cfg.spice : this.cfg.spice * 0.1)) out = this.spiced(spec, pickR);
+      }
+    }
     if (spec.origin === 'pivot') {
       this.tonic = spec.tonic;
       this.scale = spec.scale;
@@ -128,10 +143,29 @@ export class ProgressionWalker {
     this.prevPrev = this.prev;
     this.prev = spec;
     this.recent = [...this.recent.slice(-3), spec];
-    return spec;
+    return out;
   }
 
   // ---- Building blocks ------------------------------------------------------
+
+  /** The same chord with richer colour: a dominant gets a 9th, 13th or (in minor) ♭9; others a 9th or 11th from the scale. */
+  private spiced(spec: ChordSpec, r: number): ChordSpec {
+    let intervals: number[] | null = null;
+    if (isDominant(spec)) {
+      const minorKey = isMinorish(stackChord(spec.tonic, spec.scale, 0, 3).intervals);
+      const opts = minorKey ? ['7b9', '9', '13b9'] : ['9', '13', '13sus4'];
+      intervals = suffixIntervals(opts[Math.floor(r * opts.length)]);
+    } else {
+      const d = this.degreeOf(spec.root, spec.tonic, spec.scale);
+      if (d >= 0) {
+        const rich = stackChord(spec.tonic, spec.scale, d, Math.max(5, spec.intervals.length + 1) + (r < 0.3 ? 1 : 0));
+        if (rich.intervals.length > spec.intervals.length) intervals = rich.intervals;
+      } else if (!spec.intervals.some((iv) => iv % 12 === 2)) intervals = [...spec.intervals, 14];
+    }
+    if (!intervals) return spec;
+    const chord = { root: spec.root, intervals };
+    return { ...spec, intervals, name: chordName(chord, spec.tonic, spec.scale), roman: spec.origin === 'secondary' ? spec.roman : romanName(chord, spec.tonic) };
+  }
 
   private spec(chord: Chord, origin: ChordOrigin, tonic = this.tonic, scale = this.scale, target?: number): ChordSpec {
     let roman = romanName(chord, tonic);

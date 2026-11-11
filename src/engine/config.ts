@@ -69,6 +69,8 @@ export interface ChordDriftConfig {
   mode: Mode;
   /** 1 = triads … 3 = 9ths/11ths … 5 = 13ths and altered colours. */
   complexity: number;
+  /** 0..1: how often a generated chord gets richer colour than the complexity, mostly at key moments (dominants, cadences, phrase ends). */
+  spice: number;
   /** Genre planner: phrases, cadences and key changes in a style ('none' = use the generator). */
   style: StyleId;
   /**
@@ -238,6 +240,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
   scale: 'major',
   mode: 'scale',
   complexity: 3,
+  spice: 0,
   style: 'none',
   progression: '',
   endless: false,
@@ -321,6 +324,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   if (!['scale', 'drift', 'voiceled', 'free'].includes(c.mode)) c.mode = 'scale';
   if (!SCALES[c.scale]) c.scale = 'major';
   c.complexity = Math.max(1, Math.min(5, Math.round(Number(c.complexity) || 3)));
+  c.spice = Number.isFinite(c.spice) ? Math.max(0, Math.min(1, c.spice)) : 0;
   c.progression = String(c.progression ?? '');
   if (!STYLE_IDS.includes(c.style)) c.style = 'none';
   c.video.centerLabel = c.video.centerLabel !== false;

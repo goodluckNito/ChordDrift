@@ -72,14 +72,16 @@ export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = '
   const drums = r() < (chill ? 0.35 : 0.45);
   const drumPreset = pick(r, chill ? DRUM_PRESETS.filter((p) => !/trap|breakbeat|jungle/i.test(p.name)) : DRUM_PRESETS);
   const kit = pick(r, (chill ? ['808', 'acoustic', '808', 'acoustic', 'witch'] : ['witch', '808', 'acoustic', 'industrial', 'jungle']) as KitId[]);
+  // (One draw whatever the list, so changing the views never changes a song's music.)
   const view = weighted(r, [
-    ['timeline', 6],
-    ['spiral', 3],
+    ['timeline', 4.2],
+    ['spiral', 2.4],
     ['waterfall', 1.5],
-    ['constellation', 1.2], // (was the Chladni plate: same draw, so songs keep their music)
-    ['constellation', 1.2], // (was the circle of fifths: same draw, so songs keep their music)
     ['constellation', 1.2],
-  ] as ['timeline' | 'spiral' | 'waterfall' | 'constellation', number][]);
+    ['marbling', 1.5],
+    ['tornado', 1.5],
+    ['city', 1.5],
+  ] as ['timeline' | 'spiral' | 'waterfall' | 'constellation' | 'marbling' | 'tornado' | 'city', number][]);
   const theme = randomTheme(r);
   let tempo = 0;
   const out: DeepPartial<ChordDriftConfig> = {
@@ -187,6 +189,10 @@ export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = '
   }
   // …and rarely slip chromatic passing chords in (the diminished ones jolt).
   if (chill) out.passing = 0.08;
+  // Glides vary from song to song, and quick chord changes glide less (short glides, more strikes).
+  const g = glideForPace(stream(hashSeed(0, String(seed)), 'glide'), out.rhythm?.chords ?? '', tempo || 80);
+  out.timing = { ...out.timing, glide: g.glide, stagger: g.stagger };
+  if (mood !== 'pure' && out.motion?.transition === 'glide') out.motion = { ...out.motion, strikes: Math.max(out.motion.strikes ?? 0, g.strikes) };
   return out;
 }
 
@@ -194,6 +200,27 @@ export function surpriseConfig(seed: string | number, r: Rng, mood: SongMood = '
 export function songFromText(text: string, mood: SongMood = 'adventurous'): DeepPartial<ChordDriftConfig> {
   const t = text.trim();
   return surpriseConfig(t, stream(hashSeed(0, t), 'surprise'), mood);
+}
+
+/**
+ * Glide timing for a song's pace: chords a few seconds long or more glide slowly (0.5–1.3 s) with
+ * some stagger; quick chord changes get short glides (0.15–0.4 s), little stagger and some
+ * strikes, so they don't spend their time sliding. Free timing counts as unhurried.
+ */
+export function glideForPace(r: Rng, chords: string, tempo: number): { glide: number; stagger: number; strikes: number } {
+  const beats = chords ? chordDurations(parseRhythm(chords).steps) : [];
+  const secs = beats.length ? ((beats.reduce((a, b) => a + b, 0) / beats.length) * 60) / tempo : 3.5;
+  const quick = Math.max(0, Math.min(1, (3.2 - secs) / 2));
+  const slow = between(r, 0.5, 1.3);
+  const fast = between(r, 0.15, 0.4);
+  const stagger = between(r, 0, 0.4);
+  const strike = r();
+  const glide = Math.round((slow + (fast - slow) * quick) * 20) / 20;
+  return {
+    glide: Math.max(0.1, glide),
+    stagger: Math.round(stagger * (1 - 0.6 * quick) * 20) / 20,
+    strikes: quick > 0.3 ? Math.round((0.15 + 0.35 * strike) * quick * 20) / 20 : 0,
+  };
 }
 
 /**
@@ -211,5 +238,9 @@ export function seedArrangement(config: ChordDriftConfig): DeepPartial<ChordDrif
   };
   const strike = pick(r, STRIKE_PRESETS).pattern;
   if (config.motion.transition === 'pluck') out.rhythm!.pluck = strike;
+  // Glide timing to suit the new chord rhythm (quick changes glide less).
+  const g = glideForPace(r, out.rhythm!.chords ?? '', config.rhythm.tempo);
+  out.timing = { glide: g.glide, stagger: g.stagger };
+  if (config.motion.transition === 'glide') out.motion = { strikes: Math.max(config.motion.strikes, g.strikes) };
   return out;
 }
