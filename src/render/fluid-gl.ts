@@ -49,7 +49,9 @@ interface GLState {
   quad: WebGLBuffer;
   /** Per-score simulation. */
   score: Score | null;
+  /** The grid for the current piece and frame shape ("shape/simWxH/dyeWxH"), and the one built. */
   key: string;
+  built: string;
   vel: Double;
   dye: Double;
   pressure: Double;
@@ -234,7 +236,7 @@ function initGL(): GLState | null {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    return { canvas, gl, progs, quad, score: null, key: '', vel: null!, dye: null!, pressure: null!, div: null!, curlT: null!, step: 0, snaps: [] };
+    return { canvas, gl, progs, quad, score: null, key: '', built: '', vel: null!, dye: null!, pressure: null!, div: null!, curlT: null!, step: 0, snaps: [] };
   } catch {
     return null;
   }
@@ -406,12 +408,20 @@ export function drawInkGL(ctx: CanvasRenderingContext2D, score: Score, t: number
   const gl = S.gl;
   const Wc = ctx.canvas.width;
   const Hc = ctx.canvas.height;
-  const simW = lite ? 96 : 160;
-  const dyeW = lite ? 320 : 640;
-  const simH = Math.max(32, Math.round((simW * Hc) / Wc));
-  const dyeH = Math.max(64, Math.round((dyeW * Hc) / Wc));
-  const key = `${simW}x${simH}/${dyeW}x${dyeH}`;
-  if (S.score !== score || S.key !== key) {
+  // The grid is fixed per piece and frame shape: playback dropping to lite quality (or the canvas
+  // resizing with it) must not throw the fluid away and replay it from the start, which showed old
+  // ink for a moment, like the colours flicking. Only a new piece or a new shape starts over.
+  const shape = (Math.round((Hc / Wc) * 20) / 20).toFixed(2);
+  if (S.score !== score || !S.key.startsWith(shape + '/')) {
+    const simW = lite ? 96 : 160;
+    const dyeW = lite ? 320 : 640;
+    S.key = `${shape}/${simW}x${Math.max(32, Math.round(simW * +shape))}/${dyeW}x${Math.max(64, Math.round(dyeW * +shape))}`;
+  }
+  const [, simDims, dyeDims] = S.key.split('/');
+  const [simW, simH] = simDims.split('x').map(Number);
+  const [dyeW, dyeH] = dyeDims.split('x').map(Number);
+  const key = S.key;
+  if (S.score !== score || S.built !== key) {
     if (S.vel) for (const t2 of [S.vel.read, S.vel.write, S.dye.read, S.dye.write, S.pressure.read, S.pressure.write, S.div, S.curlT, ...S.snaps.flatMap((s) => [s.vel, s.dye])]) free(gl, t2);
     S.vel = double(gl, simW, simH, gl.LINEAR);
     S.dye = double(gl, dyeW, dyeH, gl.LINEAR);
@@ -421,7 +431,7 @@ export function drawInkGL(ctx: CanvasRenderingContext2D, score: Score, t: number
     S.snaps = [];
     S.step = 0;
     S.score = score;
-    S.key = key;
+    S.built = key;
   }
   const clearAll = () => {
     for (const t2 of [S.vel.read, S.vel.write, S.dye.read, S.dye.write, S.pressure.read, S.pressure.write]) {

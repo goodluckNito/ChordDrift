@@ -250,14 +250,17 @@ export function drawInk(ctx: CanvasRenderingContext2D, score: Score, t: number, 
   const W = a.width;
   const top = -m.f / m.d;
   const H = ctx.canvas.height / m.d;
-  const nx = lite ? 64 : 100;
-  const ny = Math.max(24, Math.round((nx * H) / W));
-  const key = `${nx}x${ny}`;
+  // Fixed per piece and frame shape (not per quality level), so dropping to lite quality never
+  // starts the fluid over (see fluid-gl.ts).
+  const shape = (Math.round((H / W) * 20) / 20).toFixed(2);
   let s = sims.get(score);
-  if (!s || s.key !== key) {
-    s = makeSim(nx, ny, key);
+  if (!s || !s.key.startsWith(shape + '/')) {
+    const nx = lite ? 64 : 100;
+    const ny = Math.max(24, Math.round(nx * +shape));
+    s = makeSim(nx, ny, `${shape}/${nx}x${ny}`);
     sims.set(score, s);
   }
+  const { nx, ny } = s;
   const target = Math.max(0, Math.floor(t / DT));
   if (target < s.step) {
     // Jumped back: restore the latest snapshot before the target (or start over).
