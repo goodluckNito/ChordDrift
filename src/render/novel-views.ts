@@ -89,14 +89,12 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   // a voice's note changes are read from the chords instead of its moves.
   const swellMode = score.config.motion.transition === 'swell';
   const kNow = chordAt(score, t).k;
-  const chordMove = (j: number, v: number) => {
-    const c = score.chords[j];
-    const b = score.chords[j - 1];
-    return c && b ? { t0: c.t, d: score.config.timing.swellIn, p0: b.notes[v], p1: c.notes[v] } : null;
-  };
-  /** The voice's latest note change at or before t (null before its first). */
-  const lastMove = (v: number) => {
-    if (swellMode && kNow >= 1) return chordMove(kNow, v);
+  type Change = { t0: number; p0: number; p1: number };
+  /**
+   * A voice's note changes around t: the latest (and how many came before it, i), and the next.
+   * Gliding, those are its moves; with release-&-swell changes, the chords where its note differs.
+   */
+  const changesOf = (v: number): { last: Change | null; i: number; next: Change | null } => {
     const ms = score.moves[v];
     let l = 0;
     let h = ms.length - 1;
@@ -106,7 +104,23 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       if (ms[mid].t0 <= t) (idx = mid), (l = mid + 1);
       else h = mid - 1;
     }
-    return idx >= 0 ? ms[idx] : null;
+    if (!swellMode || kNow < 1) return { last: idx >= 0 ? ms[idx] : null, i: idx, next: ms[idx + 1] ?? (swellMode ? chordChange(1, v) : null) };
+    let i = ms.length - 1;
+    let last: Change | null = ms[i] ?? null;
+    const ch = score.chords;
+    for (let j = 1; j < ch.length; j++) {
+      if (Math.round(ch[j].notes[v]) === Math.round(ch[j - 1].notes[v])) continue;
+      const c = { t0: ch[j].t, p0: ch[j - 1].notes[v], p1: ch[j].notes[v] };
+      if (j > kNow) return { last, i, next: c };
+      i++;
+      last = c;
+    }
+    return { last, i, next: null };
+  };
+  const chordChange = (j: number, v: number): Change | null => {
+    const ch = score.chords;
+    for (; j < ch.length; j++) if (Math.round(ch[j].notes[v]) !== Math.round(ch[j - 1].notes[v])) return { t0: ch[j].t, p0: ch[j - 1].notes[v], p1: ch[j].notes[v] };
+    return null;
   };
   const now = chordAt(score, t);
   const RISE = 1.4; // s for a new note to be swirled up from the ground to its height
@@ -123,19 +137,6 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
     /** How far out it's being flung (ejected notes spread out as they leave). */
     fling: number;
   }
-  const nextMove = (v: number) => {
-    if (swellMode && kNow >= 0) return chordMove(kNow + 1, v);
-    const ms = score.moves[v];
-    let l = 0;
-    let h = ms.length - 1;
-    let idx = ms.length;
-    while (l <= h) {
-      const mid = (l + h) >> 1;
-      if (ms[mid].t0 > t) (idx = mid), (h = mid - 1);
-      else l = mid + 1;
-    }
-    return idx < ms.length ? ms[idx] : null;
-  };
   /**
    * Each voice is a band of debris at its note's height. A moment before the voice changes note,
    * the dust at the foot starts turning into the next note; when it changes, that note is swirled
@@ -143,7 +144,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
    * Notes are in full colour while they sound and greyed while waiting, ringing off or leaving.
    */
   const bands = Array.from({ length: V }, (_, v) => {
-    const m = lastMove(v);
+    const { last: m, i, next: n } = changesOf(v);
     const level = levelAt(score, v, t);
     const amp = level * (v === 0 ? 0.3 : 0.55);
     const target = m ? m.p1 : swellMode ? soundingPitches(score, t)[v] : pitchAt(score, v, t);
@@ -153,14 +154,16 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
     const cur: Band = {
       f: 0.01 + (heightOf(target) - 0.01) * rise * rise,
       amp,
-      alpha: 0.5 + 0.5 * rise,
+      // Fainter and greyer as it rings off; full colour while it sounds.
+      alpha: 0.45 + 0.55 * level,
       name: nameOf(score, mod12(Math.round(target)), now.c),
-      color: saturate(st.noteColor(target, v), 0.2 + 0.8 * level),
+      color: saturate(st.noteColor(target, v), 0.15 + 0.85 * level),
       rise,
       fling: 1,
     };
     let gone: Band | null = null;
-    if (m && age < LEAVE && Math.round(m.p0) !== Math.round(m.p1)) {
+    if (m && age < LEAVE) {
+      // The whole band it was rides on up the funnel and is flung out into the sky, greying as it goes.
       const y = age / LEAVE;
       const f0 = heightOf(m.p0);
       gone = {
@@ -168,26 +171,25 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
         amp: Math.max(amp, 0.25),
         alpha: (1 - y) ** 1.2,
         name: nameOf(score, mod12(Math.round(m.p0)), now.c),
-        color: saturate(st.noteColor(m.p0, v), 0.2),
+        color: saturate(st.noteColor(m.p0, v), 0.85 * (1 - y) + 0.12 * y),
         rise: 1,
         fling: 1 + 1.8 * y * y,
       };
     }
     let next: Band | null = null;
-    const n = nextMove(v);
-    if (n && n.t0 - t < LEAD && Math.round(n.p1) !== Math.round(target)) {
+    if (n && n.t0 - t < LEAD) {
       const w = 1 - (n.t0 - t) / LEAD;
       next = {
         f: 0.012,
         amp: 0.3,
         alpha: w * w * (3 - 2 * w),
         name: nameOf(score, mod12(Math.round(n.p1)), now.c),
-        color: saturate(st.noteColor(n.p1, v), 0.2),
+        color: saturate(st.noteColor(n.p1, v), 0.15),
         rise: 0,
         fling: 1,
       };
     }
-    return { cur, gone, next, v };
+    return { cur, gone, next, i, v };
   });
   const bulges = bands.map((b) => ({ f: b.cur.f, amp: b.cur.amp, v: b.v }));
   const W0 = 0.05;
@@ -359,7 +361,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
 
   // Debris: back half, then the front. Dust fills the funnel; in each voice's band the debris is
   // the note itself, letters of its name swirling round, coloured like the note.
-  const N = lite ? 900 : 2200;
+  const N = lite ? 1200 : 2700;
   const letterPx = 14 * a.tu;
   // The skirt where it touches down: dust thrown out round the foot, low and wide.
   const skirt = lite ? 160 : 420;
@@ -389,7 +391,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       let th: number;
       let rr: number;
       const inner = 0.55 + 0.5 * Math.sqrt(hash(b, 3)); // where across the funnel it rides
-      if (b % 2 === 0) {
+      if (b % 3 === 0) {
         const rate = 0.025 + 0.02 * hash(b, 2);
         const pos = hash(b, 1) + t * rate;
         f = pos % 1;
@@ -400,12 +402,18 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
         const vb = bands[Math.floor(hash(b, 8) * bands.length)];
         // A voice's debris: about a third goes with the note it's leaving, a third gathers as the
         // next note in the dust at the foot, the rest is the note sounding now.
-        const h13 = hash(b, 13);
-        B = vb.gone && h13 < 0.3 ? vb.gone : vb.next && h13 > 0.66 ? vb.next : vb.cur;
-        if (B === vb.cur && B.amp < 0.03) continue;
+        // Each voice's debris is three groups taking turns: the note sounding now, the one it left
+        // (riding up and out), and the next one gathering at the foot. At each change the groups
+        // rotate, so every particle carries on from where it was: nothing vanishes or jumps.
+        const pool = Math.floor(hash(b, 13) * 3);
+        const turnOf = (k: number) => ((k % 3) + 3) % 3;
+        if (pool === turnOf(vb.i)) B = vb.cur;
+        else if (vb.gone && pool === turnOf(vb.i - 1)) B = vb.gone;
+        else if (vb.next && pool === turnOf(vb.i + 1)) B = vb.next;
+        else continue;
         const g = (hash(b, 1) + hash(b, 9) + hash(b, 10)) / 1.5 - 1;
         const leaving = B === vb.gone;
-        f = Math.max(0.005, Math.min(leaving ? 1.3 : 0.99, B.f + g * W0 * (leaving ? 2.4 : 1.4) * (0.3 + 0.7 * B.rise) + 0.012 * Math.sin(t * 2 + b) * B.rise));
+        f = Math.max(0.005, Math.min(leaving ? 1.3 : 0.99, B.f + g * W0 * (1.4 + (leaving ? 1.8 * (B.fling - 1) : 0)) * (0.3 + 0.7 * B.rise) + 0.012 * Math.sin(t * 2 + b) * B.rise));
         // Down in the skirt it circles the foot; swirling up, it closes in onto the funnel.
         const skirtR = halfW * (0.07 + 0.25 * Math.sqrt(hash(b, 3)));
         const onFunnel = radiusAt(f) * inner * (1 + 0.25 * drum.snare * hash(b, 4)) * B.fling;
@@ -421,7 +429,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       const y = yOf(f) - (B ? (1 - B.rise) * Hf * 0.012 * (0.5 + 0.5 * Math.sin(t * 3 + b)) : 0);
       const sparkle = Math.max(0, Math.cos(th * 3 + b)) ** 8 + drum.hat * hash(b, Math.floor(t * 10));
       const near = 0.55 + 0.45 * depth; // the near side larger and brighter, the far side dim
-      if (B && hash(b, 12) < (B.rise < 1 ? 0.7 : 0.45)) {
+      if (B && hash(b, 12) < 0.5) {
         ctx.fillStyle = B.color;
         ctx.globalAlpha = Math.min(1, 0.3 + 0.6 * near + 0.4 * sparkle) * B.alpha;
         const sc = 0.65 + 0.5 * near;
