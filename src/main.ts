@@ -29,6 +29,7 @@ import {
   formatSeed,
   generateScore,
   songFromText,
+  seedArrangement,
   midiToConfig,
   deepMerge,
   readMidi,
@@ -834,6 +835,13 @@ function startApp() {
     history.replaceState(null, '', code ? `#${code}` : location.pathname + location.search);
   }
 
+  /** A new seed, and with "New seeds also roll…" ticked, the arrangement that seed rolls. */
+  function reseeded(base: ChordDriftConfig): ChordDriftConfig {
+    const next = { ...base, seed: formatSeed(randomSeed()) };
+    if (!$<HTMLInputElement>('#dice-arrangement').checked) return next;
+    return resolveConfig(deepMerge(next, seedArrangement(next)) as DeepPartial<ChordDriftConfig>);
+  }
+
   /** Every setting from these words (keeps the output format). */
   function makeSong(text: string) {
     const t = text.trim();
@@ -1196,8 +1204,22 @@ function startApp() {
     debounce = window.setTimeout(() => rebuild(path !== 'seed'), delay);
   });
   form.addEventListener('submit', (e) => e.preventDefault());
+  // New seeds can also roll the arrangement (drums, melody, beat, chord rhythm): remembered per device.
+  const arrangeBox = $<HTMLInputElement>('#dice-arrangement');
+  try {
+    arrangeBox.checked = localStorage.getItem('chord-drift.dice-arrangement') !== '0';
+  } catch {
+    /* storage unavailable */
+  }
+  arrangeBox.addEventListener('change', () => {
+    try {
+      localStorage.setItem('chord-drift.dice-arrangement', arrangeBox.checked ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  });
   $('#dice').addEventListener('click', () => {
-    state.seed = formatSeed(randomSeed());
+    state = reseeded(state);
     writeForm();
     rebuild(false);
   });
@@ -1487,7 +1509,7 @@ function startApp() {
       const L = score.timeline.end;
       const boundary = (Math.floor(raw / L + 1e-9) + 1) * L;
       if (boundary - raw < 1.2) {
-        const nextState = { ...state, seed: formatSeed(randomSeed()) };
+        const nextState = reseeded(state);
         try {
           const next = generateScore(nextState);
           if (next.loop && next.startNote === score.startNote && player.chain(next, boundary)) pendingPass = { next, nextState };

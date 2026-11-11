@@ -45,3 +45,22 @@ describe('glide feel and strikes', () => {
     expect(notes(s)).toEqual(notes(plain));
   });
 });
+
+import { resolveConfig, seedArrangement } from '../src/engine';
+describe('new seeds roll an arrangement', () => {
+  it('is the same for the same seed and varies across seeds', () => {
+    const base = resolveConfig({ seed: 'a' });
+    expect(seedArrangement(base)).toEqual(seedArrangement(resolveConfig({ seed: 'a' })));
+    const rolls = Array.from({ length: 40 }, (_, i) => seedArrangement(resolveConfig({ seed: `s${i}` })));
+    expect(new Set(rolls.map((r) => r.drums?.enabled)).size).toBe(2);
+    expect(new Set(rolls.map((r) => r.melody?.enabled)).size).toBe(2);
+    expect(new Set(rolls.map((r) => r.rhythm?.chords)).size).toBeGreaterThan(4);
+    expect(new Set(rolls.map((r) => r.drums?.kick)).size).toBeGreaterThan(4);
+  });
+  it('leaves the kit, sound and tempo alone', () => {
+    const r = seedArrangement(resolveConfig({ seed: 'b' }));
+    expect(r.drums?.kit).toBeUndefined();
+    expect(r.audio).toBeUndefined();
+    expect(r.rhythm?.tempo).toBeUndefined();
+  });
+});

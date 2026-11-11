@@ -185,3 +185,21 @@ export function songFromText(text: string, mood: SongMood = 'adventurous'): Deep
   const t = text.trim();
   return surpriseConfig(t, stream(hashSeed(0, t), 'surprise'), mood);
 }
+
+/**
+ * A new arrangement to go with a new seed (the seed 🎲 and Loop + new seed): drums and melody on
+ * or off, a drum beat, the chord-change rhythm and, for plucked changes, the strike pattern. Drawn
+ * from the seed, so the same seed always rolls the same arrangement; the kit, sound and tempo stay.
+ */
+export function seedArrangement(config: ChordDriftConfig): DeepPartial<ChordDriftConfig> {
+  const r = stream(hashSeed(0, String(config.seed)), 'arrangement');
+  const beat = pick(r, config.drums.kit === 'jungle' ? DRUM_PRESETS : DRUM_PRESETS.filter((p) => !/jungle/i.test(p.name)));
+  const out: DeepPartial<ChordDriftConfig> = {
+    drums: { enabled: r() < 0.55, kick: beat.kick, snare: beat.snare, hat: beat.hat, crash: beat.crash, ride: beat.ride },
+    melody: { enabled: r() < 0.4, density: between(r, 0.15, 0.7) },
+    rhythm: { chords: pick(r, RHYTHM_PRESETS).chords },
+  };
+  const strike = pick(r, STRIKE_PRESETS).pattern;
+  if (config.motion.transition === 'pluck') out.rhythm!.pluck = strike;
+  return out;
+}

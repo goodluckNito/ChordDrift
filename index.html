@@ -82,8 +82,12 @@
             <label class="wide" title="The seed decides whatever you leave open: the chords, and the random parts of rhythm, drums and melody">Seed
               <span class="row">
                 <input data-path="seed" class="mono" spellcheck="false" />
-                <button type="button" id="dice" title="New chords: roll a new seed, keeping every other setting (R)">🎲</button>
+                <button type="button" id="dice" title="New seed: new chords, and (if ticked below) a new arrangement: drums and melody on or off, the beat and the chord rhythm (R)">🎲</button>
               </span>
+            </label>
+            <label class="check wide" title="When ticked, a new seed (🎲, or Loop + new seed) also rolls drums and melody on or off, the drum beat, the chord-change rhythm and the strike pattern. Kit, sound and tempo stay. Untick to change only the chords.">
+              <input type="checkbox" id="dice-arrangement" checked />
+              <span>New seeds also roll drums, melody &amp; rhythm</span>
             </label>
             <label>Tonic
               <select data-path="key" id="key"></select>
