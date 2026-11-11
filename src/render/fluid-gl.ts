@@ -249,9 +249,11 @@ void main() {
   vec3 col;
   if (glow > 0.5) {
     // Dark water: the ink glows like fluorescent dye, with a soft halo (blurred levels of the ink).
-    col = bg + emit(d) * (0.85 + 0.3 * light)
-        + emit(textureLod(dye, uv, 2.5)) * 0.32
-        + emit(textureLod(dye, uv, 4.5)) * 0.22;
+    // The light adds up softly toward white instead of clipping, so thick, pale ink keeps its tint.
+    vec3 e = emit(d) * (0.8 + 0.25 * light)
+        + emit(textureLod(dye, uv, 2.5)) * 0.28
+        + emit(textureLod(dye, uv, 4.5)) * 0.18;
+    col = bg + (1.0 - bg) * (1.0 - exp(-1.8 * e));
   } else {
     // Light water: the ink absorbs light like real dye (rgb holds what each colour absorbs), so
     // mixed inks make new colours (blue and yellow → green), thick ink goes deep, wisps just tint.
@@ -259,7 +261,7 @@ void main() {
     col = bg * exp(-od) * mix(1.0, 0.86 + 0.24 * light, body);
   }
   // A wet sheen on the folds.
-  col += pow(light, 24.0) * 0.18 * body;
+  col = min(col + pow(light, 24.0) * 0.14 * body, vec3(0.97));
   // Dither, so smooth gradients don't band.
   float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
   o = vec4(col + (n - 0.5) / 255.0, 1.0);

@@ -128,6 +128,57 @@ function closeInIntegral(age: number): number {
   return closeInTable[i] + (closeInTable[i + 1] - closeInTable[i]) * (x - i);
 }
 
+/** Kick times and running velocity totals per piece, extended as it plays (for the tornado's swirl). */
+const kickCache = new WeakMap<Score, { until: number; t: number[]; cum: number[] }>();
+/** The swirl's extra turn by time T: 1.3 × each kick's velocity, eased in over a third of a second. */
+function kickTurn(score: Score, T: number): number {
+  if (!score.drums) return 0;
+  let c = kickCache.get(score);
+  if (!c) kickCache.set(score, (c = { until: 0, t: [], cum: [0] }));
+  if (T > c.until) {
+    const to = T + 30;
+    for (const h of drumHits(score, c.until, to)) {
+      if (h.voice !== 'kick' || h.t < c.until) continue;
+      c.t.push(h.t);
+      c.cum.push(c.cum[c.cum.length - 1] + h.vel);
+    }
+    c.until = to;
+  }
+  // Kicks more than three seconds back count in full; the last few are still easing in.
+  let l = 0;
+  let h = c.t.length;
+  while (l < h) {
+    const mid = (l + h) >> 1;
+    if (c.t[mid] <= T) l = mid + 1;
+    else h = mid;
+  }
+  let k = l;
+  while (k > 0 && T - c.t[k - 1] < 3) k--;
+  let s = 1.3 * c.cum[k];
+  for (let i = k; i < l; i++) s += 1.3 * (c.cum[i + 1] - c.cum[i]) * (1 - Math.exp(-(T - c.t[i]) / 0.35));
+  return s;
+}
+
+/** Letters as small pre-drawn stamps (drawing text is slow on phones), by font, size, letter and colour. */
+const stampCache = new Map<string, HTMLCanvasElement | OffscreenCanvas>();
+function letterStamp(font: string, px: number, name: string, color: string): HTMLCanvasElement | OffscreenCanvas {
+  const key = `${font}|${px}|${name}|${color}`;
+  let c = stampCache.get(key);
+  if (c) return c;
+  if (stampCache.size > 400) stampCache.clear();
+  const w = Math.ceil(px * (name.length * 0.75 + 0.5));
+  const h = Math.ceil(px * 1.4);
+  c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h });
+  const g = c.getContext('2d') as CanvasRenderingContext2D;
+  g.font = `700 ${px}px ${font}`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillStyle = color;
+  g.fillText(name, w / 2, h / 2);
+  stampCache.set(key, c);
+  return c;
+}
+
 /** A stable pseudo-random number in [0, 1) from a few integers. */
 function hash(...xs: number[]): number {
   let h = 0x811c9dc5;
@@ -165,12 +216,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   }
   // Each kick gives the swirl an extra turn, eased over a third of a second. (Added to the angle,
   // never multiplied into the spin speed: speed × time jumps whenever the speed changes.)
-  const kicks = score.drums ? drumHits(score, 0, t).filter((h) => h.voice === 'kick') : [];
-  const turnAt = (T: number) => {
-    let s = 0;
-    for (const h of kicks) if (h.t <= T) s += 1.3 * h.vel * (1 - Math.exp(-(T - h.t) / 0.35));
-    return s;
-  };
+  const turnAt = (T: number) => kickTurn(score, T);
   const turn = turnAt(t);
   const { lo, span } = skyRange(score);
   const V = score.config.voices;
@@ -244,7 +290,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       // Fainter and greyer as it rings off; full colour while it sounds.
       alpha: 0.45 + 0.55 * level,
       name: nameOf(score, mod12(Math.round(target)), now.c),
-      color: saturate(st.noteColor(target, v), 0.15 + 0.85 * level),
+      color: saturate(st.noteColor(target, v), 0.15 + 0.85 * Math.round(level * 5) / 5),
       rise,
       fling: 1,
     };
@@ -257,7 +303,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
         amp: Math.max(amp, 0.25),
         alpha: (1 - y) ** 1.2,
         name: nameOf(score, mod12(Math.round(m.p0)), now.c),
-        color: saturate(st.noteColor(m.p0, v), 0.85 * (1 - y) + 0.12 * y),
+        color: saturate(st.noteColor(m.p0, v), 0.85 * (1 - Math.round(y * 5) / 5) + 0.12 * (Math.round(y * 5) / 5)),
         rise: 1,
         fling: 1 + 1.8 * y * y,
       };
@@ -353,7 +399,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
 
   // Rain: fine slanting streaks falling from the cloud base, the wind swaying them a little.
   const dark = luminanceOf(st.background) < 0.45;
-  const drops = lite ? 140 : 340;
+  const drops = lite ? 70 : 340;
   const slant = 0.22 + 0.06 * Math.sin(t * 0.17);
   ctx.strokeStyle = alpha(st.ink, dark ? 0.09 : 0.11);
   ctx.lineWidth = Math.max(1, 0.8 * u);
@@ -466,7 +512,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   ctx.save();
   ctx.clip(body);
   ctx.lineWidth = Math.max(1, 1.1 * u);
-  const strands = lite ? 10 : 18;
+  const strands = lite ? 6 : 18;
   for (let k = 0; k < strands; k++) {
     const th0 = (k / strands) * Math.PI * 2;
     ctx.strokeStyle = alpha(st.ink, 0.05 + 0.05 * hash(k, 31));
@@ -490,10 +536,13 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
 
   // Debris: back half, then the front. Dust fills the funnel; in each voice's band the debris is
   // the note itself, letters of its name swirling round, coloured like the note.
-  const N = lite ? 1200 : 2700;
+  const N = lite ? 750 : 2700;
   const letterPx = 14 * a.tu;
   // The skirt where it touches down: dust thrown out round the foot, low and wide.
-  const skirt = lite ? 160 : 420;
+  const skirt = lite ? 90 : 420;
+  // Letter stamps are drawn at the screen's pixel size, then placed in picture coordinates.
+  const stampScale = Math.max(1, Math.min(3, Math.hypot(ctx.getTransform().a, ctx.getTransform().b)));
+  const stampPx = Math.max(6, Math.round(letterPx * stampScale));
   const draw = (front: boolean) => {
     ctx.font = `700 ${letterPx}px ${st.font}`;
     ctx.textAlign = 'center';
@@ -593,14 +642,13 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
       const sparkle = Math.max(0, Math.cos(th * 3 + b)) ** 8 + drum.hat * hash(b, Math.floor(t * 10));
       const near = 0.55 + 0.45 * depth; // the near side larger and brighter, the far side dim
       if (B && hash(b, 12) < 0.5) {
-        ctx.fillStyle = B.color;
         ctx.globalAlpha = Math.min(1, 0.3 + 0.6 * near + 0.4 * sparkle) * B.alpha;
         const sc = 0.65 + 0.5 * near;
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.scale(sc * Math.max(0.3, Math.abs(Math.cos(th))), sc); // letters turn edge-on as they swing round
-        ctx.fillText(B.name, 0, 0);
-        ctx.restore();
+        const stamp = letterStamp(st.font, stampPx, B.name, B.color);
+        // (Letters turn edge-on as they swing round.)
+        const sw = (stamp.width / stampScale) * sc * Math.max(0.3, Math.abs(Math.cos(th)));
+        const sh = (stamp.height / stampScale) * sc;
+        ctx.drawImage(stamp as CanvasImageSource, x - sw / 2, y - sh / 2, sw, sh);
       } else {
         const tint = band >= 0 ? 1 : tintAt(f);
         const size = (front ? 2 : 1.4) * u * (0.6 + 0.6 * hash(b, 6)) * (0.8 + 0.5 * tint);
