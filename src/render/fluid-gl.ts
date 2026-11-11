@@ -9,7 +9,7 @@
  * few snapshots for jumping back, and draws in screen space (zoom doesn't apply to it). Returns
  * false when WebGL2 float rendering isn't available, so the caller can use the CPU version.
  */
-import { drumHits, levelAt, pitchAt } from '../engine/motion';
+import { drumHits, levelAt, voiceNotesAt } from '../engine/motion';
 import type { Score } from '../engine/score';
 import { noteInk } from './fluid-ink';
 import { skyRange, type ViewArea, type ViewStyle } from './harmony-views';
@@ -339,10 +339,10 @@ function stepSim(S: GLState, score: Score, time: number) {
   const dPts: number[][] = [];
   const dVals: number[][] = [];
   // Nozzles along the bottom (uv y = 0 is the bottom here): held notes keep pouring.
-  for (let v = 0; v < V; v++) {
-    const level = levelAt(score, v, time);
+  for (let v = 0; v < V; v++) for (const nt of voiceNotesAt(score, v, time)) {
+    const level = levelAt(score, v, time) * nt.g;
     if (level < 0.03) continue;
-    const p = pitchAt(score, v, time);
+    const p = nt.p;
     // Kept in from the walls: a nozzle right at the edge pours half its ink out of the water.
     const x = 0.1 + 0.8 * Math.max(0, Math.min(1, (p - lo) / span));
     const wob = Math.sin(time * 1.3 + v * 2.1) * 0.25;

@@ -9,7 +9,7 @@
  * The simulation steps at a fixed rate from the start of the piece, so a frame depends only on its
  * time; snapshots every few seconds make jumping backwards cheap (it replays from the nearest one).
  */
-import { drumHits, levelAt, pitchAt } from '../engine/motion';
+import { drumHits, levelAt, voiceNotesAt } from '../engine/motion';
 import type { Score } from '../engine/score';
 import { harmonyKeyAt, harmonyRgb } from './harmony-color';
 import { skyRange, type ViewArea, type ViewStyle } from './harmony-views';
@@ -193,10 +193,10 @@ function stepSim(s: Sim, score: Score, time: number) {
   const V = score.config.voices;
   const { lo, span } = skyRange(score);
   // Nozzles along the bottom: low notes left, high notes right; held notes keep pouring.
-  for (let vc = 0; vc < V; vc++) {
-    const level = levelAt(score, vc, time);
+  for (let vc = 0; vc < V; vc++) for (const nt of voiceNotesAt(score, vc, time)) {
+    const level = levelAt(score, vc, time) * nt.g;
     if (level < 0.03) continue;
-    const p = pitchAt(score, vc, time);
+    const p = nt.p;
     const x = 1 + (0.1 + 0.8 * Math.max(0, Math.min(1, (p - lo) / span))) * (nx - 1);
     const y = ny - 3;
     const wob = Math.sin(time * 1.3 + vc * 2.1) * 0.25;

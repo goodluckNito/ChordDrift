@@ -317,6 +317,16 @@ export function layerAt(score: Score, L: 0 | 1, v: number, t: number): { p: numb
  * The pitches you'd point at right now: the gliding voices, or — with
  * release-&-swell transitions — the newest chord. Used for the camera, labels and HUD.
  */
+/**
+ * What voice v is sounding at t, as notes with their levels (0..1): one note while voices glide or
+ * pluck; with release-&-swell transitions, the outgoing chord's note releasing under the incoming
+ * one swelling in (one per layer). For views that should follow the sound in every mode.
+ */
+export function voiceNotesAt(score: Score, v: number, t: number): { p: number; g: number }[] {
+  if (score.config.motion.transition !== 'swell') return [{ p: pitchAt(score, v, t), g: 1 }];
+  return [layerAt(score, 0, v, t), layerAt(score, 1, v, t)].filter((x) => x.g > 0.01);
+}
+
 export function soundingPitches(score: Score, t: number): number[] {
   if (score.config.motion.transition !== 'swell') return pitchesAt(score, t);
   const k = chordIndexAt(score, t);

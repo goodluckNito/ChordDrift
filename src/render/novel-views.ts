@@ -6,7 +6,7 @@
  * Pure functions of (score, t) like every other view (marbling caches its work, but replays it
  * exactly when time jumps backwards).
  */
-import { drumHits, levelAt, pitchAt } from '../engine/motion';
+import { drumHits, levelAt, pitchAt, soundingPitches, voiceNotesAt } from '../engine/motion';
 import type { Score } from '../engine/score';
 import { mod12 } from '../engine/theory';
 import { SILHOUETTES } from './silhouettes';
@@ -85,8 +85,18 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
   const halfW = Math.min(W * 0.5, Hf * 0.42);
   const yOf = (f: number) => ground - f * (ground - cloudY);
   const heightOf = (p: number) => Math.max(0.04, Math.min(0.94, 0.06 + 0.88 * ((p - lo) / span)));
+  // With release-&-swell changes the voices don't glide (each chord swells in on its own layer), so
+  // a voice's note changes are read from the chords instead of its moves.
+  const swellMode = score.config.motion.transition === 'swell';
+  const kNow = chordAt(score, t).k;
+  const chordMove = (j: number, v: number) => {
+    const c = score.chords[j];
+    const b = score.chords[j - 1];
+    return c && b ? { t0: c.t, d: score.config.timing.swellIn, p0: b.notes[v], p1: c.notes[v] } : null;
+  };
   /** The voice's latest note change at or before t (null before its first). */
   const lastMove = (v: number) => {
+    if (swellMode && kNow >= 1) return chordMove(kNow, v);
     const ms = score.moves[v];
     let l = 0;
     let h = ms.length - 1;
@@ -114,6 +124,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
     fling: number;
   }
   const nextMove = (v: number) => {
+    if (swellMode && kNow >= 0) return chordMove(kNow + 1, v);
     const ms = score.moves[v];
     let l = 0;
     let h = ms.length - 1;
@@ -135,7 +146,7 @@ export function drawTornado(ctx: CanvasRenderingContext2D, score: Score, t: numb
     const m = lastMove(v);
     const level = levelAt(score, v, t);
     const amp = level * (v === 0 ? 0.3 : 0.55);
-    const target = m ? m.p1 : pitchAt(score, v, t);
+    const target = m ? m.p1 : swellMode ? soundingPitches(score, t)[v] : pitchAt(score, v, t);
     const age = m ? t - m.t0 : Infinity;
     const x = Math.min(1, age / RISE);
     const rise = 1 - (1 - x) ** 3;
@@ -486,7 +497,7 @@ function cityLights(score: Score, t: number): CityLights {
       cars.push({ from, to, f, v });
       light(from, level * (1 - f) * 0.8);
       if (f > 0.85) light(to, level * (f - 0.85) / 0.15);
-    } else light(cellOf(pitchAt(score, v, t)), level);
+    } else for (const nt of voiceNotesAt(score, v, t)) light(cellOf(nt.p), level * nt.g);
   }
   return { lit, cars };
 }

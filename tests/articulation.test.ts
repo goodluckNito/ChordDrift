@@ -76,3 +76,20 @@ describe('chord swaps know the mode', () => {
     expect(names).toContain('D#m7b5');
   });
 });
+
+import { voiceNotesAt } from '../src/engine';
+describe('views follow release-&-swell changes', () => {
+  it('voiceNotesAt gives the chord that is actually sounding', () => {
+    const s = generateScore({ seed: 4, motion: { transition: 'swell' } });
+    const k = 3;
+    const c = s.chords[k];
+    const later = c.t + s.config.timing.swellIn + 0.3;
+    if (s.chords[k + 1] && later < s.chords[k + 1].t) {
+      const loud = voiceNotesAt(s, 2, later).sort((a, b) => b.g - a.g)[0];
+      expect(loud.p).toBe(c.notes[2]);
+    }
+    // Gliding: one note, the glide's.
+    const g = generateScore({ seed: 4 });
+    expect(voiceNotesAt(g, 2, 10)).toEqual([{ p: pitchAt(g, 2, 10), g: 1 }]);
+  });
+});
