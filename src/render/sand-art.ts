@@ -25,7 +25,7 @@ import { chordIndexAt, drumHits, levelAt, voiceNotesAt } from '../engine/motion'
 import { mulberry32 } from '../engine/rng';
 import type { Score } from '../engine/score';
 import { harmonyKeyAt, harmonyRgb } from './harmony-color';
-import { skyRange, type ViewArea, type ViewStyle } from './harmony-views';
+import type { ViewArea, ViewStyle } from './harmony-views';
 
 const DT = 1 / 60;
 const SNAP_EVERY = 2; // s between snapshots
@@ -56,6 +56,8 @@ interface Sand {
   push: number;
   /** How freely sand slips through a gap (paced so the top empties on time). */
   gate: number;
+  /** The column under the heaviest part of the ridge (recomputed with the pace). */
+  heavy: number;
   above: number;
   lastChord: number;
   flips: boolean;
@@ -112,6 +114,17 @@ function rowEnds(n: number, shelf: number): [number, number] {
 function rasterBubbles(s: Sand) {
   const { n, air, bx, br, bpop, shelf } = s;
   air.fill(0);
+  // Against the glass at each end of the row, trapped foam: sand never runs down the edge.
+  const [left, right] = rowEnds(n, shelf);
+  const m = bx.length;
+  if (m) {
+    const l = Math.ceil(bx[0]);
+    const r = Math.floor(bx[m - 1]);
+    for (let y = shelf - 1; y <= shelf + 2; y++) {
+      for (let x = Math.max(0, Math.floor(left) - 3); x <= l; x++) air[y * n + x] = 1;
+      for (let x = r; x <= Math.min(n - 1, Math.ceil(right) + 3); x++) air[y * n + x] = 1;
+    }
+  }
   for (let i = 0; i < bx.length; i++) {
     const r = br[i] * (1 - Math.min(1, bpop[i] / 1.4));
     if (r < 0.6) continue;
@@ -151,12 +164,16 @@ function makeSim(score: Score, n: number, key: string): Sand {
   const s: Sand = {
     n, cells, inside, air: new Uint8Array(n * n), step: 0, key, shelf, cols: sandColours(score),
     bx: Float32Array.from(xs), br: Float32Array.from(rs), bv: new Float32Array(xs.length), bpop: new Float32Array(xs.length),
-    push: 0.15, gate: 0.4, above: 0, lastChord: -1, flips, flipAt: -1, cycleStart: 0, snaps: [],
+    push: 0.15, gate: 0.4, heavy: -1, above: 0, lastChord: -1, flips, flipAt: -1, cycleStart: 0, snaps: [],
   };
   rasterBubbles(s);
   // The ridge: sharp peaks of layered sand resting on the bubbles, kept inside the glass.
   const rnd = mulberry32(score.seed ^ 0x5a17);
-  const room = shelf - 2;
+  // As much sand as the piece's length can pour in thin trickles (a short piece gets a smaller ridge).
+  const tl = score.timeline;
+  const seconds = flips ? CYCLE : Math.max(10, tl.end - score.gridStart);
+  const amount = Math.max(0.5, Math.min(1, 0.4 + seconds / 150));
+  const room = (shelf - 2) * amount;
   // (Sharp peaks at sand's natural 45° slope, so they stand: a cell up for every cell across.)
   const peaks = Array.from({ length: 3 + Math.floor(rnd() * 3) }, () => ({ x: (0.12 + 0.76 * rnd()) * n, top: room * (0.55 + 0.4 * rnd()) }));
   const floor = room * 0.22;
@@ -189,32 +206,66 @@ function makeSim(score: Score, n: number, key: string): Sand {
   return s;
 }
 
-/** Where the voices press the bubbles apart at t (columns), with how hard: bass, top voice, middle voice. */
+/** Seconds since voice v last moved to a new note (Infinity before its first move). */
+function sinceMove(score: Score, v: number, t: number): { age: number; idx: number } {
+  const ms = score.moves[v];
+  let l = 0;
+  let h = ms.length - 1;
+  let idx = -1;
+  while (l <= h) {
+    const mid = (l + h) >> 1;
+    if (ms[mid].t0 <= t) (idx = mid), (l = mid + 1);
+    else h = mid - 1;
+  }
+  if (score.config.motion.transition === 'swell') {
+    // (Release-&-swell changes don't glide: the chord changes are the moves.)
+    const k = chordIndexAt(score, t);
+    return k >= 1 ? { age: t - score.chords[k].t, idx: k * 31 + v } : { age: Infinity, idx: -1 };
+  }
+  return idx >= 0 ? { age: t - ms[idx].t0, idx } : { age: Infinity, idx: -1 };
+}
+
+/**
+ * Where the foam gives at t (columns), with how hard. The foam has a weak spot that wanders
+ * slowly and unevenly across the glass, nudged by each chord (its root round the circle of fifths);
+ * a thin trickle runs there all the while, and every voice that has just moved to a new note
+ * opens a trickle of its own near it, dwindling as the note holds: so the streams cluster, chord
+ * changes bring bursts of them, and the peaks build unevenly, where the weak spot lingers.
+ */
 function pressAt(score: Score, s: Sand, t: number): { x: number; f: number }[] {
   if (t < score.gridStart) return [];
-  const { lo, span } = skyRange(score);
-  const V = score.config.voices;
   const { n, cells, shelf } = s;
-  const out: { x: number; f: number }[] = [];
+  const seed = score.seed;
+  const k = chordIndexAt(score, t);
+  const c = score.chords[Math.max(0, k)];
+  const fifths = c ? ((c.root * 7) % 12) / 11 : 0.5;
+  const wander = 0.5 + 0.2 * Math.sin(t * 0.037 + (seed % 97)) + 0.12 * Math.sin(t * 0.093 + (seed % 61)) + 0.06 * Math.sin(t * 0.21 + (seed % 13));
+  const focus = Math.max(0.2, Math.min(0.8, wander + (fifths - 0.5) * 0.22)) * (n - 1);
+  const want: { x: number; f: number }[] = [{ x: focus, f: 0.35 }];
+  // Running behind (the gaps already as free as they go): the foam gives under the heaviest sand too.
+  if (s.gate > 0.85 && s.heavy >= 0) want.push({ x: s.heavy, f: 0.5 + 2 * (s.gate - 0.85) });
+  for (let v = 0; v < score.config.voices && want.length < 5; v++) {
+    const { age, idx } = sinceMove(score, v, t);
+    if (age > 5) continue;
+    const nt = voiceNotesAt(score, v, t).sort((x, y) => y.g - x.g)[0];
+    if (!nt) continue;
+    const f = levelAt(score, v, t) * nt.g * Math.exp(-age / 1.6);
+    if (f < 0.08) continue;
+    want.push({ x: focus + (hash(v, idx, 97) - 0.5) * 0.2 * n, f });
+  }
   // (Where there's still sand over the spot, or else the nearest place there is.)
   const hasSand = (x: number) => x > 1 && x < n - 2 && (cells[(shelf - 6) * n + x] > WALL || cells[(shelf - 3) * n + x] > WALL);
-  const at = (v: number, a: number, b: number) => {
-    const nt = voiceNotesAt(score, v, t).sort((x, y) => y.g - x.g)[0];
-    if (!nt) return;
-    const f = levelAt(score, v, t) * nt.g;
-    if (f < 0.05) return;
-    const want = Math.round((a + (b - a) * Math.max(0, Math.min(1, (nt.p - lo) / span))) * (n - 1));
+  const out: { x: number; f: number }[] = [];
+  for (const w of want) {
+    const at = Math.round(w.x);
     for (let d = 0; d < n; d++) {
-      const x = hasSand(want - d) ? want - d : hasSand(want + d) ? want + d : -1;
+      const x = hasSand(at - d) ? at - d : hasSand(at + d) ? at + d : -1;
       if (x >= 0) {
-        out.push({ x, f });
-        return;
+        out.push({ x, f: w.f });
+        break;
       }
     }
-  };
-  at(0, 0.2, 0.55);
-  if (V > 1) at(V - 1, 0.45, 0.8);
-  if (V > 2) at(Math.floor(V / 2), 0.33, 0.67);
+  }
   return out;
 }
 
@@ -268,6 +319,12 @@ function stepBubbles(s: Sand, score: Score, time: number) {
         bx[i] -= need / 2;
         bx[i + 1] += need / 2;
       }
+      // Foam only stretches so far: neighbours part by a couple of grains at most.
+      const over = bx[i + 1] - bx[i] - eff(i) - eff(i + 1) - 2.2;
+      if (over > 0) {
+        bx[i] += over / 2;
+        bx[i + 1] -= over / 2;
+      }
     }
     bx[0] = Math.max(bx[0], left + br[0] * 0.7);
     bx[m - 1] = Math.min(bx[m - 1], right - br[m - 1] * 0.7);
@@ -317,6 +374,15 @@ function stepSand(s: Sand, score: Score, time: number) {
       s.push = Math.max(0.04, Math.min(1.2, s.push * Math.sqrt(adj)));
     }
     s.above = above;
+    // Where the most sand weighs on the foam.
+    let best = -1;
+    let most = 0;
+    for (let x = 2; x < n - 2; x += 3) {
+      let y = shelf - 1;
+      while (y > 0 && cells[y * n + x] > WALL) y--;
+      if (shelf - 1 - y > most) (most = shelf - 1 - y), (best = x);
+    }
+    s.heavy = most > 3 ? best : -1;
     if (s.flips && above < 30 && time - s.cycleStart > 10) s.flipAt = step;
   }
   stepBubbles(s, score, time);
@@ -579,15 +645,6 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     if (r < cell * 0.6) continue;
     const bx = x0 + (sim.bx[i] + 0.5) * cell;
     const by = y0 + (sim.shelf + 0.35 * sim.br[i] + 0.5) * cell;
-    // Tiny bubbles round its lower half and in the crevices beside it (they travel with it).
-    for (let j = 0; j < 7; j++) {
-      const ang = Math.PI * (0.05 + 0.9 * hash(i, j, 94));
-      const rr = r * (0.12 + 0.16 * hash(i, j, 95));
-      const dist = r + rr * (0.6 + 0.8 * hash(i, j, 96));
-      const sx = bx + Math.cos(ang + (j % 2 ? 0 : Math.PI * 0.5)) * dist * (j < 3 ? 1 : 0.9);
-      const sy = by + Math.sin(ang) * dist * 0.7;
-      if (rr > 0.8) soap(sx, sy, rr, i * 13 + j);
-    }
     soap(bx, by, r, i);
   }
   // A soft shine across the glass.
