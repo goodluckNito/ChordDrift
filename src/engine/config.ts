@@ -222,6 +222,8 @@ export interface ChordDriftConfig {
     view: 'timeline' | 'spiral' | 'waterfall' | 'constellation' | 'marbling' | 'tornado' | 'city' | 'sand';
     /** Night city look. */
     city: 'neon' | 'blueprint';
+    /** Sand art: a few mountains at the chords' roots, rolling dunes following the pitch, or picked from the progression. */
+    sand: 'auto' | 'mountains' | 'dunes';
     /**
      * Spiral motion. orbit = rotation is time, distance from the centre is pitch, the past spirals inward ·
      * drain = like orbit, but the past sinks into the centre · fly = travel forward through time · inward = pitch-class clock
@@ -290,7 +292,7 @@ export const DEFAULT_CONFIG: ChordDriftConfig = {
     double: false,
     duck: { kick: true, snare: false, depth: 0.5, release: 0.25 },
   },
-  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'orbit', city: 'neon', zoom: 1, centerLabel: true },
+  video: { width: 1080, height: 1920, fps: 60, historySeconds: 5, nowPosition: 0.75, view: 'timeline', spiral: 'orbit', city: 'neon', sand: 'auto', zoom: 1, centerLabel: true },
 };
 
 export type DeepPartial<T> = {
@@ -335,6 +337,7 @@ export function resolveConfig(partial: DeepPartial<ChordDriftConfig> = {}): Chor
   if ((c.video.view as string) === 'murmur') c.video.view = 'tornado';
   if (!['timeline', 'spiral', 'waterfall', 'constellation', 'marbling', 'tornado', 'city', 'sand'].includes(c.video.view)) c.video.view = 'timeline';
   if (c.video.city !== 'blueprint') c.video.city = 'neon';
+  if (c.video.sand !== 'mountains' && c.video.sand !== 'dunes') c.video.sand = 'auto';
   if ((c.video.spiral as string) === 'zoom') c.video.spiral = 'fly'; // older projects
   if (!['orbit', 'drain', 'fly', 'inward'].includes(c.video.spiral)) c.video.spiral = 'orbit';
   c.drums.double = Boolean(c.drums.double);

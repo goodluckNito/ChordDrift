@@ -6,19 +6,22 @@
  * and pull back together like foam, and where they part, sand runs through in a thin stream and
  * builds a range of dunes in the bowl below, on a bed of sand lying flat, laid in nested bands.
  *
- * The notes pour the sand: each note sounding runs a stream at its pitch's place across the glass
- * (low notes at the left, high at the right, over the range the piece actually plays; a glide
- * slides its stream along), as hard as it sounds (how many voices are on it, how loud, with a
- * surge just after a voice moves to it), with its name under the foam. Only the few strongest
- * pour at once, so the notes the piece dwells on (its tonic, its fifth) build the big
- * dunes and passing notes small ones. The ridge on top starts out shaped like the piece's notes,
- * so the sand is waiting where each will pour; wet sand creeps along the foam toward the nearest
- * stream. Each chord pours its own colour (the palette's two by turns, a streak of white at each
- * change), so the dunes are laid in bands, a band per chord. Every chord change jostles the row;
- * a snare pops a bubble at a stream (it re-forms a moment later), letting a rush through; kicks jiggle the foam and send
- * small avalanches down the slopes below (crashes, bigger ones). Sand piles at its natural 45°.
- * The flow is paced so the top empties as the piece ends, however long it is (a loop, within one
- * pass). Endless pieces turn the glass over when the top runs out.
+ * One stream pours, and a piece's sand takes one of two shapes (Sand shape, or picked from the
+ * progression: mountains when a few chords dominate it, dunes when it roams):
+ *  - Mountains: the stream pours by what each chord does in the key: home chords (I, vi, iii) build
+ *    the big middle mountain, departures (IV, ii) a smaller one to the left, tension (V, vii) one
+ *    to the right, borrowed and chromatic chords small accents further out; home pours most.
+ *  - Dunes: the stream follows the music's centre of pitch (low at the left, high at the right),
+ *    sweeping as the harmony rises and falls, and the sand lies softer (about 27°), so it lays
+ *    rolling dunes, a hill where the music dwells.
+ * It runs harder as the voices sound louder, with a surge just after a voice moves. The ridge on top
+ * starts out shaped by where the stream will pour, and wet sand creeps along the foam toward it.
+ * Each chord pours its own colour (the palette's two by turns, a streak of white at each change),
+ * so the sand is laid in bands, a band per chord. Every chord change jostles the row; a snare pops
+ * a bubble at the stream (it re-forms a moment later), letting a rush through; kicks jiggle the foam
+ * and send small avalanches down the slopes below (crashes, bigger ones). The flow is paced so the
+ * top empties as the piece ends, however long it is (a loop, within one pass). Endless pieces turn
+ * the glass over when the top runs out.
  *
  * A falling-sand automaton on a square grid (cells outside the circle are glass) with the bubbles as
  * soft discs, stepped at a fixed rate from the start of the piece (with snapshots, so jumping back
@@ -28,7 +31,7 @@
 import { chordIndexAt, drumHits, levelAt, voiceNotesAt } from '../engine/motion';
 import type { Score } from '../engine/score';
 import { harmonyKeyAt, harmonyRgb } from './harmony-color';
-import { chordAt, nameOf, type ViewArea, type ViewStyle } from './harmony-views';
+import type { ViewArea, ViewStyle } from './harmony-views';
 
 const DT = 1 / 60;
 const SNAP_EVERY = 2; // s between snapshots
@@ -61,17 +64,21 @@ interface Sand {
   gate: number;
   above: number;
   lastChord: number;
-  /** The piece's pitch range: low notes pour at the left of the glass, high ones at the right. */
+  /** Mountains (the stream pours at the chord's root) or dunes (it follows the music's pitch). */
+  shape: 'mountains' | 'dunes';
+  /** Dunes: the range the music's centre of pitch moves over (low at the left, high at the right). */
   lo: number;
   hi: number;
-  /** This step's streams: column, strength and the note (MIDI). */
-  press: { x: number; f: number; p: number }[];
+  /** Dunes: where the stream is (it sweeps toward the pitch rather than jumping); -1 before it starts. */
+  sx: number;
+  /** This step's stream: column, how hard it presses the foam, and how freely its sand runs. */
+  press: { x: number; f: number; w: number }[];
   /** Sand on top when the glass was last filled (or turned over); -1 until counted. */
   startAbove: number;
   flips: boolean;
   flipAt: number;
   cycleStart: number;
-  snaps: { step: number; cells: Uint32Array; bx: Float32Array; bv: Float32Array; bpop: Float32Array; push: number; gate: number; above: number; lastChord: number; flipAt: number; cycleStart: number; startAbove: number }[];
+  snaps: { step: number; cells: Uint32Array; bx: Float32Array; bv: Float32Array; bpop: Float32Array; push: number; gate: number; above: number; lastChord: number; flipAt: number; cycleStart: number; startAbove: number; sx: number }[];
 }
 const sims = new WeakMap<Score, Sand>();
 
@@ -110,9 +117,6 @@ function pouredGrain(score: Score, cols: [number, number, number][], time: numbe
   const v = 0.86 + 0.26 * j;
   return pack(c[0] * v, c[1] * v, c[2] * v);
 }
-
-/** Where a note pours: across the glass by pitch, kept clear of the curving sides. */
-const xOf = (s: Sand, p: number) => s.n * (0.15 + (0.7 * Math.max(0, Math.min(1, (p - s.lo) / (s.hi - s.lo)))));
 
 /** Where the bubble row meets the glass, left and right (columns). */
 function rowEnds(n: number, shelf: number): [number, number] {
@@ -177,7 +181,7 @@ function makeSim(score: Score, n: number, key: string): Sand {
   const s: Sand = {
     n, cells, inside, air: new Uint8Array(n * n), step: 0, key, shelf, cols: sandColours(score),
     bx: Float32Array.from(xs), br: Float32Array.from(rs), bv: new Float32Array(xs.length), bpop: new Float32Array(xs.length),
-    push: 0.15, gate: 0.4, above: 0, lastChord: -1, lo: 48, hi: 72, press: [], startAbove: -1,
+    push: 0.15, gate: 0.4, above: 0, lastChord: -1, shape: sandShape(score), lo: 48, hi: 72, sx: -1, press: [], startAbove: -1,
     flips, flipAt: -1, cycleStart: 0, snaps: [],
   };
   rasterBubbles(s);
@@ -185,45 +189,34 @@ function makeSim(score: Score, n: number, key: string): Sand {
   // As much sand as the piece's length can pour in thin trickles (a short piece gets a smaller ridge).
   const tl = score.timeline;
   const seconds = flips ? CYCLE : Math.max(10, tl.end - score.gridStart);
-  const amount = Math.max(0.5, Math.min(1, 0.4 + seconds / 150));
+  const amount = Math.max(0.6, Math.min(1, 0.55 + seconds / 120));
   const room = (shelf - 2) * amount;
-  // The ridge is shaped like the piece's notes: a mountain over each pitch, as big as how much it
-  // sounds (voices on it, for how long), so the sand is there when each note comes to pour.
+  // The ridge on top is shaped by where the stream will pour over the piece (sampled), so the sand
+  // waits where it's needed: over the root's places for mountains, along the pitch's path for dunes.
   const chords = score.chords.filter((c) => c.t < score.gridStart + seconds);
-  let lo = Infinity;
-  let hi = -Infinity;
-  for (const c of chords) for (const q of c.notes) (lo = Math.min(lo, q)), (hi = Math.max(hi, q));
-  if (!Number.isFinite(lo)) (lo = 48), (hi = 72);
-  if (hi - lo < 12) {
-    const mid = (lo + hi) / 2;
-    (lo = mid - 6), (hi = mid + 6);
-  }
-  s.lo = lo;
-  s.hi = hi;
-  // (Sampled from the streams themselves: the glass's width spans the notes that actually pour,
-  // and the sand waits exactly where they will.)
-  const w = new Float32Array(n);
   const last = Math.min(score.gridStart + seconds, chords.at(-1) ? chords.at(-1)!.t + 4 : score.gridStart);
-  const sampled: { p: number; f: number }[] = [];
-  for (let t = score.gridStart + 0.25; t < last; t += 0.5) for (const st of pressAt(score, s, t)) sampled.push({ p: st.p, f: st.f });
-  if (sampled.length) {
-    sampled.sort((a, b) => a.p - b.p);
-    const total = sampled.reduce((a, b) => a + b.f, 0);
-    const at = (q: number) => {
-      let acc = 0;
-      for (const x of sampled) if ((acc += x.f) >= q * total) return x.p;
-      return sampled.at(-1)!.p;
-    };
-    s.lo = at(0.03) - 2;
-    s.hi = at(0.97) + 2;
-    if (s.hi - s.lo < 12) {
+  if (s.shape === 'dunes') {
+    // (The glass's width spans the range the music's centre of pitch actually moves over.)
+    const cs: number[] = [];
+    for (let t = score.gridStart + 0.25; t < last; t += 0.5) {
+      const c = centreOfPitch(score, t);
+      if (c !== null) cs.push(c);
+    }
+    cs.sort((a, b) => a - b);
+    if (cs.length) {
+      s.lo = cs[Math.floor(cs.length * 0.03)];
+      s.hi = cs[Math.min(cs.length - 1, Math.floor(cs.length * 0.97))];
+    }
+    if (s.hi - s.lo < 5) {
       const mid = (s.lo + s.hi) / 2;
-      (s.lo = mid - 6), (s.hi = mid + 6);
+      (s.lo = mid - 2.5), (s.hi = mid + 2.5);
     }
   }
+  const w = new Float32Array(n);
   for (let t = score.gridStart + 0.25; t < last; t += 0.5) {
-    for (const st of pressAt(score, s, t)) {
-      for (let x = Math.max(0, st.x - Math.round(0.12 * n)); x <= Math.min(n - 1, st.x + Math.round(0.12 * n)); x++) w[x] += st.f * Math.exp(-(((x - st.x) / (0.04 * n)) ** 2));
+    for (const st of streamsAt(score, s, t)) {
+      // (Broad, so the mountains up top hold a real mass of sand at a slope it can stand.)
+      for (let x = Math.max(0, st.x - Math.round(0.3 * n)); x <= Math.min(n - 1, st.x + Math.round(0.3 * n)); x++) w[x] += st.w * Math.exp(-(((x - st.x) / (0.11 * n)) ** 2));
     }
   }
   let wmax = 0;
@@ -295,36 +288,92 @@ function sinceMove(score: Score, v: number, t: number): { age: number; idx: numb
   return idx >= 0 ? { age: t - ms[idx].t0, idx } : { age: Infinity, idx: -1 };
 }
 
+/** The shape a piece's sand takes: as set, or (auto) mountains when a few chords dominate it, dunes when it roams. */
+function sandShape(score: Score): 'mountains' | 'dunes' {
+  const set = score.config.video.sand;
+  if (set === 'mountains' || set === 'dunes') return set;
+  const end = Number.isFinite(score.timeline.end) ? score.timeline.end : score.gridStart + CYCLE;
+  const share = new Map<number, number>();
+  let total = 0;
+  score.chords.forEach((c, k) => {
+    if (c.t >= end) return;
+    const d = Math.min(end, score.chords[k + 1]?.t ?? end) - c.t;
+    share.set(fifthsFrom(c.root, c.tonic), (share.get(fifthsFrom(c.root, c.tonic)) ?? 0) + d);
+    total += d;
+  });
+  const top3 = [...share.values()].sort((a, b) => b - a).slice(0, 3).reduce((a, b) => a + b, 0);
+  return total > 0 && top3 / total >= 0.8 ? 'mountains' : 'dunes';
+}
+
+/** Steps round the circle of fifths from the tonic to a root (IV is -1, V +1, ii +2, vi +3, bVII -2...). */
+function fifthsFrom(root: number, tonic: number): number {
+  const f = ((((root - tonic) * 7) % 12) + 12) % 12;
+  return f > 6 ? f - 12 : f;
+}
+
 /**
- * The streams at t: the notes sounding, each pouring at its pitch's place across the glass (low
- * at the left, high at the right; a glide slides its stream along), as hard as it sounds (voices
- * on it, how loud, with a surge just after a voice moves to it), in its own colour. Only the few
- * strongest pour at once, so the most-sounded notes build the big dunes and passing notes small ones.
+ * Where a chord pours in mountains (offset from the middle of the glass, -0.5..0.5) and how freely,
+ * by what it does in the key: home chords (I, vi, iii; in minor i, bIII, bVI) build the big middle
+ * mountain, departures (IV, ii) a smaller one to the left, tension (V, vii) one to the right, and
+ * borrowed or chromatic chords small accents further out. Each chord pours a little off its
+ * mountain's centre, so it adds a shoulder rather than a peak of its own.
  */
-function pressAt(score: Score, s: Sand, t: number): Sand['press'] {
-  if (t < score.gridStart) return [];
-  const groups: { p: number; f: number; pf: number }[] = [];
+function chordPlace(root: number, tonic: number, scale: string): { place: number; w: number } {
+  const d = fifthsFrom(root, tonic);
+  const minor = /minor|aeolian|dorian|phrygian/i.test(scale);
+  const home = minor ? [0, -3, -4] : [0, 3, 4];
+  const away = minor ? [-1, 2] : [-1, 2];
+  const tension = minor ? [1, -2, 5] : [1, 5];
+  const at = (list: number[], centre: number, w: number) => ({ place: centre + 0.035 * list.indexOf(d) * (centre < 0 ? -1 : 1), w });
+  if (home.includes(d)) return at(home, 0, 1);
+  if (away.includes(d)) return at(away, -0.21, 0.55);
+  if (tension.includes(d)) return at(tension, 0.21, 0.55);
+  return { place: d < 0 ? -0.35 : 0.35, w: 0.35 };
+}
+
+/** The music's centre of pitch at t (the sounding notes averaged, weighted by how loud), or null. */
+function centreOfPitch(score: Score, t: number): number | null {
+  let w = 0;
+  let sum = 0;
   for (let v = 0; v < score.config.voices; v++) {
     const lvl = levelAt(score, v, t);
-    if (lvl < 0.02) continue;
-    const { age } = sinceMove(score, v, t);
-    const surge = 1 + 1.2 * Math.exp(-age / 1.6);
     for (const nt of voiceNotesAt(score, v, t)) {
-      const f = lvl * nt.g * surge;
-      // (Voices on the same note, octaves apart counting as different notes, pour as one stream.)
-      const g = groups.find((q) => Math.abs(q.p - nt.p) < 0.5);
-      if (g) {
-        g.f += f;
-        if (f > g.pf) (g.p = nt.p), (g.pf = f);
-      } else groups.push({ p: nt.p, f, pf: f });
+      w += lvl * nt.g;
+      sum += lvl * nt.g * nt.p;
     }
   }
-  if (!groups.length) return [];
-  groups.sort((a, b) => b.f - a.f);
-  const top = groups[0].f;
-  return groups
-    .filter((g, i) => i < 4 && g.f >= 0.25 * top)
-    .map((g) => ({ x: Math.round(xOf(s, g.p)), f: 0.25 + (0.55 * g.f) / top, p: g.p }));
+  return w > 0.01 ? sum / w : null;
+}
+
+/**
+ * Where the stream pours at t, and how hard. Mountains: at the chord's root, placed round the circle
+ * of fifths with the key's tonic in the middle (IV just left, V just right, the rest further out),
+ * so the chords a piece keeps returning to build its mountains, the tonic's biggest, and rarer
+ * chords leave accents. Dunes: at the music's centre of pitch (low at the left, high at the right),
+ * so the stream drifts as the harmony rises and falls and lays rolling dunes, a hill where it
+ * dwells. It runs harder as the voices sound louder, with a surge just after a voice moves.
+ */
+function streamsAt(score: Score, s: Sand, t: number): Sand['press'] {
+  if (t < score.gridStart) return [];
+  const { n } = s;
+  let fresh = 0;
+  for (let v = 0; v < score.config.voices; v++) {
+    const { age } = sinceMove(score, v, t);
+    if (age < 5) fresh += levelAt(score, v, t) * Math.exp(-age / 1.6);
+  }
+  const f = 0.45 + Math.min(0.5, (0.25 * fresh) / Math.max(1, score.config.voices / 4));
+  if (s.shape === 'mountains') {
+    const k = chordIndexAt(score, t);
+    const c = score.chords[k];
+    if (!c) return [];
+    const { place, w } = chordPlace(c.root, c.tonic, c.scale);
+    // (The stream wavers a grain or two as the foam shifts.)
+    const sway = Math.sin(t * 0.37 + score.seed) * 1.5;
+    return [{ x: Math.round(n * (0.5 + place) + sway), f, w }];
+  }
+  const p = centreOfPitch(score, t);
+  if (p === null) return [];
+  return [{ x: Math.round(n * (0.15 + 0.7 * Math.max(0, Math.min(1, (p - s.lo) / (s.hi - s.lo))))), f, w: 1 }];
 }
 
 /** The foam: bubbles pushed apart by the voices, pulled back together, jostled by the drums. */
@@ -334,7 +383,13 @@ function stepBubbles(s: Sand, score: Score, time: number) {
   const step = s.step;
   const eff = (i: number) => br[i] * (1 - Math.min(1, bpop[i] / 1.4));
   const F = new Float32Array(m);
-  s.press = pressAt(score, s, time);
+  s.press = streamsAt(score, s, time);
+  // (Dunes: the stream sweeps toward the music's pitch rather than jumping, laying the sand broadly.)
+  if (s.shape === 'dunes' && s.press.length) {
+    const want = s.press[0].x;
+    s.sx = s.sx < 0 ? want : s.sx + Math.max(-0.15, Math.min(0.15, want - s.sx));
+    s.press[0].x = Math.round(s.sx);
+  }
   for (const c of s.press) {
     for (let i = 0; i < m; i++) {
       const d = bx[i] - c.x;
@@ -460,7 +515,7 @@ function stepSand(s: Sand, score: Score, time: number) {
         const c = cells[i];
         if (c <= WALL) continue;
         const below = i + n;
-        if (!cells[below] && !air[below] && (y !== shelf - 1 || (open[x] >= 0 && hash(x, step, 55 + sub) < s.gate))) {
+        if (!cells[below] && !air[below] && (y !== shelf - 1 || (open[x] >= 0 && hash(x, step, 55 + sub) < s.gate * s.press[open[x]].w))) {
           cells[below] = y === shelf - 1 ? pouredGrain(score, s.cols, time, hash(x, step, 51), hash(x, step, 52)) : c;
           cells[i] = 0;
           continue;
@@ -470,11 +525,24 @@ function stepSand(s: Sand, score: Score, time: number) {
         const first = hash(x, y, step * 2 + sub + 1) < 0.5 ? -1 : 1;
         let moved = false;
         for (const d of [first, -first]) {
-          if (!cells[below + d] && !cells[i + d] && !air[below + d] && (y !== shelf - 1 || (open[x] >= 0 && hash(x, step, 57 + sub) < s.gate))) {
+          if (!cells[below + d] && !cells[i + d] && !air[below + d] && (y !== shelf - 1 || (open[x] >= 0 && hash(x, step, 57 + sub) < s.gate * s.press[open[x]].w))) {
             cells[below + d] = y === shelf - 1 ? pouredGrain(score, s.cols, time, hash(x, step, 53), hash(x, step, 54)) : c;
             cells[i] = 0;
             moved = true;
             break;
+          }
+        }
+        // Dunes lie softer (about 27°): below the bubbles a grain also slides two across and one down.
+        if (!moved && !up && s.shape === 'dunes' && y + 1 < n) {
+          for (const d of [first, -first]) {
+            const j = below + 2 * d;
+            if (x + 2 * d < 0 || x + 2 * d >= n) continue;
+            if (!cells[i + d] && !cells[j] && !cells[i + 2 * d] && hash(x, y, step * 5 + sub) < 0.6) {
+              cells[j] = c;
+              cells[i] = 0;
+              moved = true;
+              break;
+            }
           }
         }
         // Creeping: a resting grain on top edges a cell toward the stream.
@@ -578,6 +646,7 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     sim.flipAt = from.flipAt;
     sim.cycleStart = from.cycleStart;
     sim.startAbove = from.startAbove;
+    sim.sx = from.sx;
     rasterBubbles(sim);
   }
   const limit = sim.step + 600;
@@ -585,7 +654,7 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     stepSand(sim, score, sim.step * DT);
     if (sim.step % Math.round(SNAP_EVERY / DT) === 0 && !sim.snaps.some((x) => x.step === sim.step)) {
       if (sim.snaps.length >= MAX_SNAPS) sim.snaps.splice(1, 1);
-      sim.snaps.push({ step: sim.step, cells: sim.cells.slice(), bx: sim.bx.slice(), bv: sim.bv.slice(), bpop: sim.bpop.slice(), push: sim.push, gate: sim.gate, above: sim.above, lastChord: sim.lastChord, flipAt: sim.flipAt, cycleStart: sim.cycleStart, startAbove: sim.startAbove });
+      sim.snaps.push({ step: sim.step, cells: sim.cells.slice(), bx: sim.bx.slice(), bv: sim.bv.slice(), bpop: sim.bpop.slice(), push: sim.push, gate: sim.gate, above: sim.above, lastChord: sim.lastChord, flipAt: sim.flipAt, cycleStart: sim.cycleStart, startAbove: sim.startAbove, sx: sim.sx });
     }
   }
 
@@ -724,22 +793,6 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     const bx = x0 + (sim.bx[i] + 0.5) * cell;
     const by = y0 + (sim.shelf + 0.35 * sim.br[i] + 0.5) * cell;
     soap(bx, by, r, i);
-  }
-  // Each stream's note, named under the foam where it pours.
-  if (score.config.theme.labels && sim.flipAt < 0) {
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    const fs = Math.max(9, cell * 6.5);
-    ctx.font = `600 ${fs}px ${st.font}`;
-    const k = chordAt(score, t).c;
-    const shown: number[] = [];
-    for (const p of sim.press) {
-      const lx = x0 + (p.x + 0.5) * cell;
-      if (shown.some((q) => Math.abs(q - lx) < fs * 1.6)) continue;
-      shown.push(lx);
-      ctx.fillStyle = css(rgbOf(st.text), Math.min(0.9, 0.3 + 0.6 * p.f));
-      ctx.fillText(nameOf(score, ((Math.round(p.p) % 12) + 12) % 12, k), lx, y0 + (sim.shelf + 8) * cell);
-    }
   }
   // A soft shine across the glass.
   const shine = ctx.createLinearGradient(x0, y0, x0 + D, y0 + D);
