@@ -1,20 +1,23 @@
 /**
  * Sand art: the round liquid sand picture on its stand, simulated, bubbles and all.
  *
- * Like the toy: a round glass, clear liquid, and one mass of fine coloured sand. A ridge of sharp
- * peaks rests on a row of soft air bubbles across the glass; the bubbles press against each other
- * and pull back together like foam, and wherever two part, sand trickles through the gap between
- * them and builds a new range of peaks in the bowl below, laid in wavy strata. Streams start, stop,
- * widen and wander as the foam shifts.
+ * Like the toy: a round glass, clear liquid, and one mass of fine coloured sand. Mountains of layered
+ * sand rest on a row of soft air bubbles across the glass; the bubbles press against each other
+ * and pull back together like foam, and where they part, sand runs through in a thin stream and
+ * builds a mountain in the bowl below, on a bed of sand lying flat, laid in nested bands.
  *
- * The music moves the foam: each sounding voice (the bass to the left, the middle voice, the top
- * voice to the right) presses the bubbles apart at its pitch, so chord changes move where gaps open
- * and the peaks build; every chord change jostles the row; a snare pops a bubble (it re-forms a
- * moment later), letting a rush through; kicks jiggle the foam and send small avalanches down the
- * slopes below (crashes, bigger ones). Each chord pours its own colour (the key's two by turns, with
- * a streak of white at each change), so the range is layered a band per chord. How hard the voices
- * press is paced so the ridge empties as the piece ends, however long it is. Endless and looping
- * pieces turn the glass over when the top runs out.
+ * As in the toy, the streams keep to their places: a piece has two or three, one near the middle
+ * that pours most (a big mountain) and smaller ones to the sides (smaller peaks). Each phrase
+ * (four chords) pours at one of them, often the same one again, sometimes with a weaker second
+ * stream; the wet sand on top creeps toward the stream that drains it, and a stream whose mountain
+ * on top has run out hands over to the next. The music sets how hard they run: every voice that
+ * moves to a new note pushes the foam apart a little more; every chord change jostles the row; a
+ * snare pops a bubble at a stream (it re-forms a moment later), letting a rush through; kicks
+ * jiggle the foam and send small avalanches down the slopes below (crashes, bigger ones). Each
+ * chord pours its own colour (the key's two by turns, with a streak of white at each change), so
+ * each mountain is layered a band per chord. The flow is paced so the top empties as the piece
+ * ends, however long it is (a loop, within one pass). Endless pieces turn the glass over when the
+ * top runs out.
  *
  * A falling-sand automaton on a square grid (cells outside the circle are glass) with the bubbles as
  * soft discs, stepped at a fixed rate from the start of the piece (with snapshots, so jumping back
@@ -31,8 +34,8 @@ const DT = 1 / 60;
 const SNAP_EVERY = 2; // s between snapshots
 const MAX_SNAPS = 60;
 const WALL = 1; // glass (outside the circle) or the bubble row (not sand)
-const FLIP_STEPS = 100; // the glass turning over (endless and looping pieces)
-const CYCLE = 80; // s for the top to empty between turns, in endless and looping pieces
+const FLIP_STEPS = 100; // the glass turning over (endless pieces)
+const CYCLE = 80; // s for the top to empty between turns, in endless pieces
 
 interface Sand {
   n: number;
@@ -56,14 +59,28 @@ interface Sand {
   push: number;
   /** How freely sand slips through a gap (paced so the top empties on time). */
   gate: number;
-  /** The column under the heaviest part of the ridge (recomputed with the pace). */
-  heavy: number;
   above: number;
   lastChord: number;
+  /** Where the streams can run (columns): under the ridge's biggest peaks, the biggest first. */
+  sites: number[];
+  /** How much of the piece each site gets (so one big peak, smaller ones beside it). */
+  weights: number[];
+  /** Which site pours in each phrase (and a weaker second stream, or -1), worked out as needed. */
+  plan: { main: number; second: number }[];
+  /** This step's streams (columns, strength, and which site, or -1). */
+  press: { x: number; f: number; site: number }[];
+  /** Which site each column's sand on top belongs to (the nearest, within a quarter of the glass; -1 for none). */
+  catchment: Int8Array;
+  /** Sand left on top over each site (recounted with the pace). */
+  siteSand: number[];
+  /** What each site had on top at the start (or since the glass last turned over). */
+  siteStart: number[];
+  /** Recent sand through each column (for drawing the falling threads). */
+  flow: Float32Array;
   flips: boolean;
   flipAt: number;
   cycleStart: number;
-  snaps: { step: number; cells: Uint32Array; bx: Float32Array; bv: Float32Array; bpop: Float32Array; push: number; gate: number; above: number; lastChord: number; flipAt: number; cycleStart: number }[];
+  snaps: { step: number; cells: Uint32Array; bx: Float32Array; bv: Float32Array; bpop: Float32Array; push: number; gate: number; above: number; lastChord: number; flipAt: number; cycleStart: number; siteStart: number[]; sites: number[]; catchment: Int8Array }[];
 }
 const sims = new WeakMap<Score, Sand>();
 
@@ -160,11 +177,14 @@ function makeSim(score: Score, n: number, key: string): Sand {
     rs.push(r);
     x += 2 * r - 0.4;
   }
-  const flips = score.loop || !Number.isFinite(score.timeline.arrivalStart);
+  // (A loop plays one pass over and over, so its sand runs out within the pass like a finished
+  // piece's; only an endless piece turns the glass over.)
+  const flips = !score.loop && !Number.isFinite(score.timeline.arrivalStart);
   const s: Sand = {
     n, cells, inside, air: new Uint8Array(n * n), step: 0, key, shelf, cols: sandColours(score),
     bx: Float32Array.from(xs), br: Float32Array.from(rs), bv: new Float32Array(xs.length), bpop: new Float32Array(xs.length),
-    push: 0.15, gate: 0.4, heavy: -1, above: 0, lastChord: -1, flips, flipAt: -1, cycleStart: 0, snaps: [],
+    push: 0.15, gate: 0.4, above: 0, lastChord: -1, sites: [], weights: [], plan: [], press: [], catchment: new Int8Array(n).fill(-1), siteSand: [], siteStart: [], flow: new Float32Array(n),
+    flips, flipAt: -1, cycleStart: 0, snaps: [],
   };
   rasterBubbles(s);
   // The ridge: sharp peaks of layered sand resting on the bubbles, kept inside the glass.
@@ -175,8 +195,26 @@ function makeSim(score: Score, n: number, key: string): Sand {
   const amount = Math.max(0.5, Math.min(1, 0.4 + seconds / 150));
   const room = (shelf - 2) * amount;
   // (Sharp peaks at sand's natural 45° slope, so they stand: a cell up for every cell across.)
-  const peaks = Array.from({ length: 3 + Math.floor(rnd() * 3) }, () => ({ x: (0.12 + 0.76 * rnd()) * n, top: room * (0.55 + 0.4 * rnd()) }));
-  const floor = room * 0.22;
+  // The streams' sites: the biggest near the middle (its mountain must stand clear of the glass's
+  // curving sides), the others well apart; two in a short piece, three in a longer one. The ridge
+  // on top is a mountain over each, as big as its share, so each stream drains its own.
+  const k = seconds < 45 ? 2 : 3;
+  const sites = [(0.38 + 0.24 * rnd()) * n];
+  for (let tries = 0; sites.length < k && tries < 60; tries++) {
+    const x = (0.18 + 0.64 * rnd()) * n;
+    if (sites.every((p) => Math.abs(p - x) > 0.22 * n)) sites.push(x);
+  }
+  s.sites = sites.map(Math.round);
+  for (let x = 0; x < n; x++) {
+    let best = -1;
+    for (let i = 0; i < s.sites.length; i++) if (Math.abs(s.sites[i] - x) <= n * 0.25 && (best < 0 || Math.abs(s.sites[i] - x) < Math.abs(s.sites[best] - x))) best = i;
+    s.catchment[x] = best;
+  }
+  s.siteSand = s.sites.map(() => 1e9);
+  s.weights = [1, 0.3 + 0.1 * rnd(), 0.12 + 0.06 * rnd()].slice(0, sites.length);
+  const floor = room * 0.12;
+  // (A 45° mountain's sand goes with its height squared, so each holds about its share.)
+  const peaks = sites.map((x, i) => ({ x, top: room * Math.max(0.35, Math.sqrt(s.weights[i])) }));
   for (let x = 0; x < n; x++) {
     let hgt = floor;
     for (const pk of peaks) hgt = Math.max(hgt, pk.top - Math.abs(x - pk.x) * (0.95 + 0.1 * hash(x, 3, 17)));
@@ -202,22 +240,46 @@ function makeSim(score: Score, n: number, key: string): Sand {
       cells[i] = pack(c[0] * k, c[1] * k, c[2] * k);
     }
   }
+  // A bed of sand already lying flat in the bottom of the glass, in level bands.
+  const bed = n * 0.07;
+  for (let x = 0; x < n; x++) {
+    const top = bed + Math.sin(x * 0.04 + 0.7) * 1.8 + Math.sin(x * 0.11 + 2) * 0.8;
+    for (let d = 0; d < top; d++) {
+      const y = n - 1 - d;
+      const i = y * n + x;
+      if (!inside[i]) continue;
+      const depth = d + Math.sin(x * 0.07) * 1.5;
+      const c = hash(x, y, 7) > 0.985 ? GOLD : depth % 5 < 1 || hash(x, y, 9) < 0.1 ? WHITE : s.cols[Math.floor(depth / 5) % 2];
+      const v = 0.86 + 0.26 * hash(x, y, 8);
+      cells[i] = pack(c[0] * v, c[1] * v, c[2] * v);
+    }
+  }
   for (let i = 0; i < shelf * n; i++) if (cells[i] > WALL) s.above++;
   return s;
 }
 
-/** Where phrase p's peak builds (0..1 across the glass): somewhere new each phrase, a fair way from the last. */
-function phraseAnchor(seed: number, p: number): number {
-  if (p < 0) return 0.5;
-  let x = 0.5;
-  for (let q = 0; q <= p; q++) {
-    let next = 0.18 + 0.64 * hash(seed, q, 101);
-    if (Math.abs(next - x) < 0.2) next = x + (next >= x ? 0.2 : -0.2);
-    if (next > 0.82) next -= 0.45;
-    if (next < 0.18) next += 0.45;
-    x = next;
+/** Which site pours in phrase p (it often keeps to the same one, so its peak builds big), and a weaker second stream. */
+function planAt(s: Sand, seed: number, p: number): { main: number; second: number } {
+  const k = s.sites.length;
+  const pick = (u: number, skip: number) => {
+    let total = 0;
+    for (let i = 0; i < k; i++) if (i !== skip) total += s.weights[i];
+    let acc = 0;
+    for (let i = 0; i < k; i++) {
+      if (i === skip) continue;
+      acc += s.weights[i] / total;
+      if (u < acc) return i;
+    }
+    return skip === k - 1 ? k - 2 : k - 1;
+  };
+  while (s.plan.length <= p) {
+    const q = s.plan.length;
+    const prev = s.plan[q - 1];
+    const main = !prev ? 0 : hash(seed, q, 111) < 0.5 ? prev.main : pick(hash(seed, q, 112), -1);
+    const second = k > 1 && hash(seed, q, 113) < 0.35 ? pick(hash(seed, q, 114), main) : -1;
+    s.plan.push({ main, second });
   }
-  return x;
+  return s.plan[Math.max(0, p)];
 }
 
 /** Seconds since voice v last moved to a new note (Infinity before its first move). */
@@ -240,45 +302,52 @@ function sinceMove(score: Score, v: number, t: number): { age: number; idx: numb
 }
 
 /**
- * Where the foam gives at t (columns), with how hard. The foam has a weak spot that wanders
- * slowly and unevenly across the glass, nudged by each chord (its root round the circle of fifths);
- * a thin trickle runs there all the while, and every voice that has just moved to a new note
- * opens a trickle of its own near it, dwindling as the note holds: so the streams cluster, chord
- * changes bring bursts of them, and the peaks build unevenly, where the weak spot lingers.
+ * Where the foam gives at t (columns), with how hard. Like the toy, sand runs in one or two thin
+ * streams that keep to their places for a long while, so each builds one big peak: each phrase
+ * (four chords) pours at one of the piece's few sites (often the same one again), sometimes with
+ * a weaker second stream at another. The music sets how hard they run: every voice that has just
+ * moved to a new note pushes the foam apart a little more, dwindling as the note holds.
  */
-function pressAt(score: Score, s: Sand, t: number): { x: number; f: number }[] {
-  if (t < score.gridStart) return [];
+function pressAt(score: Score, s: Sand, t: number): { x: number; f: number; site: number }[] {
+  if (t < score.gridStart || !s.sites.length) return [];
   const { n, cells, shelf } = s;
   const k = Math.max(0, chordIndexAt(score, t));
-  // The song as a mountain range: the sand pours in one place for a whole phrase (four chords),
-  // building a peak, then the stream slides along the foam to the next phrase's place.
-  const phrase = Math.floor(k / 4);
-  const startOf = (p: number) => score.chords[Math.min(score.chords.length - 1, p * 4)]?.t ?? 0;
-  const from = phraseAnchor(score.seed, phrase - 1);
-  const to = phraseAnchor(score.seed, phrase);
-  const u = Math.max(0, Math.min(1, (t - startOf(phrase)) / 1.5));
-  const focus = (from + (to - from) * u * u * (3 - 2 * u)) * (n - 1);
-  const want: { x: number; f: number }[] = [{ x: focus, f: 0.45 }];
-  // Running behind (the gaps already as free as they go): the foam gives under the heaviest sand too.
-  if (s.gate > 0.85 && s.heavy >= 0) want.push({ x: s.heavy, f: 0.5 + 2 * (s.gate - 0.85) });
-  for (let v = 0; v < score.config.voices && want.length < 5; v++) {
-    const { age, idx } = sinceMove(score, v, t);
+  const { main, second } = planAt(s, score.seed, Math.floor(k / 4));
+  let surge = 0;
+  for (let v = 0; v < score.config.voices; v++) {
+    const { age } = sinceMove(score, v, t);
     if (age > 5) continue;
     const nt = voiceNotesAt(score, v, t).sort((x, y) => y.g - x.g)[0];
-    if (!nt) continue;
-    const f = levelAt(score, v, t) * nt.g * Math.exp(-age / 1.6);
-    if (f < 0.08) continue;
-    want.push({ x: focus + (hash(v, idx, 97) - 0.5) * 0.07 * n, f });
+    if (nt) surge += levelAt(score, v, t) * nt.g * Math.exp(-age / 1.6);
   }
-  // (Where there's still sand over the spot, or else the nearest place there is.)
+  // (The stream wavers a grain or two as the foam shifts.)
+  const sway = Math.sin(t * 0.37 + score.seed) * 1.5;
+  // (A site whose whole mountain on top has run out hands over to the next that still has some.)
+  const live = (i: number) => {
+    for (let j = 0; j < s.sites.length; j++) {
+      const c = (i + j) % s.sites.length;
+      // (The last grains, caught between bubbles, don't count.)
+      if (s.siteSand[c] > Math.max(60, 0.12 * (s.siteStart[c] ?? 0))) return c;
+    }
+    return -1;
+  };
+  const out: { x: number; f: number; site: number }[] = [];
+  const m1 = live(main);
+  if (m1 >= 0) {
+    out.push({ x: Math.round(s.sites[m1] + sway), f: 0.45 + Math.min(0.6, 0.25 * surge), site: m1 });
+    const m2 = second >= 0 ? live(second) : -1;
+    if (m2 >= 0 && m2 !== m1) out.push({ x: Math.round(s.sites[m2] - sway), f: 0.18 + Math.min(0.2, 0.08 * surge), site: m2 });
+    return out;
+  }
+  // The mountains are gone: what's left on top drains wherever it lies, nearest the middle first.
+  const want = [{ x: n / 2, f: 0.4 }];
   const hasSand = (x: number) => x > 1 && x < n - 2 && (cells[(shelf - 6) * n + x] > WALL || cells[(shelf - 3) * n + x] > WALL);
-  const out: { x: number; f: number }[] = [];
   for (const w of want) {
     const at = Math.round(w.x);
     for (let d = 0; d < n; d++) {
       const x = hasSand(at - d) ? at - d : hasSand(at + d) ? at + d : -1;
       if (x >= 0) {
-        out.push({ x, f: w.f });
+        out.push({ x, f: w.f, site: -1 });
         break;
       }
     }
@@ -293,7 +362,8 @@ function stepBubbles(s: Sand, score: Score, time: number) {
   const step = s.step;
   const eff = (i: number) => br[i] * (1 - Math.min(1, bpop[i] / 1.4));
   const F = new Float32Array(m);
-  for (const c of pressAt(score, s, time)) {
+  s.press = pressAt(score, s, time);
+  for (const c of s.press) {
     for (let i = 0; i < m; i++) {
       const d = bx[i] - c.x;
       F[i] += s.push * c.f * Math.sign(d || 1) * Math.exp(-Math.abs(d) / 9);
@@ -315,7 +385,10 @@ function stepBubbles(s: Sand, score: Score, time: number) {
   for (const hit of drumHits(score, time, time + DT)) {
     if (hit.voice === 'kick') jiggle += 0.25 * hit.vel;
     if (hit.voice === 'snare') {
-      const target = (0.2 + 0.6 * hash(Math.round(hit.t * 1000), 1, 3)) * (n - 1);
+      // (At a stream, letting a rush through.)
+      const h = Math.round(hit.t * 1000);
+      const at = s.press[Math.floor(hash(h, 2, 3) * s.press.length)];
+      const target = at ? at.x + (hash(h, 1, 3) - 0.5) * 6 : (0.2 + 0.6 * hash(h, 1, 3)) * (n - 1);
       let best = 0;
       for (let i = 1; i < m; i++) if (Math.abs(bx[i] - target) < Math.abs(bx[best] - target)) best = i;
       bpop[best] = 1.4;
@@ -349,30 +422,20 @@ function stepBubbles(s: Sand, score: Score, time: number) {
   rasterBubbles(s);
 }
 
-/** Columns where two bubbles have parted (sand can get through), for drawing and for where sand slides in. */
-function gapsOf(s: Sand): number[] {
-  const out: number[] = [];
-  for (let i = 0; i + 1 < s.bx.length; i++) {
-    const a = s.bx[i] + s.br[i] * (1 - Math.min(1, s.bpop[i] / 1.4));
-    const b = s.bx[i + 1] - s.br[i + 1] * (1 - Math.min(1, s.bpop[i + 1] / 1.4));
-    if (b - a >= 0.8) out.push(Math.round((a + b) / 2));
-  }
-  return out;
-}
-
 function stepSand(s: Sand, score: Score, time: number) {
   const { n, cells, shelf } = s;
   const step = s.step;
   if (s.flipAt >= 0) {
     // Turning over: when it's done the sand is upside down, and the bubbles hold it again.
     if (step - s.flipAt >= FLIP_STEPS) {
-      for (let y = 0; y < Math.floor(n / 2); y++) {
-        const a = cells.slice(y * n, y * n + n);
-        cells.copyWithin(y * n, (n - 1 - y) * n, (n - y) * n);
-        cells.set(a, (n - 1 - y) * n);
-      }
+      // (Turned half round: top to bottom and left to right, as the glass is drawn turning; the
+      // mountains, now hanging on top, drain where they lie, so the streams' sites turn too.)
+      cells.reverse();
+      s.sites = s.sites.map((x) => n - 1 - x);
+      s.catchment.reverse();
       s.flipAt = -1;
       s.cycleStart = time;
+      s.siteStart = [];
     }
     s.step++;
     return;
@@ -391,23 +454,36 @@ function stepSand(s: Sand, score: Score, time: number) {
       s.push = Math.max(0.04, Math.min(1.2, s.push * Math.sqrt(adj)));
     }
     s.above = above;
-    // Where the most sand weighs on the foam.
-    let best = -1;
-    let most = 0;
-    for (let x = 2; x < n - 2; x += 3) {
-      let y = shelf - 1;
-      while (y > 0 && cells[y * n + x] > WALL) y--;
-      if (shelf - 1 - y > most) (most = shelf - 1 - y), (best = x);
-    }
-    s.heavy = most > 3 ? best : -1;
-    if (s.flips && above < 30 && time - s.cycleStart > 10) s.flipAt = step;
+    s.siteSand = s.sites.map(() => 0);
+    for (let y = 0; y < shelf; y++) for (let x = 0; x < n; x++) if (s.catchment[x] >= 0 && cells[y * n + x] > WALL) s.siteSand[s.catchment[x]]++;
+    if (!s.siteStart.length) s.siteStart = s.siteSand.slice();
+    // (Turn over once the top has run out, the last grains caught between bubbles aside.)
+    const total = s.siteStart.reduce((a, b) => a + b, 0);
+    if (s.flips && time - s.cycleStart > 10 && (above < Math.max(30, 0.08 * total) || time - s.cycleStart > CYCLE * 1.6)) s.flipAt = step;
   }
   stepBubbles(s, score, time);
   const air = s.air;
+  // The top drains toward the streams (funnels open over them), and sand only gets through at a
+  // stream: gaps the drums shake open elsewhere close again before anything falls.
+  // Wet sand on top also creeps along the foam toward the nearest stream (within a quarter of
+  // the glass), so a stream drains its whole mountain, not just a crater over the hole.
   const near = new Uint8Array(n);
-  for (const g of gapsOf(s)) for (let d = -20; d <= 20; d++) if (g + d >= 0 && g + d < n) near[g + d] = 1;
+  const open = new Uint8Array(n);
+  const toward = new Int8Array(n);
+  const reach = Math.round(n * 0.25);
+  for (const p of s.press) {
+    for (let d = -26; d <= 26; d++) if (p.x + d >= 0 && p.x + d < n) near[p.x + d] = 1;
+    for (let d = -5; d <= 5; d++) if (p.x + d >= 0 && p.x + d < n) open[p.x + d] = 1;
+  }
+  for (const p of s.press) {
+    for (let x = Math.max(0, p.x - reach); x <= Math.min(n - 1, p.x + reach); x++) {
+      if (p.site >= 0 ? s.catchment[x] === p.site : !toward[x]) toward[x] = Math.abs(p.x - x) > 2 ? Math.sign(p.x - x) : 0;
+    }
+  }
+  const flow = s.flow;
+  for (let x = 0; x < n; x++) flow[x] *= 0.94;
   // Falling: two cells a step at most, straight down if it can, else off diagonally (so piles stand
-  // at the sand's natural angle, as peaks). Packed sand above the bubbles only slides near an open
+  // as smooth cones at the sand's natural angle). Packed sand above the bubbles only slides near an open
   // gap, so funnels open over the gaps and the ridge's peaks stand. Bottom-up, alternating.
   for (let sub = 0; sub < 2; sub++) {
     const ltr = (step + sub) % 2 === 0;
@@ -420,23 +496,31 @@ function stepSand(s: Sand, score: Score, time: number) {
         const c = cells[i];
         if (c <= WALL) continue;
         const below = i + n;
-        if (!cells[below] && !air[below] && (y !== shelf - 1 || hash(x, step, 55 + sub) < s.gate)) {
+        if (!cells[below] && !air[below] && (y !== shelf - 1 || (open[x] && hash(x, step, 55 + sub) < s.gate))) {
+          if (y === shelf - 1) flow[x] += 0.25;
           cells[below] = y === shelf - 1 ? pouredGrain(score, s.cols, time, hash(x, step, 51), hash(x, step, 52)) : c;
           cells[i] = 0;
           continue;
         }
         // (Packed sand above the bubbles slides freely near a gap, sluggishly elsewhere.)
-        if (up && !near[x] && hash(x, y, step * 2 + sub) > 0.15) continue;
+        if (up && !near[x] && !toward[x] && hash(x, y, step * 2 + sub) > 0.15) continue;
         const first = hash(x, y, step * 2 + sub + 1) < 0.5 ? -1 : 1;
+        let moved = false;
         for (const d of [first, -first]) {
-          // Wet sand stands steep: below the bubbles a grain only slides off where the drop is two
-          // grains deep (peaks stand at about 60°, until a kick shakes them down).
-          if (!up && y + 2 < n && cells[below + n + d] !== 0) continue;
-          if (!cells[below + d] && !cells[i + d] && !air[below + d] && (y !== shelf - 1 || hash(x, step, 57 + sub) < s.gate)) {
+          if (!cells[below + d] && !cells[i + d] && !air[below + d] && (y !== shelf - 1 || (open[x] && hash(x, step, 57 + sub) < s.gate))) {
+            if (y === shelf - 1) flow[x] += 0.25;
             cells[below + d] = y === shelf - 1 ? pouredGrain(score, s.cols, time, hash(x, step, 53), hash(x, step, 54)) : c;
             cells[i] = 0;
+            moved = true;
             break;
           }
+        }
+        // Creeping: a resting grain on top edges a cell toward the stream.
+        const d = toward[x];
+        // (Only against the sweep, so a grain moves once a pass; the sweep turns each pass.)
+        if (!moved && up && d && (ltr ? d < 0 : d > 0) && !cells[i + d] && !air[i + d] && hash(x, y, step * 3 + sub) < 0.14) {
+          cells[i + d] = c;
+          cells[i] = 0;
         }
       }
     }
@@ -531,6 +615,10 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     sim.lastChord = from.lastChord;
     sim.flipAt = from.flipAt;
     sim.cycleStart = from.cycleStart;
+    sim.siteStart = from.siteStart.slice();
+    sim.sites = from.sites.slice();
+    sim.catchment.set(from.catchment);
+    sim.flow.fill(0);
     rasterBubbles(sim);
   }
   const limit = sim.step + 600;
@@ -538,7 +626,7 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     stepSand(sim, score, sim.step * DT);
     if (sim.step % Math.round(SNAP_EVERY / DT) === 0 && !sim.snaps.some((x) => x.step === sim.step)) {
       if (sim.snaps.length >= MAX_SNAPS) sim.snaps.splice(1, 1);
-      sim.snaps.push({ step: sim.step, cells: sim.cells.slice(), bx: sim.bx.slice(), bv: sim.bv.slice(), bpop: sim.bpop.slice(), push: sim.push, gate: sim.gate, above: sim.above, lastChord: sim.lastChord, flipAt: sim.flipAt, cycleStart: sim.cycleStart });
+      sim.snaps.push({ step: sim.step, cells: sim.cells.slice(), bx: sim.bx.slice(), bv: sim.bv.slice(), bpop: sim.bpop.slice(), push: sim.push, gate: sim.gate, above: sim.above, lastChord: sim.lastChord, flipAt: sim.flipAt, cycleStart: sim.cycleStart, siteStart: sim.siteStart.slice(), sites: sim.sites.slice(), catchment: sim.catchment.slice() });
     }
   }
 
@@ -566,7 +654,7 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
   ctx.lineTo(cx - R * 0.8, cy + R * 1.18);
   ctx.closePath();
   ctx.fill();
-  // Turning over (endless and looping pieces).
+  // Turning over (endless pieces).
   if (sim.flipAt >= 0) {
     const u = Math.min(1, (sim.step - sim.flipAt) / FLIP_STEPS);
     ctx.translate(cx, cy);
@@ -619,6 +707,26 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     L.globalCompositeOperation = 'source-over';
   }
   ctx.drawImage(layer.canvas as CanvasImageSource, x0, y0, D, D);
+  // The streams: thin threads of falling sand from the foam down to the peak they're building.
+  {
+    const c = pouredGrain(score, sim.cols, t, 0.5, 0.5);
+    const rgb = [c & 255, (c >>> 8) & 255, (c >>> 16) & 255];
+    for (let x = 1; x < N - 1; x++) {
+      const f = sim.flow[x];
+      if (f < 0.06) continue;
+      let y = sim.shelf + 3;
+      while (y < N - 1 && !cells[y * N + x]) y++;
+      const top = y0 + (sim.shelf + 2) * cell;
+      const bottom = y0 + y * cell;
+      if (bottom - top < cell * 2) continue;
+      const g = ctx.createLinearGradient(0, top, 0, bottom);
+      const al = Math.min(0.45, f * 0.6);
+      g.addColorStop(0, css(rgb, al));
+      g.addColorStop(1, css(rgb, al * 0.55));
+      ctx.fillStyle = g;
+      ctx.fillRect(x0 + (x + 0.2) * cell, top, cell * 0.6, bottom - top);
+    }
+  }
 
   // The bubbles, where the simulation has them, as soap foam: clear, with a darker edge, a thin
   // bright rim, an iridescent film arcing over the top, a window reflection and a glint below;
