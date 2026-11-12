@@ -52,6 +52,7 @@ import {
 } from './engine';
 import { ensureFont } from './render/fonts';
 import { frameCount, renderFrame, themeBackground } from './render/renderer';
+import { ExportCancelled, canExportVideo, exportVideo, pickAudio } from './video-export';
 import { decodeShare, encodeShare, shareMood, exportProject, listProjects, parseProject, saveProject, deleteProject, shareText } from './project';
 
 const fontsReady = (async () => {
@@ -518,6 +519,8 @@ function startApp() {
   let score: Score;
   let pausedAt = 0;
   let recording: { recorder: MediaRecorder; canvas: HTMLCanvasElement; until: number } | null = null;
+  /** An offline video export in progress (the viewport shows its frames instead of playing). */
+  let exporting: { cancelled: boolean; canvas: HTMLCanvasElement } | null = null;
 
   const setStatus = (msg: string) => (status.textContent = msg);
 
@@ -1317,15 +1320,76 @@ function startApp() {
     $('#rec-length-box').hidden = !score?.endless;
   }
   recQuality.addEventListener('change', syncRecOpts);
-  recordBtn.addEventListener('click', async () => {
-    if (recording) {
-      recording.recorder.stop();
-      return;
+  /** The bitrate for a recording of this length: a target size (less the audio) or the chosen preset. */
+  const recBitrate = (length: number, audioBps: number) =>
+    recQuality.value === 'size'
+      ? Math.max(400_000, Math.round(((Number(recSize.value) || 25) * 8_000_000) / length - audioBps))
+      : Number(recQuality.value) * 1_000_000;
+
+  /**
+   * Offline export: every frame is drawn off-screen and encoded on this device, so it never drops
+   * frames however slow the view is, and the page stays usable (the viewport shows a preview).
+   */
+  async function exportOffline() {
+    const length = recordLength();
+    const base = generateScore(state);
+    base.extend(length + 1);
+    const theme = displayTheme();
+    const s: Score = theme === state.theme && !useMine ? base : { ...base, config: { ...base.config, theme } };
+    const { width, height } = s.config.video;
+    const fps = Number($<HTMLSelectElement>('#rec-fps').value) || s.config.video.fps;
+    const frames = s.loop || s.endless ? Math.round(length * fps) : Math.ceil(length * fps) + 1;
+    const bitrate = recBitrate(length, 192_000);
+    const job = { cancelled: false, canvas: document.createElement('canvas') };
+    job.canvas.width = width;
+    job.canvas.height = height;
+    exporting = job;
+    if (player.playing) pause();
+    recordBtn.textContent = 'Cancel export';
+    let lock: { release(): Promise<void> } | null = null;
+    try {
+      lock = await (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock?.request('screen') ?? null;
+    } catch {
+      /* the screen may sleep; keep the page open */
     }
-    if (typeof MediaRecorder === 'undefined') {
-      setStatus('This browser cannot record video; use npm run export instead.');
-      return;
+    const t0 = performance.now();
+    try {
+      setStatus('Rendering audio…');
+      const audio = await renderOffline(base, length);
+      const ctx2 = job.canvas.getContext('2d')!;
+      const { blob, codec } = await exportVideo({
+        width,
+        height,
+        fps,
+        frames,
+        bitrate,
+        audio,
+        draw: (n) => {
+          renderFrame(ctx2, s, n / fps, { frame: n });
+          return job.canvas;
+        },
+        cancelled: () => job.cancelled,
+        onProgress: (done, total) => {
+          const el = (performance.now() - t0) / 1000;
+          const left = done > 0 ? (el / done) * (total - done) : 0;
+          const mmss = (x: number) => `${Math.floor(x / 60)}:${String(Math.round(x % 60)).padStart(2, '0')}`;
+          setStatus(`Exporting video… ${Math.floor((done / total) * 100)}% (frame ${done} of ${total}, about ${mmss(left)} left)`);
+        },
+      });
+      download(blob, `${baseName()}.mp4`);
+      const mb = blob.size / 1e6;
+      setStatus(`Saved ${baseName()}.mp4: ${length.toFixed(0)} s at ${fps} fps, ${mb.toFixed(1)} MB (${codec.split('.')[0]}), made in ${Math.round((performance.now() - t0) / 1000)} s.`);
+    } catch (err) {
+      setStatus(err instanceof ExportCancelled ? 'Export cancelled.' : `Video export failed: ${(err as Error).message}`);
+    } finally {
+      exporting = null;
+      lock?.release().catch(() => {});
+      recordBtn.textContent = 'Export video';
     }
+  }
+
+  /** Fallback for browsers without WebCodecs: capture a canvas while the piece plays in real time. */
+  async function recordRealtime() {
     const rc = document.createElement('canvas');
     rc.width = score.config.video.width;
     rc.height = score.config.video.height;
@@ -1333,11 +1397,7 @@ function startApp() {
     for (const tr of player.recordStream(score).getAudioTracks()) stream.addTrack(tr);
     const mime = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/webm;codecs=vp9,opus', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m)) ?? '';
     const length = recordLength();
-    // A target size becomes a bitrate (less 128 kbps of audio); otherwise the chosen preset.
-    const vbps =
-      recQuality.value === 'size'
-        ? Math.max(400_000, Math.round(((Number(recSize.value) || 25) * 8_000_000) / length - 128_000))
-        : Number(recQuality.value) * 1_000_000;
+    const vbps = recBitrate(length, 128_000);
     const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbps, audioBitsPerSecond: 128_000 });
     const chunks: Blob[] = [];
     recorder.ondataavailable = (ev) => ev.data.size && chunks.push(ev.data);
@@ -1345,16 +1405,33 @@ function startApp() {
       const type = recorder.mimeType || 'video/webm';
       download(new Blob(chunks, { type }), `${baseName()}.${type.includes('mp4') ? 'mp4' : 'webm'}`);
       recording = null;
-      recordBtn.textContent = 'Record video';
-      setStatus('Recording saved. For frame-exact 60 fps video use npm run export.');
+      recordBtn.textContent = 'Export video';
+      setStatus('Recording saved. This browser can only record in real time, so slow views drop frames; a recent Chrome, Edge or Safari exports frame by frame instead.');
       pause();
     };
     recording = { recorder, canvas: rc, until: length };
     recordBtn.textContent = 'Stop recording';
-    setStatus(`Recording ${length.toFixed(0)} s in real time at ${(vbps / 1e6).toFixed(1)} Mbps (about ${Math.round(((vbps + 128_000) * length) / 8e6)} MB); it stops by itself.`);
+    setStatus(`Recording ${length.toFixed(0)} s in real time (this browser can't export frame by frame); it stops by itself.`);
     pausedAt = 0;
     recorder.start(250);
     await play();
+  }
+
+  recordBtn.addEventListener('click', async () => {
+    if (exporting) {
+      exporting.cancelled = true;
+      return;
+    }
+    if (recording) {
+      recording.recorder.stop();
+      return;
+    }
+    if (canExportVideo() && (await pickAudio(48000, 2))) return exportOffline();
+    if (typeof MediaRecorder === 'undefined') {
+      setStatus('This browser cannot make video; use npm run export instead.');
+      return;
+    }
+    return recordRealtime();
   });
 
   // ---- Volume & level meter ------------------------------------------------------
@@ -1502,6 +1579,16 @@ function startApp() {
     textScale = Math.max(1, Math.min(2.6, (12.5 * dpr) / (19 * u)));
   }
 
+  /** While exporting, the viewport shows the frame being encoded (the views share their simulations). */
+  function drawExportPreview(src: HTMLCanvasElement) {
+    const k = Math.min(canvas.width / src.width, canvas.height / src.height);
+    const w = src.width * k;
+    const h = src.height * k;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(src, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+  }
+
   let lastHighlight = -2;
   let lastDom = 0;
   function tick() {
@@ -1549,7 +1636,8 @@ function startApp() {
     adaptQuality(performance.now());
     updateMeter(performance.now());
     resizeCanvas();
-    renderFrame(ctx, viewScore(), t, { textScale, lite: quality < 0.85 });
+    if (exporting) drawExportPreview(exporting.canvas);
+    else renderFrame(ctx, viewScore(), t, { textScale, lite: quality < 0.85 });
     if (recording) renderFrame(recording.canvas.getContext('2d')!, viewScore(), t);
     // DOM updates are throttled; layout work every frame adds up on phones.
     const nowMs = performance.now();
