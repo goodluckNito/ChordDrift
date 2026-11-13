@@ -505,8 +505,9 @@ function stepBubbles(s: Sand, score: Score, time: number) {
   rasterBubbles(s);
 }
 
-/** The liquid's velocity at a point (in its grid's coordinates), interpolated. */
-function liquidAt(s: Sand, gx: number, gy: number): [number, number] {
+/** The liquid's velocity at a point (in its grid's coordinates), interpolated, into liquid.u and liquid.v. */
+const liquid = { u: 0, v: 0 };
+function liquidAt(s: Sand, gx: number, gy: number) {
   const x = Math.max(0, Math.min(FM - 1.001, gx));
   const y = Math.max(0, Math.min(FM - 1.001, gy));
   const i = Math.floor(x);
@@ -514,8 +515,13 @@ function liquidAt(s: Sand, gx: number, gy: number): [number, number] {
   const fx = x - i;
   const fy = y - j;
   const a = j * FM + i;
-  const lerp = (f: Float32Array) => (f[a] * (1 - fx) + f[a + 1] * fx) * (1 - fy) + (f[a + FM] * (1 - fx) + f[a + FM + 1] * fx) * fy;
-  return [lerp(s.fu), lerp(s.fv)];
+  const w00 = (1 - fx) * (1 - fy);
+  const w10 = fx * (1 - fy);
+  const w01 = (1 - fx) * fy;
+  const w11 = fx * fy;
+  const { fu, fv } = s;
+  liquid.u = fu[a] * w00 + fu[a + 1] * w10 + fu[a + FM] * w01 + fu[a + FM + 1] * w11;
+  liquid.v = fv[a] * w00 + fv[a + 1] * w10 + fv[a + FM] * w01 + fv[a + FM + 1] * w11;
 }
 
 /**
@@ -525,7 +531,8 @@ function liquidAt(s: Sand, gx: number, gy: number): [number, number] {
  */
 function stepGrains(s: Sand): Float32Array {
   const { n, cells, air, ppx, ppy, pvx, pvy, pcol } = s;
-  const drag = new Float32Array(FM * FM * 2);
+  const drag = scratch.drag;
+  drag.fill(0);
   const fs = n / FM;
   const sink = (0.5 * n) / 240;
   // (Lands in its own cell, or the nearest free one above if sand has slid in there; false if
@@ -543,7 +550,9 @@ function stepGrains(s: Sand): Float32Array {
   for (let k = s.pn - 1; k >= 0; k--) {
     let x = ppx[k];
     let y = ppy[k];
-    const [u, v] = liquidAt(s, x / fs - 0.5, y / fs - 0.5);
+    liquidAt(s, x / fs - 0.5, y / fs - 0.5);
+    const u = liquid.u;
+    const v = liquid.v;
     pvx[k] += (u - pvx[k]) * 0.1 + (hash(k, s.step, 31) - 0.5) * 0.03;
     pvy[k] += (v + sink - pvy[k]) * 0.1;
     // (Never faster than a cell or so a step: it can't skip through sand.)
@@ -585,7 +594,7 @@ function stepGrains(s: Sand): Float32Array {
   return drag;
 }
 
-const scratch = { u: new Float32Array(FM * FM), v: new Float32Array(FM * FM), p: new Float32Array(FM * FM), q: new Float32Array(FM * FM), div: new Float32Array(FM * FM), solid: new Uint8Array(FM * FM) };
+const scratch = { drag: new Float32Array(FM * FM * 2), u: new Float32Array(FM * FM), v: new Float32Array(FM * FM), p: new Float32Array(FM * FM), q: new Float32Array(FM * FM), div: new Float32Array(FM * FM), solid: new Uint8Array(FM * FM) };
 
 /**
  * The liquid, as a coarse incompressible flow (stable fluids): the falling sand pushes it down and
@@ -641,9 +650,9 @@ function stepLiquid(s: Sand, score: Score, time: number, drag: Float32Array) {
         v[g] = 0;
         continue;
       }
-      const [a, b] = liquidAt(s, i - fu[g] / fs, j - fv[g] / fs);
-      u[g] = a * 0.985;
-      v[g] = b * 0.985;
+      liquidAt(s, i - fu[g] / fs, j - fv[g] / fs);
+      u[g] = liquid.u * 0.985;
+      v[g] = liquid.v * 0.985;
     }
   }
   // Incompressible: take out what would squeeze it (a few relaxation passes for the pressure).
@@ -753,6 +762,8 @@ function stepSand(s: Sand, score: Score, time: number) {
         const c = cells[i];
         if (c <= WALL) continue;
         const below = i + n;
+        // (Packed in on every side, a grain can't go anywhere: skip it.)
+        if (cells[below] && cells[below - 1] && cells[below + 1] && cells[i - 1] && cells[i + 1]) continue;
         // Just clear of the foam and falling, a grain sinks freely through the liquid from here on.
         // (Only there: grains sliding down the piles below stay grains of the pile.)
         if (y >= s.exit && y <= s.exit + 2 && !cells[below] && s.pn < PMAX) {
@@ -840,30 +851,83 @@ function stepSand(s: Sand, score: Score, time: number) {
 
 // ---- Drawing -------------------------------------------------------------------------------
 
-let grid: { n: number; canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D; img: ImageData; px: Uint32Array } | null = null;
-let layer: { size: number; canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D } | null = null;
-let grain: CanvasPattern | null = null;
-let grainOwner: CanvasRenderingContext2D | null = null;
+let grid: { n: number; g: number; canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D; img: ImageData; px: Uint32Array; col: Uint32Array; mul: Uint16Array; add: Uint8Array } | null = null;
 const offscreen = (w: number, h: number) => (typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h }));
 
-/** A fine grain texture (light and dark specks), tiled over the sand at screen resolution. */
-function grainPattern(c: CanvasRenderingContext2D): CanvasPattern | null {
-  if (grain && grainOwner === c) return grain;
-  const tile = offscreen(128, 128);
-  const t = tile.getContext('2d') as CanvasRenderingContext2D;
-  const img = t.createImageData(128, 128);
-  for (let i = 0; i < 128 * 128; i++) {
+/** The sand image: N×N cells at G×G pixels each, with a fixed fine grain (light and dark specks) baked in. */
+function sandGrid(N: number, G: number) {
+  if (grid && grid.n === N && grid.g === G) return grid;
+  const S = N * G;
+  const canvas = offscreen(S, S);
+  const g = canvas.getContext('2d') as CanvasRenderingContext2D;
+  const img = g.createImageData(S, S);
+  // Each pixel darkens toward black or lightens toward white a little: out = c·mul/256 + add.
+  const mul = new Uint16Array(S * S);
+  const add = new Uint8Array(S * S);
+  for (let i = 0; i < S * S; i++) {
     const j = hash(i, 5, 77);
-    const v = j < 0.5 ? 0 : 255;
-    img.data[i * 4] = v;
-    img.data[i * 4 + 1] = v;
-    img.data[i * 4 + 2] = v;
-    img.data[i * 4 + 3] = Math.round(Math.abs(j - 0.5) * 2 * 110);
+    const amt = Math.abs(j - 0.5) * 2 * 0.4;
+    mul[i] = Math.round(256 * (1 - amt));
+    add[i] = j < 0.5 ? 0 : Math.round(255 * amt);
   }
-  t.putImageData(img, 0, 0);
-  grain = c.createPattern(tile as CanvasImageSource, 'repeat');
-  grainOwner = c;
-  return grain;
+  grid = { n: N, g: G, canvas, ctx: g, img, px: new Uint32Array(img.data.buffer), col: new Uint32Array(N * N), mul, add };
+  return grid;
+}
+
+type Sprite = HTMLCanvasElement | OffscreenCanvas;
+const SPR = 48; // a bubble sprite's radius (px)
+let sprites: { dark: boolean; list: Sprite[] } | null = null;
+
+/**
+ * A soap bubble, drawn once per look and stamped from then on: clear, with a darker edge, a thin
+ * bright rim, an iridescent film arcing over the top, a window reflection and a glint below.
+ */
+function bubbleSprites(dark: boolean): Sprite[] {
+  if (sprites && sprites.dark === dark) return sprites.list;
+  const list: Sprite[] = [];
+  for (let k = 0; k < 4; k++) {
+    const size = 2 * SPR + 6;
+    const cv = offscreen(size, size);
+    const c = cv.getContext('2d') as CanvasRenderingContext2D;
+    const bx = size / 2;
+    const by = size / 2;
+    const r = SPR;
+    const body = c.createRadialGradient(bx, by, r * 0.55, bx, by, r);
+    body.addColorStop(0, 'rgba(0,0,0,0)');
+    body.addColorStop(0.85, dark ? 'rgba(0,0,0,0.25)' : 'rgba(40,50,70,0.22)');
+    body.addColorStop(1, 'rgba(255,255,255,0.55)');
+    c.fillStyle = body;
+    c.beginPath();
+    c.arc(bx, by, r, 0, Math.PI * 2);
+    c.fill();
+    // The film's colours, shifting from one sprite to the next.
+    const turn = k / 4 + 0.1;
+    const film = c.createLinearGradient(bx - r, by - r, bx + r, by);
+    const hues = ['255,90,200', '255,210,90', '90,230,255', '150,110,255'];
+    for (let j = 0; j < 4; j++) film.addColorStop(j / 3, `rgba(${hues[(j + k) % 4]},0.5)`);
+    c.strokeStyle = film;
+    c.lineWidth = r * 0.2;
+    c.beginPath();
+    c.arc(bx, by, r * 0.78, Math.PI * (1.08 + 0.1 * turn), Math.PI * (1.85 + 0.08 * turn));
+    c.stroke();
+    c.strokeStyle = 'rgba(255,255,255,0.75)';
+    c.lineWidth = r * 0.06;
+    c.beginPath();
+    c.arc(bx, by, r, 0, Math.PI * 2);
+    c.stroke();
+    c.fillStyle = 'rgba(255,255,255,0.85)';
+    c.beginPath();
+    c.ellipse(bx - r * 0.35, by - r * 0.45, r * 0.22, r * 0.11, -0.5, 0, Math.PI * 2);
+    c.fill();
+    c.strokeStyle = 'rgba(255,255,255,0.45)';
+    c.lineWidth = r * 0.08;
+    c.beginPath();
+    c.arc(bx, by, r * 0.86, Math.PI * 0.25, Math.PI * 0.75);
+    c.stroke();
+    list.push(cv);
+  }
+  sprites = { dark, list };
+  return list;
 }
 
 const rgbOf = (hex: string): [number, number, number] => {
@@ -872,16 +936,19 @@ const rgbOf = (hex: string): [number, number, number] => {
 };
 const css = (c: number[], a = 1) => `rgba(${c.map((x) => Math.round(Math.max(0, Math.min(255, x)))).join(',')},${a})`;
 
-export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false) {
+export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number, st: ViewStyle, a: ViewArea, lite = false, live = false) {
   const Wc = a.width;
   const Hc = a.height ?? a.bottom + a.top;
-  const N = lite ? 170 : 240;
+  // The grid is fixed per piece (finer unless it starts out on a struggling preview): playback
+  // dropping to lite quality and back must not throw the sand away and replay it from the start.
   let s = sims.get(score);
-  if (!s || s.n !== N) {
-    s = makeSim(score, N, `${N}`);
+  if (!s) {
+    const n0 = lite ? 170 : 240;
+    s = makeSim(score, n0, `${n0}`);
     sims.set(score, s);
   }
   const sim = s;
+  const N = sim.n;
   // Step to t (restoring a snapshot when time jumps back; a long jump is caught up over frames).
   const target = Math.max(0, Math.floor(t / DT));
   if (target < sim.step) {
@@ -910,8 +977,15 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     sim.fv.set(from.fv);
     rasterBubbles(sim);
   }
+  // (Live, catching up is spread over frames, a few milliseconds' worth each, so a slow device or
+  // a jump never freezes the page: the sand runs a little behind for a moment instead.)
+  // (More of a frame goes to it while it's well behind, so it catches up within seconds.)
   const limit = sim.step + 600;
-  while (sim.step < target && sim.step < limit) {
+  const t0 = performance.now();
+  const budget = target - sim.step > 60 ? 45 : 10;
+  let done = 0;
+  while (sim.step < target && sim.step < limit && (!live || done < 2 || performance.now() - t0 < budget)) {
+    done++;
     stepSand(sim, score, sim.step * DT);
     if (sim.step % Math.round(SNAP_EVERY / DT) === 0 && !sim.snaps.some((x) => x.step === sim.step)) {
       if (sim.snaps.length >= MAX_SNAPS) sim.snaps.splice(1, 1);
@@ -955,30 +1029,20 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     ctx.rotate(Math.PI * u * u * (3 - 2 * u));
     ctx.translate(-cx, -cy);
   }
-  // The liquid: clear, catching a little light.
+  // The liquid (clear, catching a little light), painted once and reused.
+  const zoom = Math.min(2.5, Math.max(1, Math.hypot(ctx.getTransform().a, ctx.getTransform().b)));
+  const gl = glassLayers(D, zoom, dark, bg);
   ctx.save();
-  ctx.beginPath();
-  ctx.arc(cx, cy, R, 0, Math.PI * 2);
-  ctx.clip();
-  const liquid = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.4, R * 0.1, cx, cy, R * 1.05);
-  const clear = dark ? bg.map((c) => c * 0.7 + 30) : bg.map((c) => c * 0.4 + 150);
-  liquid.addColorStop(0, css(clear.map((c) => c + 22)));
-  liquid.addColorStop(1, css(clear.map((c) => c - 10)));
-  ctx.fillStyle = liquid;
-  ctx.fillRect(x0, y0, D, D);
+  ctx.drawImage(gl.back as CanvasImageSource, x0 - gl.pad, y0 - gl.pad, D + 2 * gl.pad, D + 2 * gl.pad);
 
-  // The sand: the grid, drawn smooth at screen resolution, with a fine grain over it.
-  if (!grid || grid.n !== N) {
-    const canvas = offscreen(N, N);
-    const g = canvas.getContext('2d') as CanvasRenderingContext2D;
-    const img = g.createImageData(N, N);
-    grid = { n: N, canvas, ctx: g, img, px: new Uint32Array(img.data.buffer) };
-  }
-  const px = grid.px;
+  // The sand: each cell as G×G pixels with the grain baked in, drawn smooth at the glass's size.
+  const G = lite ? 2 : 3;
+  const gr = sandGrid(N, G);
+  const col = gr.col;
   const cells = sim.cells;
   for (let i = 0; i < N * N; i++) {
     const c = cells[i];
-    px[i] = c > WALL ? c : 0;
+    col[i] = c > WALL ? c : 0;
   }
   // Falling grains trail a short blur (so a stream reads as a thread as thick as what's falling).
   for (let y = sim.shelf + 3; y < N - 1; y++) {
@@ -987,8 +1051,8 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
       const c = cells[i];
       if (c <= WALL || cells[i + N] !== 0) continue;
       const rgb = c & 0xffffff;
-      if (!cells[i - N]) px[i - N] = (rgb | (150 << 24)) >>> 0;
-      if (!cells[i - N] && !cells[i - 2 * N]) px[i - 2 * N] = (rgb | (70 << 24)) >>> 0;
+      if (!cells[i - N]) col[i - N] = (rgb | (150 << 24)) >>> 0;
+      if (!cells[i - N] && !cells[i - 2 * N]) col[i - 2 * N] = (rgb | (70 << 24)) >>> 0;
     }
   }
   // The grains sinking through the liquid, each with a faint trail behind it.
@@ -997,82 +1061,53 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     const y = Math.floor(sim.ppy[k]);
     if (x < 0 || x >= N || y < 2 || y >= N) continue;
     const c = sim.pcol[k];
-    const rgb = c & 0xffffff;
-    px[y * N + x] = c;
+    col[y * N + x] = c;
     const tx = Math.round(sim.ppx[k] - sim.pvx[k] * 1.5);
     const ty = Math.round(sim.ppy[k] - sim.pvy[k] * 1.5);
-    if (tx >= 0 && tx < N && ty >= 0 && ty < N && !px[ty * N + tx]) px[ty * N + tx] = (rgb | (110 << 24)) >>> 0;
+    if (tx >= 0 && tx < N && ty >= 0 && ty < N && !col[ty * N + tx]) col[ty * N + tx] = ((c & 0xffffff) | (110 << 24)) >>> 0;
   }
-  grid.ctx.putImageData(grid.img, 0, 0);
-  const scale = Math.min(2.5, Math.max(1, Math.hypot(ctx.getTransform().a, ctx.getTransform().b)));
-  const size = Math.min(1600, Math.round(D * scale));
-  if (!layer || layer.size !== size) {
-    const canvas = offscreen(size, size);
-    layer = { size, canvas, ctx: canvas.getContext('2d') as CanvasRenderingContext2D };
-  }
-  const L = layer.ctx;
-  L.globalCompositeOperation = 'source-over';
-  L.clearRect(0, 0, size, size);
-  L.imageSmoothingEnabled = true;
-  L.imageSmoothingQuality = 'high';
-  L.drawImage(grid.canvas as CanvasImageSource, 0, 0, size, size);
-  const pat = grainPattern(L);
-  if (pat) {
-    L.globalCompositeOperation = 'source-atop';
-    L.fillStyle = pat;
-    L.fillRect(0, 0, size, size);
-    L.globalCompositeOperation = 'source-over';
-  }
-  ctx.drawImage(layer.canvas as CanvasImageSource, x0, y0, D, D);
-
-  // The bubbles, where the simulation has them, as soap foam: clear, with a darker edge, a thin
-  // bright rim, an iridescent film arcing over the top, a window reflection and a glint below;
-  // tiny bubbles crowd the crevices between them.
-  const soap = (bx: number, by: number, r: number, k: number, squash = 1) => {
-    // (Oblong: drawn as a circle squashed to the bubble's height.)
-    ctx.save();
-    ctx.translate(bx, by);
-    ctx.scale(1, squash);
-    ctx.translate(-bx, -by);
-    soapRound(bx, by, r, k);
-    ctx.restore();
-  };
-  const soapRound = (bx: number, by: number, r: number, k: number) => {
-    const body = ctx.createRadialGradient(bx, by, r * 0.55, bx, by, r);
-    body.addColorStop(0, 'rgba(0,0,0,0)');
-    body.addColorStop(0.85, dark ? 'rgba(0,0,0,0.25)' : 'rgba(40,50,70,0.22)');
-    body.addColorStop(1, 'rgba(255,255,255,0.55)');
-    ctx.fillStyle = body;
-    ctx.beginPath();
-    ctx.arc(bx, by, r, 0, Math.PI * 2);
-    ctx.fill();
-    if (r > 2.5) {
-      // The film's colours, shifting a little from bubble to bubble.
-      const film = ctx.createLinearGradient(bx - r, by - r, bx + r, by);
-      const turn = hash(k, 2, 93);
-      const hues = ['255,90,200', '255,210,90', '90,230,255', '150,110,255', '255,90,200'];
-      for (let j = 0; j < 4; j++) film.addColorStop(j / 3, `rgba(${hues[(j + Math.floor(turn * 4)) % 4]},0.5)`);
-      ctx.strokeStyle = film;
-      ctx.lineWidth = Math.max(1, r * 0.2);
-      ctx.beginPath();
-      ctx.arc(bx, by, r * 0.78, Math.PI * (1.08 + 0.1 * turn), Math.PI * (1.85 + 0.08 * turn));
-      ctx.stroke();
+  // A soft fringe round the sand's edges (half-clear, in the neighbouring sand's colour), so it
+  // reads as fine sand, not blocks, once drawn up to size.
+  for (let y = 1; y < N - 1; y++) {
+    for (let x = 1; x < N - 1; x++) {
+      const i = y * N + x;
+      if (col[i] || cells[i] === WALL) continue;
+      const nb = col[i - N] || col[i + N] || col[i - 1] || col[i + 1];
+      if (nb && nb >>> 24 === 255) col[i] = ((nb & 0xffffff) | (80 << 24)) >>> 0;
     }
-    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
-    ctx.lineWidth = Math.max(0.5, r * 0.06);
-    ctx.beginPath();
-    ctx.arc(bx, by, r, 0, Math.PI * 2);
-    ctx.stroke();
-    // A window reflection up top, a glint along the bottom.
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    ctx.beginPath();
-    ctx.ellipse(bx - r * 0.35, by - r * 0.45, r * 0.22, r * 0.11, -0.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-    ctx.lineWidth = Math.max(0.5, r * 0.08);
-    ctx.beginPath();
-    ctx.arc(bx, by, r * 0.86, Math.PI * 0.25, Math.PI * 0.75);
-    ctx.stroke();
+  }
+  const { px, mul, add } = gr;
+  const S = N * G;
+  px.fill(0);
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const c = col[y * N + x];
+      if (!c) continue;
+      const al = c & 0xff000000;
+      const r = c & 255;
+      const g = (c >>> 8) & 255;
+      const b = (c >>> 16) & 255;
+      for (let sy = 0; sy < G; sy++) {
+        let o = (y * G + sy) * S + x * G;
+        for (let sx = 0; sx < G; sx++, o++) {
+          const m = mul[o];
+          const d = add[o];
+          px[o] = (al | (Math.min(255, ((b * m) >> 8) + d) << 16) | (Math.min(255, ((g * m) >> 8) + d) << 8) | Math.min(255, ((r * m) >> 8) + d)) >>> 0;
+        }
+      }
+    }
+  }
+  gr.ctx.putImageData(gr.img, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = lite ? 'medium' : 'high';
+  ctx.drawImage(gr.canvas as CanvasImageSource, x0, y0, D, D);
+
+  // The bubbles, where the simulation has them, as soap foam (stamped from sprites, squashed to
+  // each one's height); tiny bubbles crowd the crevices between them.
+  const spr = bubbleSprites(dark);
+  const soap = (bx: number, by: number, r: number, k: number, squash = 1) => {
+    const w = (r / SPR) * (2 * SPR + 6);
+    ctx.drawImage(spr[((k % 4) + 4) % 4] as CanvasImageSource, bx - w / 2, by - (w * squash) / 2, w, w * squash);
   };
   // The foam film: tiny bubbles packed in the dips under each pair that touch, and trapped
   // against the glass at both ends of the row (what the sand rests on there).
@@ -1101,23 +1136,67 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     const by = y0 + (centreY(sim, i) + 0.5) * cell;
     soap(bx, by, r, i, fullRy(sim, i) / sim.br[i]);
   }
-  // A soft shine across the glass.
-  const shine = ctx.createLinearGradient(x0, y0, x0 + D, y0 + D);
-  shine.addColorStop(0.15, 'rgba(255,255,255,0)');
-  shine.addColorStop(0.25, `rgba(255,255,255,${dark ? 0.06 : 0.12})`);
-  shine.addColorStop(0.35, 'rgba(255,255,255,0)');
-  ctx.fillStyle = shine;
-  ctx.fillRect(x0, y0, D, D);
+  // A soft shine across the glass, and the frame round it (painted once and reused).
+  ctx.drawImage(gl.front as CanvasImageSource, x0 - gl.pad, y0 - gl.pad, D + 2 * gl.pad, D + 2 * gl.pad);
   ctx.restore();
-  // The frame: a thick dark ring with a sheen.
-  ctx.lineWidth = Math.max(4, D * 0.045);
-  const ring = ctx.createLinearGradient(x0, y0, x0 + D, y0 + D);
-  ring.addColorStop(0, '#3a3a40');
-  ring.addColorStop(0.5, '#141416');
-  ring.addColorStop(1, '#26262a');
-  ctx.strokeStyle = ring;
-  ctx.beginPath();
-  ctx.arc(cx, cy, R + ctx.lineWidth / 2 - 1, 0, Math.PI * 2);
-  ctx.stroke();
   ctx.restore();
+}
+
+let glass: { key: string; back: Sprite; front: Sprite; pad: number } | null = null;
+
+/** The glass's unchanging parts, painted once per size and look: the liquid behind the sand, and the shine and frame in front. */
+function glassLayers(D: number, zoom: number, dark: boolean, bg: [number, number, number]) {
+  const key = `${Math.round(D * zoom)}|${dark}|${bg.join()}`;
+  const lw = Math.max(4, D * 0.045);
+  const pad = Math.ceil(lw) + 2;
+  if (glass && glass.key === key) return glass;
+  const k = zoom;
+  const size = Math.ceil((D + 2 * pad) * k);
+  const R = D / 2;
+  const c0 = pad + R;
+  const make = () => {
+    const cv = offscreen(size, size);
+    const c = cv.getContext('2d') as CanvasRenderingContext2D;
+    c.scale(k, k);
+    return { cv, c };
+  };
+  const back = make();
+  {
+    const c = back.c;
+    c.beginPath();
+    c.arc(c0, c0, R, 0, Math.PI * 2);
+    const liquid = c.createRadialGradient(c0 - R * 0.3, c0 - R * 0.4, R * 0.1, c0, c0, R * 1.05);
+    const clear = dark ? bg.map((x) => x * 0.7 + 30) : bg.map((x) => x * 0.4 + 150);
+    liquid.addColorStop(0, css(clear.map((x) => x + 22)));
+    liquid.addColorStop(1, css(clear.map((x) => x - 10)));
+    c.fillStyle = liquid;
+    c.fill();
+  }
+  const front = make();
+  {
+    const c = front.c;
+    c.save();
+    c.beginPath();
+    c.arc(c0, c0, R, 0, Math.PI * 2);
+    c.clip();
+    const shine = c.createLinearGradient(c0 - R, c0 - R, c0 + R, c0 + R);
+    shine.addColorStop(0.15, 'rgba(255,255,255,0)');
+    shine.addColorStop(0.25, `rgba(255,255,255,${dark ? 0.06 : 0.12})`);
+    shine.addColorStop(0.35, 'rgba(255,255,255,0)');
+    c.fillStyle = shine;
+    c.fillRect(c0 - R, c0 - R, D, D);
+    c.restore();
+    // The frame: a thick dark ring with a sheen.
+    c.lineWidth = lw;
+    const ring = c.createLinearGradient(c0 - R, c0 - R, c0 + R, c0 + R);
+    ring.addColorStop(0, '#3a3a40');
+    ring.addColorStop(0.5, '#141416');
+    ring.addColorStop(1, '#26262a');
+    c.strokeStyle = ring;
+    c.beginPath();
+    c.arc(c0, c0, R + lw / 2 - 1, 0, Math.PI * 2);
+    c.stroke();
+  }
+  glass = { key, back: back.cv, front: front.cv, pad };
+  return glass;
 }

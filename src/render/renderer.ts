@@ -1441,9 +1441,12 @@ export interface RenderOptions {
 
 /** Set per frame from RenderOptions.lite. */
 let lite = false;
+/** Live playback (no frame number given): simulated views may spread catching up over frames. */
+let live = false;
 
 export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: number, opts: RenderOptions = {}): void {
   lite = opts.lite ?? false;
+  live = opts.frame === undefined;
   const { width: W, height: H } = ctx.canvas;
   const cfg = score.config;
   const V = cfg.voices;
@@ -1522,7 +1525,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, score: Score, t: numb
       if (!drawInkGL(ctx, score, t, vs, area, lite)) drawInk(ctx, score, t, vs, area, lite);
     }
     else if (view === 'tornado') drawTornado(ctx, score, t, vs, area, lite);
-    else if (view === 'sand') drawSand(ctx, score, t, vs, area, lite);
+    else if (view === 'sand') drawSand(ctx, score, t, vs, area, lite, live);
     else if (view === 'city') drawCity(ctx, score, t, vs, area);
     else drawConstellation(ctx, score, t, vs, area);
   } else if (cfg.video.view === 'waterfall') drawWaterfall(ctx, score, t, st, lay);
