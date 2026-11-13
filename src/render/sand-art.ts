@@ -2,9 +2,13 @@
  * Sand art: the round liquid sand picture on its stand, simulated, bubbles and all.
  *
  * Like the toy: a round glass, clear liquid, and one mass of fine coloured sand. Mountains of layered
- * sand rest on a row of soft air bubbles across the glass; the bubbles press against each other
- * and pull back together like foam, and where they part, sand runs through in a thin stream and
- * builds a range of dunes in the bowl below, on a bed of sand lying flat, laid in nested bands.
+ * sand rest on a row of soft oblong air bubbles across the glass (flatter the more sand weighs on
+ * them), joined by foam film where they touch, so the sand sits in the dips between them; the
+ * bubbles press against each other and pull back together like foam, and where two part, sand runs
+ * through. Clear of the foam it sinks slowly through the liquid, which it drags down with it: the
+ * liquid wells back up round the sides, so a stream sways, spreads and wanders as it falls, and the
+ * drums stir it with eddies. It builds mountains or dunes in the bowl below, on a bed of sand lying
+ * flat, laid in bands; slopes settle unevenly, as wet sand does.
  *
  * One stream pours, and a piece's sand takes one of two shapes (Sand shape, or picked from the
  * progression: mountains when a few chords dominate it, dunes when it roams):
@@ -24,7 +28,7 @@
  * the glass over when the top runs out.
  *
  * A falling-sand automaton on a square grid (cells outside the circle are glass) with the bubbles as
- * soft discs, stepped at a fixed rate from the start of the piece (with snapshots, so jumping back
+ * soft oblongs, grains sinking through a coarse stable-fluids liquid as particles, stepped at a fixed rate from the start of the piece (with snapshots, so jumping back
  * is quick), so exports match playback. Drawn smooth with a fine grain texture, in the picture's own
  * coordinates (zoom works).
  */
@@ -39,6 +43,8 @@ const MAX_SNAPS = 60;
 const WALL = 1; // glass (outside the circle) or the bubble row (not sand)
 const FLIP_STEPS = 100; // the glass turning over (endless pieces)
 const CYCLE = 80; // s for the top to empty between turns, in endless pieces
+const FM = 48; // the liquid's grid (cells across the glass)
+const PMAX = 4000; // grains sinking through the liquid at once, at most
 
 interface Sand {
   n: number;
@@ -58,6 +64,21 @@ interface Sand {
   br: Float32Array;
   bv: Float32Array;
   bpop: Float32Array;
+  /** Each bubble's height for its width (oblong, the big ones most), and how hard the sand above squashes it (0..1). */
+  bar: Float32Array;
+  bload: Float32Array;
+  /** Below the foam, a grain leaving a gap sinks freely through the liquid from this row. */
+  exit: number;
+  /** Sand sinking through the liquid: position, velocity (cells a step) and colour; pn of them. */
+  ppx: Float32Array;
+  ppy: Float32Array;
+  pvx: Float32Array;
+  pvy: Float32Array;
+  pcol: Uint32Array;
+  pn: number;
+  /** The liquid: a coarse velocity field over the glass (cells a step), stirred by the falling sand and the drums. */
+  fu: Float32Array;
+  fv: Float32Array;
   /** How hard the voices press the bubbles apart. */
   push: number;
   /** How freely sand slips through a gap (paced so the top empties on time). */
@@ -78,7 +99,11 @@ interface Sand {
   flips: boolean;
   flipAt: number;
   cycleStart: number;
-  snaps: { step: number; cells: Uint32Array; bx: Float32Array; bv: Float32Array; bpop: Float32Array; push: number; gate: number; above: number; lastChord: number; flipAt: number; cycleStart: number; startAbove: number; sx: number }[];
+  snaps: {
+    step: number; cells: Uint32Array; bx: Float32Array; bv: Float32Array; bpop: Float32Array; push: number; gate: number; above: number; lastChord: number;
+    flipAt: number; cycleStart: number; startAbove: number; sx: number;
+    pn: number; ppx: Float32Array; ppy: Float32Array; pvx: Float32Array; pvy: Float32Array; pcol: Uint32Array; fu: Float32Array; fv: Float32Array;
+  }[];
 }
 const sims = new WeakMap<Score, Sand>();
 
@@ -125,11 +150,21 @@ function rowEnds(n: number, shelf: number): [number, number] {
   return [R - half, R + half];
 }
 
-/** Mark the cells inside the bubbles (a bubble hangs just below the line, its top a little above). */
+/** A bubble's half-width now (it shrinks while popped and re-forming). */
+const effR = (s: Sand, i: number) => s.br[i] * (1 - Math.min(1, s.bpop[i] / 1.4));
+/** A bubble's full half-height (oblong, squashed further by the sand on it), and its centre's row. */
+const fullRy = (s: Sand, i: number) => s.br[i] * s.bar[i] * (1 - 0.2 * s.bload[i]);
+const centreY = (s: Sand, i: number) => s.shelf + 0.35 * fullRy(s, i);
+
+/**
+ * Mark the cells inside the foam: each bubble an oblong hanging just below the line, its top a
+ * little above, and between bubbles that touch, the film joining them below their middles (so sand
+ * rests in the dips between bubbles, and only falls where two have parted).
+ */
 function rasterBubbles(s: Sand) {
-  const { n, air, bx, br, bpop, shelf } = s;
+  const { n, air, bx, shelf } = s;
   air.fill(0);
-  // Against the glass at each end of the row, trapped foam: sand never runs down the edge.
+  // Against the glass at each end of the row, trapped foam (drawn as tiny bubbles): sand never runs down the edge.
   const [left, right] = rowEnds(n, shelf);
   const m = bx.length;
   if (m) {
@@ -140,14 +175,25 @@ function rasterBubbles(s: Sand) {
       for (let x = r; x <= Math.min(n - 1, Math.ceil(right) + 3); x++) air[y * n + x] = 1;
     }
   }
-  for (let i = 0; i < bx.length; i++) {
-    const r = br[i] * (1 - Math.min(1, bpop[i] / 1.4));
-    if (r < 0.6) continue;
-    const cy = shelf + 0.35 * br[i];
-    for (let y = Math.max(0, Math.floor(cy - r)); y <= Math.min(n - 1, Math.ceil(cy + r)); y++) {
-      for (let x = Math.max(0, Math.floor(bx[i] - r)); x <= Math.min(n - 1, Math.ceil(bx[i] + r)); x++) {
-        if ((x - bx[i]) ** 2 + (y - cy) ** 2 <= r * r) air[y * n + x] = 1;
+  for (let i = 0; i < m; i++) {
+    const rx = effR(s, i);
+    if (rx < 0.6) continue;
+    const ry = rx * (fullRy(s, i) / s.br[i]);
+    const cy = centreY(s, i);
+    for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(n - 1, Math.ceil(cy + ry)); y++) {
+      for (let x = Math.max(0, Math.floor(bx[i] - rx)); x <= Math.min(n - 1, Math.ceil(bx[i] + rx)); x++) {
+        if (((x - bx[i]) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1) air[y * n + x] = 1;
       }
+    }
+  }
+  for (let i = 0; i + 1 < m; i++) {
+    if (bx[i + 1] - bx[i] - effR(s, i) - effR(s, i + 1) >= 0.8) continue;
+    const ya = centreY(s, i);
+    const yb = centreY(s, i + 1);
+    const bottom = Math.ceil(Math.max(ya + fullRy(s, i), yb + fullRy(s, i + 1)));
+    for (let x = Math.ceil(bx[i]); x <= Math.floor(bx[i + 1]); x++) {
+      const yc = ya + ((yb - ya) * (x - bx[i])) / Math.max(0.01, bx[i + 1] - bx[i]);
+      for (let y = Math.ceil(yc); y <= Math.min(n - 1, bottom); y++) air[y * n + x] = 1;
     }
   }
 }
@@ -181,6 +227,12 @@ function makeSim(score: Score, n: number, key: string): Sand {
   const s: Sand = {
     n, cells, inside, air: new Uint8Array(n * n), step: 0, key, shelf, cols: sandColours(score),
     bx: Float32Array.from(xs), br: Float32Array.from(rs), bv: new Float32Array(xs.length), bpop: new Float32Array(xs.length),
+    // (Oblong: wider than tall, the big ones flattest.)
+    bar: Float32Array.from(rs, (r, i) => (r > 4 ? 0.56 + 0.14 * hash(i, score.seed, 74) : 0.72 + 0.2 * hash(i, score.seed, 74))),
+    bload: new Float32Array(xs.length),
+    exit: shelf + Math.ceil(Math.max(...rs) * 1.35) + 2,
+    ppx: new Float32Array(PMAX), ppy: new Float32Array(PMAX), pvx: new Float32Array(PMAX), pvy: new Float32Array(PMAX), pcol: new Uint32Array(PMAX), pn: 0,
+    fu: new Float32Array(FM * FM), fv: new Float32Array(FM * FM),
     push: 0.15, gate: 0.4, above: 0, lastChord: -1, shape: sandShape(score), lo: 48, hi: 72, sx: -1, press: [], startAbove: -1,
     flips, flipAt: -1, cycleStart: 0, snaps: [],
   };
@@ -381,7 +433,7 @@ function stepBubbles(s: Sand, score: Score, time: number) {
   const { bx, br, bv, bpop, n, shelf } = s;
   const m = bx.length;
   const step = s.step;
-  const eff = (i: number) => br[i] * (1 - Math.min(1, bpop[i] / 1.4));
+  const eff = (i: number) => effR(s, i);
   const F = new Float32Array(m);
   s.press = streamsAt(score, s, time);
   // (Dunes: the stream sweeps toward the music's pitch rather than jumping, laying the sand broadly.)
@@ -436,8 +488,12 @@ function stepBubbles(s: Sand, score: Score, time: number) {
         bx[i] -= need / 2;
         bx[i + 1] += need / 2;
       }
-      // Foam only stretches so far: neighbours part by a couple of grains at most.
-      const over = bx[i + 1] - bx[i] - eff(i) - eff(i + 1) - 2.2;
+      // Foam only stretches so far: neighbours part by a couple of grains at most, a few more
+      // where a stream presses them apart.
+      const mid = (bx[i] + bx[i + 1]) / 2;
+      let wide = 2.2;
+      for (const c of s.press) wide = Math.max(wide, 2.2 + 2.6 * Math.min(1, s.push * c.f * 1.5) * Math.exp(-Math.abs(mid - c.x) / 6));
+      const over = bx[i + 1] - bx[i] - eff(i) - eff(i + 1) - wide;
       if (over > 0) {
         bx[i] += over / 2;
         bx[i + 1] -= over / 2;
@@ -449,6 +505,178 @@ function stepBubbles(s: Sand, score: Score, time: number) {
   rasterBubbles(s);
 }
 
+/** The liquid's velocity at a point (in its grid's coordinates), interpolated. */
+function liquidAt(s: Sand, gx: number, gy: number): [number, number] {
+  const x = Math.max(0, Math.min(FM - 1.001, gx));
+  const y = Math.max(0, Math.min(FM - 1.001, gy));
+  const i = Math.floor(x);
+  const j = Math.floor(y);
+  const fx = x - i;
+  const fy = y - j;
+  const a = j * FM + i;
+  const lerp = (f: Float32Array) => (f[a] * (1 - fx) + f[a + 1] * fx) * (1 - fy) + (f[a + FM] * (1 - fx) + f[a + FM + 1] * fx) * fy;
+  return [lerp(s.fu), lerp(s.fv)];
+}
+
+/**
+ * The sand sinking through the liquid: each grain is carried by the liquid and sinks through it at
+ * a slow, steady pace, tumbling a little, until it lands on sand (or the glass) and settles there.
+ * It drags the liquid along as it goes (returned, for the liquid to take up).
+ */
+function stepGrains(s: Sand): Float32Array {
+  const { n, cells, air, ppx, ppy, pvx, pvy, pcol } = s;
+  const drag = new Float32Array(FM * FM * 2);
+  const fs = n / FM;
+  const sink = (0.5 * n) / 240;
+  // (Lands in its own cell, or the nearest free one above if sand has slid in there; false if
+  // there's none, and it keeps sinking.)
+  const settle = (x: number, y: number, c: number) => {
+    for (let yy = y; yy >= s.exit && yy > y - 40; yy--) {
+      const i = yy * n + x;
+      if (!cells[i] && !air[i]) {
+        cells[i] = c;
+        return true;
+      }
+    }
+    return false;
+  };
+  for (let k = s.pn - 1; k >= 0; k--) {
+    let x = ppx[k];
+    let y = ppy[k];
+    const [u, v] = liquidAt(s, x / fs - 0.5, y / fs - 0.5);
+    pvx[k] += (u - pvx[k]) * 0.1 + (hash(k, s.step, 31) - 0.5) * 0.03;
+    pvy[k] += (v + sink - pvy[k]) * 0.1;
+    // (Never faster than a cell or so a step: it can't skip through sand.)
+    pvx[k] = Math.max(-0.8, Math.min(0.8, pvx[k]));
+    pvy[k] = Math.max(-0.4, Math.min(1.2, pvy[k]));
+    // (The liquid welling up can't lift it back into the foam.)
+    if (y + pvy[k] < s.exit + 0.5) pvy[k] = Math.max(0, pvy[k]);
+    let landed = false;
+    for (let h = 0; h < 2; h++) {
+      const nx = x + pvx[k] / 2;
+      const ny = y + pvy[k] / 2;
+      const ci = Math.floor(ny) * n + Math.floor(nx);
+      if (nx < 0 || nx >= n || ny >= n - 1 || cells[ci] !== 0 || air[ci]) {
+        landed = settle(Math.floor(x), Math.floor(y), pcol[k]);
+        if (!landed) {
+          pvx[k] = 0;
+          pvy[k] = 0.3;
+        }
+        break;
+      }
+      x = nx;
+      y = ny;
+    }
+    if (landed) {
+      const last = --s.pn;
+      ppx[k] = ppx[last];
+      ppy[k] = ppy[last];
+      pvx[k] = pvx[last];
+      pvy[k] = pvy[last];
+      pcol[k] = pcol[last];
+      continue;
+    }
+    ppx[k] = x;
+    ppy[k] = y;
+    const g = Math.min(FM - 1, Math.floor(y / fs)) * FM + Math.min(FM - 1, Math.floor(x / fs));
+    drag[g * 2] += pvx[k] * 0.005;
+    drag[g * 2 + 1] += pvy[k] * 0.005;
+  }
+  return drag;
+}
+
+const scratch = { u: new Float32Array(FM * FM), v: new Float32Array(FM * FM), p: new Float32Array(FM * FM), q: new Float32Array(FM * FM), div: new Float32Array(FM * FM), solid: new Uint8Array(FM * FM) };
+
+/**
+ * The liquid, as a coarse incompressible flow (stable fluids): the falling sand pushes it down and
+ * it wells back up round the sides, so streams sway, spread and pull at each other; kicks stir it
+ * with eddies (crashes, bigger), and a chord change sends a gentle swirl along under the foam.
+ * Sand that has settled, the foam and the glass are solid to it.
+ */
+function stepLiquid(s: Sand, score: Score, time: number, drag: Float32Array) {
+  const { n, cells, air, fu, fv } = s;
+  const fs = n / FM;
+  const { u, v, p, q, div, solid } = scratch;
+  for (let j = 0; j < FM; j++) {
+    for (let i = 0; i < FM; i++) {
+      const c = Math.min(n - 1, Math.floor((j + 0.5) * fs)) * n + Math.min(n - 1, Math.floor((i + 0.5) * fs));
+      solid[j * FM + i] = cells[c] !== 0 || air[c] ? 1 : 0;
+    }
+  }
+  for (let g = 0; g < FM * FM; g++) {
+    fu[g] += drag[g * 2];
+    fv[g] += drag[g * 2 + 1];
+  }
+  // Stirring: an eddy where the drums hit, and the faintest drift so nothing is ever perfectly still.
+  const eddy = (cx: number, cy: number, r: number, w: number) => {
+    for (let j = Math.max(1, Math.floor(cy - r)); j < Math.min(FM - 1, Math.ceil(cy + r)); j++) {
+      for (let i = Math.max(1, Math.floor(cx - r)); i < Math.min(FM - 1, Math.ceil(cx + r)); i++) {
+        const dx = i - cx;
+        const dy = j - cy;
+        const f = w * Math.exp(-(dx * dx + dy * dy) / (r * r * 0.4));
+        fu[j * FM + i] += -dy * f / r;
+        fv[j * FM + i] += dx * f / r;
+      }
+    }
+  };
+  const below = (s.exit / n) * FM;
+  for (const hit of drumHits(score, time, time + DT)) {
+    if (hit.voice !== 'kick' && hit.voice !== 'crash' && hit.voice !== 'snare') continue;
+    const h = Math.round(hit.t * 1000);
+    const big = hit.voice === 'crash' ? 2.5 : hit.voice === 'kick' ? 1 : 0.6;
+    eddy(FM * (0.2 + 0.6 * hash(h, 7, 1)), below + (FM - below) * (0.2 + 0.6 * hash(h, 7, 2)), 4 + 4 * hash(h, 7, 3), (hash(h, 7, 4) < 0.5 ? -1 : 1) * 0.12 * big * hit.vel);
+  }
+  if (s.lastChord >= 0 && chordIndexAt(score, time) !== chordIndexAt(score, time - DT)) {
+    for (const p0 of s.press) eddy(p0.x / fs, below + 3, 5, (hash(s.step, 9, 1) - 0.5) * 0.12);
+  }
+  const g0 = Math.floor(hash(s.step, 9, 2) * FM * FM);
+  fu[g0] += (hash(s.step, 9, 3) - 0.5) * 0.02;
+  fv[g0] += (hash(s.step, 9, 4) - 0.5) * 0.02;
+  // Carried along by itself (traced back a step), slowed a little by the liquid's thickness.
+  for (let j = 0; j < FM; j++) {
+    for (let i = 0; i < FM; i++) {
+      const g = j * FM + i;
+      if (solid[g]) {
+        u[g] = 0;
+        v[g] = 0;
+        continue;
+      }
+      const [a, b] = liquidAt(s, i - fu[g] / fs, j - fv[g] / fs);
+      u[g] = a * 0.985;
+      v[g] = b * 0.985;
+    }
+  }
+  // Incompressible: take out what would squeeze it (a few relaxation passes for the pressure).
+  for (let j = 1; j < FM - 1; j++) for (let i = 1; i < FM - 1; i++) {
+    const g = j * FM + i;
+    div[g] = solid[g] ? 0 : 0.5 * (u[g + 1] - u[g - 1] + v[g + FM] - v[g - FM]);
+  }
+  p.fill(0);
+  for (let it = 0; it < 14; it++) {
+    for (let j = 1; j < FM - 1; j++) for (let i = 1; i < FM - 1; i++) {
+      const g = j * FM + i;
+      if (solid[g]) {
+        q[g] = 0;
+        continue;
+      }
+      const at = (h: number) => (solid[h] ? p[g] : p[h]);
+      q[g] = (at(g - 1) + at(g + 1) + at(g - FM) + at(g + FM) - div[g]) / 4;
+    }
+    p.set(q);
+  }
+  for (let j = 1; j < FM - 1; j++) for (let i = 1; i < FM - 1; i++) {
+    const g = j * FM + i;
+    if (solid[g]) {
+      fu[g] = 0;
+      fv[g] = 0;
+      continue;
+    }
+    // (A thick liquid: it never runs faster than the sand sinks, give or take.)
+    fu[g] = Math.max(-0.6, Math.min(0.6, u[g] - 0.5 * (p[g + 1] - p[g - 1])));
+    fv[g] = Math.max(-0.6, Math.min(0.6, v[g] - 0.5 * (p[g + FM] - p[g - FM])));
+  }
+}
+
 function stepSand(s: Sand, score: Score, time: number) {
   const { n, cells, shelf } = s;
   const step = s.step;
@@ -457,6 +685,9 @@ function stepSand(s: Sand, score: Score, time: number) {
     if (step - s.flipAt >= FLIP_STEPS) {
       // (Turned half round: top to bottom and left to right, as the glass is drawn turning.)
       cells.reverse();
+      s.pn = 0;
+      s.fu.fill(0);
+      s.fv.fill(0);
       s.flipAt = -1;
       s.cycleStart = time;
       s.startAbove = -1;
@@ -479,6 +710,13 @@ function stepSand(s: Sand, score: Score, time: number) {
     }
     s.above = above;
     if (s.startAbove < 0) s.startAbove = above;
+    // The sand's weight squashes the bubbles under it flatter.
+    for (let i = 0; i < s.bx.length; i++) {
+      const x = Math.round(s.bx[i]);
+      let y = shelf - 1;
+      while (y > 0 && cells[y * n + x] > WALL) y--;
+      s.bload[i] = Math.min(1, (shelf - 1 - y) / (shelf * 0.6));
+    }
     // (Turn over once the top has run out, the last grains caught between bubbles aside.)
     if (s.flips && time - s.cycleStart > 10 && (above < Math.max(30, 0.08 * s.startAbove) || time - s.cycleStart > CYCLE * 1.6)) s.flipAt = step;
   }
@@ -515,8 +753,21 @@ function stepSand(s: Sand, score: Score, time: number) {
         const c = cells[i];
         if (c <= WALL) continue;
         const below = i + n;
-        if (!cells[below] && !air[below] && (y !== shelf - 1 || (open[x] >= 0 && hash(x, step, 55 + sub) < s.gate * s.press[open[x]].w))) {
-          cells[below] = y === shelf - 1 ? pouredGrain(score, s.cols, time, hash(x, step, 51), hash(x, step, 52)) : c;
+        // Just clear of the foam and falling, a grain sinks freely through the liquid from here on.
+        // (Only there: grains sliding down the piles below stay grains of the pile.)
+        if (y >= s.exit && y <= s.exit + 2 && !cells[below] && s.pn < PMAX) {
+          const k = s.pn++;
+          s.ppx[k] = x + 0.5;
+          s.ppy[k] = y + 0.5;
+          s.pvx[k] = (hash(x, step, 61) - 0.5) * 0.15;
+          s.pvy[k] = 0.9;
+          s.pcol[k] = c;
+          cells[i] = 0;
+          continue;
+        }
+        // (Through a gap only at a stream, as freely as the pace allows, in the chord's colour.)
+        if (!cells[below] && !air[below] && (y !== shelf || (open[x] >= 0 && hash(x, step, 55 + sub) < s.gate * s.press[open[x]].w))) {
+          cells[below] = y === shelf ? pouredGrain(score, s.cols, time, hash(x, step, 51), hash(x, step, 52)) : c;
           cells[i] = 0;
           continue;
         }
@@ -525,19 +776,20 @@ function stepSand(s: Sand, score: Score, time: number) {
         const first = hash(x, y, step * 2 + sub + 1) < 0.5 ? -1 : 1;
         let moved = false;
         for (const d of [first, -first]) {
-          if (!cells[below + d] && !cells[i + d] && !air[below + d] && (y !== shelf - 1 || (open[x] >= 0 && hash(x, step, 57 + sub) < s.gate * s.press[open[x]].w))) {
-            cells[below + d] = y === shelf - 1 ? pouredGrain(score, s.cols, time, hash(x, step, 53), hash(x, step, 54)) : c;
+          if (!cells[below + d] && !cells[i + d] && !air[below + d] && (y !== shelf || (open[x] >= 0 && hash(x, step, 57 + sub) < s.gate * s.press[open[x]].w))) {
+            cells[below + d] = y === shelf ? pouredGrain(score, s.cols, time, hash(x, step, 53), hash(x, step, 54)) : c;
             cells[i] = 0;
             moved = true;
             break;
           }
         }
-        // Dunes lie softer (about 27°): below the bubbles a grain also slides two across and one down.
-        if (!moved && !up && s.shape === 'dunes' && y + 1 < n) {
+        // Wet sand doesn't settle to a ruler line: below the bubbles a grain sometimes slides two
+        // across and one down, so slopes vary and curve (dunes often, so they lie soft, about 27°).
+        if (!moved && !up && y > s.exit && y + 1 < n) {
           for (const d of [first, -first]) {
             const j = below + 2 * d;
             if (x + 2 * d < 0 || x + 2 * d >= n) continue;
-            if (!cells[i + d] && !cells[j] && !cells[i + 2 * d] && hash(x, y, step * 5 + sub) < 0.6) {
+            if (!cells[i + d] && !cells[j] && !cells[i + 2 * d] && hash(x, y, step * 5 + sub) < (s.shape === 'dunes' ? 0.6 : 0.12)) {
               cells[j] = c;
               cells[i] = 0;
               moved = true;
@@ -555,6 +807,7 @@ function stepSand(s: Sand, score: Score, time: number) {
       }
     }
   }
+  stepLiquid(s, score, time, stepGrains(s));
   // Kicks jolt the glass: grains at the tops of steep slopes below tumble down (crashes, more).
   for (const hit of drumHits(score, time, time + DT)) {
     if (hit.voice !== 'kick' && hit.voice !== 'crash') continue;
@@ -647,6 +900,14 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     sim.cycleStart = from.cycleStart;
     sim.startAbove = from.startAbove;
     sim.sx = from.sx;
+    sim.pn = from.pn;
+    sim.ppx.set(from.ppx);
+    sim.ppy.set(from.ppy);
+    sim.pvx.set(from.pvx);
+    sim.pvy.set(from.pvy);
+    sim.pcol.set(from.pcol);
+    sim.fu.set(from.fu);
+    sim.fv.set(from.fv);
     rasterBubbles(sim);
   }
   const limit = sim.step + 600;
@@ -654,7 +915,12 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     stepSand(sim, score, sim.step * DT);
     if (sim.step % Math.round(SNAP_EVERY / DT) === 0 && !sim.snaps.some((x) => x.step === sim.step)) {
       if (sim.snaps.length >= MAX_SNAPS) sim.snaps.splice(1, 1);
-      sim.snaps.push({ step: sim.step, cells: sim.cells.slice(), bx: sim.bx.slice(), bv: sim.bv.slice(), bpop: sim.bpop.slice(), push: sim.push, gate: sim.gate, above: sim.above, lastChord: sim.lastChord, flipAt: sim.flipAt, cycleStart: sim.cycleStart, startAbove: sim.startAbove, sx: sim.sx });
+      const pn = sim.pn;
+      sim.snaps.push({
+        step: sim.step, cells: sim.cells.slice(), bx: sim.bx.slice(), bv: sim.bv.slice(), bpop: sim.bpop.slice(), push: sim.push, gate: sim.gate, above: sim.above,
+        lastChord: sim.lastChord, flipAt: sim.flipAt, cycleStart: sim.cycleStart, startAbove: sim.startAbove, sx: sim.sx,
+        pn, ppx: sim.ppx.slice(0, pn), ppy: sim.ppy.slice(0, pn), pvx: sim.pvx.slice(0, pn), pvy: sim.pvy.slice(0, pn), pcol: sim.pcol.slice(0, pn), fu: sim.fu.slice(), fv: sim.fv.slice(),
+      });
     }
   }
 
@@ -725,6 +991,18 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
       if (!cells[i - N] && !cells[i - 2 * N]) px[i - 2 * N] = (rgb | (70 << 24)) >>> 0;
     }
   }
+  // The grains sinking through the liquid, each with a faint trail behind it.
+  for (let k = 0; k < sim.pn; k++) {
+    const x = Math.floor(sim.ppx[k]);
+    const y = Math.floor(sim.ppy[k]);
+    if (x < 0 || x >= N || y < 2 || y >= N) continue;
+    const c = sim.pcol[k];
+    const rgb = c & 0xffffff;
+    px[y * N + x] = c;
+    const tx = Math.round(sim.ppx[k] - sim.pvx[k] * 1.5);
+    const ty = Math.round(sim.ppy[k] - sim.pvy[k] * 1.5);
+    if (tx >= 0 && tx < N && ty >= 0 && ty < N && !px[ty * N + tx]) px[ty * N + tx] = (rgb | (110 << 24)) >>> 0;
+  }
   grid.ctx.putImageData(grid.img, 0, 0);
   const scale = Math.min(2.5, Math.max(1, Math.hypot(ctx.getTransform().a, ctx.getTransform().b)));
   const size = Math.min(1600, Math.round(D * scale));
@@ -750,7 +1028,16 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
   // The bubbles, where the simulation has them, as soap foam: clear, with a darker edge, a thin
   // bright rim, an iridescent film arcing over the top, a window reflection and a glint below;
   // tiny bubbles crowd the crevices between them.
-  const soap = (bx: number, by: number, r: number, k: number) => {
+  const soap = (bx: number, by: number, r: number, k: number, squash = 1) => {
+    // (Oblong: drawn as a circle squashed to the bubble's height.)
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.scale(1, squash);
+    ctx.translate(-bx, -by);
+    soapRound(bx, by, r, k);
+    ctx.restore();
+  };
+  const soapRound = (bx: number, by: number, r: number, k: number) => {
     const body = ctx.createRadialGradient(bx, by, r * 0.55, bx, by, r);
     body.addColorStop(0, 'rgba(0,0,0,0)');
     body.addColorStop(0.85, dark ? 'rgba(0,0,0,0.25)' : 'rgba(40,50,70,0.22)');
@@ -787,12 +1074,32 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     ctx.arc(bx, by, r * 0.86, Math.PI * 0.25, Math.PI * 0.75);
     ctx.stroke();
   };
-  for (let i = 0; i < sim.bx.length; i++) {
-    const r = sim.br[i] * (1 - Math.min(1, sim.bpop[i] / 1.4)) * cell;
+  // The foam film: tiny bubbles packed in the dips under each pair that touch, and trapped
+  // against the glass at both ends of the row (what the sand rests on there).
+  const m = sim.bx.length;
+  for (let i = 0; i + 1 < m; i++) {
+    const ra = effR(sim, i);
+    const rb = effR(sim, i + 1);
+    if (sim.bx[i + 1] - sim.bx[i] - ra - rb >= 0.8 || ra < 0.6 || rb < 0.6) continue;
+    const ya = centreY(sim, i);
+    const yb = centreY(sim, i + 1);
+    const mid = sim.bx[i] + ra + (sim.bx[i + 1] - rb - sim.bx[i] - ra) / 2;
+    const rr = Math.max(0.6, 0.3 * Math.min(fullRy(sim, i), fullRy(sim, i + 1)));
+    soap(x0 + (mid + 0.5) * cell, y0 + ((ya + yb) / 2 + rr * 1.1 + 0.5) * cell, rr * cell, i * 7 + 3);
+  }
+  const [rowL, rowR] = rowEnds(N, sim.shelf);
+  if (m) {
+    const ends: [number, number][] = [[rowL, sim.bx[0] - effR(sim, 0)], [sim.bx[m - 1] + effR(sim, m - 1), rowR]];
+    for (const [a, b] of ends) {
+      for (let x = a + 0.8, j = 0; x < b; x += 1.7, j++) soap(x0 + (x + 0.5) * cell, y0 + (sim.shelf + 0.4 + (j % 2) * 0.9 + 0.5) * cell, cell * (0.8 + 0.3 * hash(j, 5, 81)), j * 13);
+    }
+  }
+  for (let i = 0; i < m; i++) {
+    const r = effR(sim, i) * cell;
     if (r < cell * 0.6) continue;
     const bx = x0 + (sim.bx[i] + 0.5) * cell;
-    const by = y0 + (sim.shelf + 0.35 * sim.br[i] + 0.5) * cell;
-    soap(bx, by, r, i);
+    const by = y0 + (centreY(sim, i) + 0.5) * cell;
+    soap(bx, by, r, i, fullRy(sim, i) / sim.br[i]);
   }
   // A soft shine across the glass.
   const shine = ctx.createLinearGradient(x0, y0, x0 + D, y0 + D);
