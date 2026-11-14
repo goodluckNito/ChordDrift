@@ -535,17 +535,28 @@ function stepGrains(s: Sand): Float32Array {
   drag.fill(0);
   const fs = n / FM;
   const sink = (0.5 * n) / 240;
-  // (Lands in its own cell, or the nearest free one above if sand has slid in there; false if
-  // there's none, and it keeps sinking.)
+  // (Lands where it stops, or the nearest free cell above if sand has slid in there, and then
+  // rolls down the surface to where it can rest, as a grain does: so a dense stream builds a cone,
+  // not a tower. False if there's nowhere, and it keeps sinking.)
+  const free = (i: number) => !cells[i] && !air[i];
   const settle = (x: number, y: number, c: number) => {
-    for (let yy = y; yy >= s.exit && yy > y - 40; yy--) {
-      const i = yy * n + x;
-      if (!cells[i] && !air[i]) {
-        cells[i] = c;
-        return true;
+    let yy = y;
+    while (yy >= s.exit && yy > y - 40 && !free(yy * n + x)) yy--;
+    if (yy < s.exit || yy <= y - 40) return false;
+    let xx = x;
+    for (let m = 0; m < 80 && yy + 1 < n; m++) {
+      const i = yy * n + xx;
+      if (free(i + n)) {
+        yy++;
+        continue;
       }
+      const d = hash(xx, yy, s.step + m) < 0.5 ? -1 : 1;
+      if (free(i + d) && free(i + n + d)) (xx += d), yy++;
+      else if (free(i - d) && free(i + n - d)) (xx -= d), yy++;
+      else break;
     }
-    return false;
+    cells[yy * n + xx] = c;
+    return true;
   };
   for (let k = s.pn - 1; k >= 0; k--) {
     let x = ppx[k];
@@ -851,27 +862,93 @@ function stepSand(s: Sand, score: Score, time: number) {
 
 // ---- Drawing -------------------------------------------------------------------------------
 
-let grid: { n: number; g: number; canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D; img: ImageData; px: Uint32Array; col: Uint32Array; mul: Uint16Array; add: Uint8Array } | null = null;
+let grid: { n: number; canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D; img: ImageData; px: Uint32Array } | null = null;
+let layer: { size: number; canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D } | null = null;
+let grain: CanvasPattern | null = null;
+let grainOwner: CanvasRenderingContext2D | null = null;
 const offscreen = (w: number, h: number) => (typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h }));
 
-/** The sand image: N×N cells at G×G pixels each, with a fixed fine grain (light and dark specks) baked in. */
-function sandGrid(N: number, G: number) {
-  if (grid && grid.n === N && grid.g === G) return grid;
-  const S = N * G;
-  const canvas = offscreen(S, S);
-  const g = canvas.getContext('2d') as CanvasRenderingContext2D;
-  const img = g.createImageData(S, S);
-  // Each pixel darkens toward black or lightens toward white a little: out = c·mul/256 + add.
-  const mul = new Uint16Array(S * S);
-  const add = new Uint8Array(S * S);
-  for (let i = 0; i < S * S; i++) {
+/** A fine grain texture (light and dark specks), tiled over the sand. */
+function grainPattern(c: CanvasRenderingContext2D): CanvasPattern | null {
+  if (grain && grainOwner === c) return grain;
+  const tile = offscreen(128, 128);
+  const t = tile.getContext('2d') as CanvasRenderingContext2D;
+  const img = t.createImageData(128, 128);
+  for (let i = 0; i < 128 * 128; i++) {
     const j = hash(i, 5, 77);
-    const amt = Math.abs(j - 0.5) * 2 * 0.4;
-    mul[i] = Math.round(256 * (1 - amt));
-    add[i] = j < 0.5 ? 0 : Math.round(255 * amt);
+    const v = j < 0.5 ? 0 : 255;
+    img.data[i * 4] = v;
+    img.data[i * 4 + 1] = v;
+    img.data[i * 4 + 2] = v;
+    img.data[i * 4 + 3] = Math.round(Math.abs(j - 0.5) * 2 * 110);
   }
-  grid = { n: N, g: G, canvas, ctx: g, img, px: new Uint32Array(img.data.buffer), col: new Uint32Array(N * N), mul, add };
-  return grid;
+  t.putImageData(img, 0, 0);
+  grain = c.createPattern(tile as CanvasImageSource, 'repeat');
+  grainOwner = c;
+  return grain;
+}
+
+/**
+ * The sand as a small picture, two pixels a grain, for a struggling preview: each pixel blends its
+ * grain with the neighbours toward it (so grains run together like fine sand, not blocks, and
+ * edges come out soft), with a fixed fine grain of light and dark specks baked in. Only this
+ * small picture changes each frame, so it's cheap to draw at any size.
+ */
+let small: { n: number; canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D; img: ImageData; px: Uint32Array; mul: Uint16Array; add: Uint8Array; pa: Float32Array; pr: Float32Array; pg: Float32Array; pb: Float32Array } | null = null;
+function smallSand(col: Uint32Array, N: number) {
+  if (!small || small.n !== N) {
+    const S = N * 2;
+    const canvas = offscreen(S, S);
+    const g = canvas.getContext('2d') as CanvasRenderingContext2D;
+    const img = g.createImageData(S, S);
+    const mul = new Uint16Array(S * S);
+    const add = new Uint8Array(S * S);
+    for (let i = 0; i < S * S; i++) {
+      const j = hash(i, 5, 77);
+      const amt = Math.abs(j - 0.5) * 2 * 0.36;
+      mul[i] = Math.round(256 * (1 - amt));
+      add[i] = j < 0.5 ? 0 : Math.round(255 * amt);
+    }
+    small = { n: N, canvas, ctx: g, img, px: new Uint32Array(img.data.buffer), mul, add, pa: new Float32Array(N * N), pr: new Float32Array(N * N), pg: new Float32Array(N * N), pb: new Float32Array(N * N) };
+  }
+  const { px, mul, add, pa, pr, pg, pb } = small;
+  // Each grain's colour, weighted by how solid it is (so blending with clear space doesn't darken).
+  for (let i = 0; i < N * N; i++) {
+    const c = col[i];
+    const a = (c >>> 24) / 255;
+    pa[i] = a;
+    pr[i] = (c & 255) * a;
+    pg[i] = ((c >>> 8) & 255) * a;
+    pb[i] = ((c >>> 16) & 255) * a;
+  }
+  const S = N * 2;
+  // A pixel at a grain's quarter point: 9/16 the grain, 3/16 each neighbour toward it, 1/16 the diagonal.
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const i = y * N + x;
+      for (let sy = 0; sy < 2; sy++) {
+        const dy = sy === 0 ? (y > 0 ? -N : 0) : y < N - 1 ? N : 0;
+        for (let sx = 0; sx < 2; sx++) {
+          const dx = sx === 0 ? (x > 0 ? -1 : 0) : x < N - 1 ? 1 : 0;
+          const a = 0.5625 * pa[i] + 0.1875 * (pa[i + dx] + pa[i + dy]) + 0.0625 * pa[i + dx + dy];
+          const o = (y * 2 + sy) * S + x * 2 + sx;
+          if (a < 0.02) {
+            px[o] = 0;
+            continue;
+          }
+          const k = 1 / a;
+          const r = (0.5625 * pr[i] + 0.1875 * (pr[i + dx] + pr[i + dy]) + 0.0625 * pr[i + dx + dy]) * k;
+          const g = (0.5625 * pg[i] + 0.1875 * (pg[i + dx] + pg[i + dy]) + 0.0625 * pg[i + dx + dy]) * k;
+          const b = (0.5625 * pb[i] + 0.1875 * (pb[i + dx] + pb[i + dy]) + 0.0625 * pb[i + dx + dy]) * k;
+          const m = mul[o];
+          const d = add[o];
+          px[o] = (((a * 255) << 24) | (Math.min(255, ((b * m) >> 8) + d) << 16) | (Math.min(255, ((g * m) >> 8) + d) << 8) | Math.min(255, ((r * m) >> 8) + d)) >>> 0;
+        }
+      }
+    }
+  }
+  small.ctx.putImageData(small.img, 0, 0);
+  return small.canvas;
 }
 
 type Sprite = HTMLCanvasElement | OffscreenCanvas;
@@ -1033,12 +1110,16 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
   const zoom = Math.min(2.5, Math.max(1, Math.hypot(ctx.getTransform().a, ctx.getTransform().b)));
   const gl = glassLayers(D, zoom, dark, bg);
   ctx.save();
-  ctx.drawImage(gl.back as CanvasImageSource, x0 - gl.pad, y0 - gl.pad, D + 2 * gl.pad, D + 2 * gl.pad);
 
-  // The sand: each cell as G×G pixels with the grain baked in, drawn smooth at the glass's size.
-  const G = lite ? 2 : 3;
-  const gr = sandGrid(N, G);
-  const col = gr.col;
+  // The sand: the grid blended smooth onto a layer (capped in size, so it stays cheap), a fine
+  // grain over it, then drawn at the glass's size.
+  if (!grid || grid.n !== N) {
+    const canvas = offscreen(N, N);
+    const g = canvas.getContext('2d') as CanvasRenderingContext2D;
+    const img = g.createImageData(N, N);
+    grid = { n: N, canvas, ctx: g, img, px: new Uint32Array(img.data.buffer) };
+  }
+  const col = grid.px;
   const cells = sim.cells;
   for (let i = 0; i < N * N; i++) {
     const c = cells[i];
@@ -1066,41 +1147,43 @@ export function drawSand(ctx: CanvasRenderingContext2D, score: Score, t: number,
     const ty = Math.round(sim.ppy[k] - sim.pvy[k] * 1.5);
     if (tx >= 0 && tx < N && ty >= 0 && ty < N && !col[ty * N + tx]) col[ty * N + tx] = ((c & 0xffffff) | (110 << 24)) >>> 0;
   }
-  // A soft fringe round the sand's edges (half-clear, in the neighbouring sand's colour), so it
-  // reads as fine sand, not blocks, once drawn up to size.
-  for (let y = 1; y < N - 1; y++) {
-    for (let x = 1; x < N - 1; x++) {
-      const i = y * N + x;
-      if (col[i] || cells[i] === WALL) continue;
-      const nb = col[i - N] || col[i + N] || col[i - 1] || col[i + 1];
-      if (nb && nb >>> 24 === 255) col[i] = ((nb & 0xffffff) | (80 << 24)) >>> 0;
-    }
-  }
-  const { px, mul, add } = gr;
-  const S = N * G;
-  px.fill(0);
-  for (let y = 0; y < N; y++) {
-    for (let x = 0; x < N; x++) {
-      const c = col[y * N + x];
-      if (!c) continue;
-      const al = c & 0xff000000;
-      const r = c & 255;
-      const g = (c >>> 8) & 255;
-      const b = (c >>> 16) & 255;
-      for (let sy = 0; sy < G; sy++) {
-        let o = (y * G + sy) * S + x * G;
-        for (let sx = 0; sx < G; sx++, o++) {
-          const m = mul[o];
-          const d = add[o];
-          px[o] = (al | (Math.min(255, ((b * m) >> 8) + d) << 16) | (Math.min(255, ((g * m) >> 8) + d) << 8) | Math.min(255, ((r * m) >> 8) + d)) >>> 0;
-        }
-      }
-    }
-  }
-  gr.ctx.putImageData(gr.img, 0, 0);
   ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = lite ? 'medium' : 'high';
-  ctx.drawImage(gr.canvas as CanvasImageSource, x0, y0, D, D);
+  if (lite) {
+    ctx.imageSmoothingQuality = 'low';
+    const gl0 = glassLayers(D, Math.min(2.5, Math.max(1, Math.hypot(ctx.getTransform().a, ctx.getTransform().b))), dark, bg);
+    ctx.drawImage(gl0.back as CanvasImageSource, x0 - gl0.pad, y0 - gl0.pad, D + 2 * gl0.pad, D + 2 * gl0.pad);
+    ctx.drawImage(smallSand(col, N) as CanvasImageSource, x0, y0, D, D);
+  } else {
+  grid.ctx.putImageData(grid.img, 0, 0);
+  const zoomPx = Math.min(2.5, Math.max(1, Math.hypot(ctx.getTransform().a, ctx.getTransform().b)));
+  const size = Math.max(N * 3, Math.min(1300, Math.round(D * zoomPx)));
+  if (!layer || layer.size !== size) {
+    const canvas = offscreen(size, size);
+    layer = { size, canvas, ctx: canvas.getContext('2d') as CanvasRenderingContext2D };
+  }
+  const L = layer.ctx;
+  L.globalCompositeOperation = 'source-over';
+  L.clearRect(0, 0, size, size);
+  L.imageSmoothingEnabled = true;
+  L.imageSmoothingQuality = 'high';
+  L.drawImage(grid.canvas as CanvasImageSource, 0, 0, size, size);
+  const pat = grainPattern(L);
+  if (pat) {
+    L.globalCompositeOperation = 'source-atop';
+    L.fillStyle = pat;
+    L.fillRect(0, 0, size, size);
+    L.globalCompositeOperation = 'source-over';
+  }
+  // (The liquid goes in behind the sand on the same layer: one picture to draw, not two.)
+  const sc = size / D;
+  L.globalCompositeOperation = 'destination-over';
+  L.drawImage(gl.back as CanvasImageSource, -gl.pad * sc, -gl.pad * sc, (D + 2 * gl.pad) * sc, (D + 2 * gl.pad) * sc);
+  L.globalCompositeOperation = 'source-over';
+  // (Plain smoothing here: the layer is already smooth, and anything finer costs a lot at full screen.)
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'low';
+  ctx.drawImage(layer.canvas as CanvasImageSource, x0, y0, D, D);
+  }
 
   // The bubbles, where the simulation has them, as soap foam (stamped from sprites, squashed to
   // each one's height); tiny bubbles crowd the crevices between them.
